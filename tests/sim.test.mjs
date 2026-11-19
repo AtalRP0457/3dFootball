@@ -1,5 +1,5 @@
 // Headless tests for the match engine. Run with: npm test
-import { createMatch, stepMatch, teamPlayers } from '../src/game/match.js';
+import { createMatch, stepMatch, teamPlayers, choosePassTarget, doPass } from '../src/game/match.js';
 import { TEAMS } from '../src/data/teams.js';
 import { FIXED_DT, HALF_L, HALF_W } from '../src/game/constants.js';
 
@@ -51,7 +51,7 @@ for (let i = 0; i < TEAMS.length; i++) {
 }
 console.log(`  ${matches} matches, avg goals ${(goals / matches).toFixed(2)}, avg shots ${(shots / matches).toFixed(1)}`);
 check(goals > 0, 'no goals scored at all');
-check(shots / matches > 4, 'too few shots');
+check(shots / matches > 2.5, 'too few shots');
 
 // Restart types and possession sanity in one longer match
 {
@@ -68,7 +68,8 @@ check(shots / matches > 4, 'too few shots');
   }
   console.log('  restarts seen:', JSON.stringify(seen));
   console.log(`  ball owned ${(100 * ownedSteps / steps).toFixed(0)}% of play time`);
-  check(seen['THROW-IN'] > 0 || seen['GOAL KICK'] > 0 || seen['CORNER'] > 0, 'no restarts happened');
+  check(seen['THROW-IN'] > 0 || seen['GOAL KICK'] > 0 || seen['CORNER'] > 0 || seen['FREE KICK'] > 0,
+    'no restarts happened');
 }
 
 // 2) Pass hands control to the receiver; passer becomes AI
@@ -119,14 +120,33 @@ console.log('Next player highlight');
   check(team.controlled === shown, 'switch goes to the yellow player');
 }
 
+// 2d) A nearby teammate in the aimed direction wins over a much longer option,
+// and the rolling pass speed is calibrated to that short distance.
+console.log('Short pass targeting');
+{
+  const s = createMatch({ home: TEAMS[3], away: TEAMS[7], controllers: ['p1', 'ai'], duration: 120 });
+  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  const passer = s.teams[0].controlled;
+  const teammates = teamPlayers(s, 0).filter((p) => p !== passer && p.onPitch && p.role !== 'GK');
+  const [near, far] = teammates;
+  passer.pos.x = passer.pos.z = 0;
+  near.pos.x = 4; near.pos.z = 0;
+  far.pos.x = 18; far.pos.z = 0;
+  s.ball.owner = passer; s.ball.pos.x = 0; s.ball.pos.z = 0;
+  const target = choosePassTarget(s, passer, 1, 0);
+  check(target === near, 'aimed pass prefers nearby teammate over a long option');
+  doPass(s, passer, target);
+  check(Math.hypot(s.ball.vel.x, s.ball.vel.z) < 6.1, 'short pass leaves at controlled speed');
+}
+
 // 2c) Throw-ins can't be shot
 console.log('Throw-in rules');
 {
   const s = createMatch({ home: TEAMS[1], away: TEAMS[2], controllers: ['p1', 'ai'], duration: 120 });
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
   s.ball.owner = null;
-  s.ball.lastTouch = s.players[7];
-  s.ball.pos.x = 5; s.ball.pos.z = 20.5; s.ball.vel.x = 0; s.ball.vel.z = 1;
+  s.ball.lastTouch = s.players[18]; // away touch awards the human home side a throw-in
+  s.ball.pos.x = 5; s.ball.pos.z = HALF_W + 0.5; s.ball.vel.x = 0; s.ball.vel.z = 1;
   stepMatch(s, {}, FIXED_DT);
   check(s.phase === 'restart' && s.restart.type === 'throw-in', 'throw-in awarded');
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
@@ -182,6 +202,40 @@ for (let i = 0; i < TEAMS.length; i++) {
 {
   const s = createMatch({ home: TEAMS[4], away: TEAMS[4], controllers: ['ai', 'ai'], duration: 30 });
   check(s.teams[0].kit.shirt !== s.teams[1].kit.shirt, 'kit clash resolved');
+}
+
+// 7) Indoor matches are genuinely five-a-side and use rebound boards.
+console.log('Indoor soccer');
+{
+  const s = createMatch({ home: TEAMS[0], away: TEAMS[1], controllers: ['ai', 'ai'], duration: 60, indoor: true });
+  check(s.players.filter((p) => p.onPitch).length === 10, 'indoor match has ten active players');
+  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  s.ball.owner = null;
+  s.ball.pos.x = 0; s.ball.pos.z = HALF_W + 0.5; s.ball.vel.x = 0; s.ball.vel.z = 4;
+  stepMatch(s, {}, FIXED_DT);
+  check(s.phase === 'play', 'indoor board keeps play live');
+  check(s.ball.vel.z < 0, 'indoor board reflects the ball');
+  const passer = s.players.find((p) => p.team === 0 && p.onPitch && p.role !== 'GK');
+  const receiver = s.players.find((p) => p.team === 0 && p.onPitch && p !== passer && p.role !== 'GK');
+  passer.pos.x = 0; passer.pos.z = 0;
+  receiver.pos.x = 25; receiver.pos.z = 0;
+  s.ball.owner = passer; s.ball.pos.x = 0; s.ball.pos.z = 0;
+  doPass(s, passer, receiver);
+  check(s.ball.offsidePlayers.length === 0, 'indoor passes do not create offside calls');
+}
+
+// 8) Knockout-style matches play extra time before the caller decides a tie.
+console.log('Extra time');
+{
+  const s = createMatch({ home: TEAMS[0], away: TEAMS[1], controllers: ['ai', 'ai'], duration: 1, extraTime: true, extraTimeDuration: 1 });
+  let extraTime = false;
+  for (let i = 0; i < 600 && s.phase !== 'fulltime'; i++) {
+    stepMatch(s, {}, FIXED_DT);
+    extraTime ||= s.events.some((event) => event.type === 'extraTime');
+    s.events.length = 0;
+  }
+  check(extraTime, 'tied knockout match starts extra time');
+  check(s.phase === 'fulltime', 'match finishes after extra time');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');

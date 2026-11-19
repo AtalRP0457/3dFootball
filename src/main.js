@@ -1,14 +1,15 @@
 import './style.css';
 import { TEAMS, getTeam } from './data/teams.js';
-import { createMatch, stepMatch, displayMinute } from './game/match.js';
+import { createMatch, stepMatch, displayMinute, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation } from './game/match.js';
 import { FIXED_DT } from './game/constants.js';
 import { Input } from './game/input.js';
 import { createRenderer } from './render/scene.js';
+import { MatchAudio } from './render/audio.js';
 
 const $ = (id) => document.getElementById(id);
 
 // ---------- settings chosen in the menu ----------
-const settings = {
+const DEFAULT_SETTINGS = {
   mode: '1p',
   home: '1960',
   away: '1990',
@@ -16,15 +17,126 @@ const settings = {
   duration: 240,
   era: 'on',
 };
+const SETTINGS_KEY = 'legends-settings';
+const settings = loadSettings();
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    const teamIds = new Set(TEAMS.map((team) => team.id));
+    return {
+      ...DEFAULT_SETTINGS,
+      ...(saved && ['1p', '2p', 'cpu', 'cup', 'career', 'penalties', 'practice', 'indoor'].includes(saved.mode) ? { mode: saved.mode } : {}),
+      ...(saved && teamIds.has(saved.home) ? { home: saved.home } : {}),
+      ...(saved && teamIds.has(saved.away) ? { away: saved.away } : {}),
+      ...(saved && ['easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
+      ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
+      ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function persistSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+}
 
 const renderer = createRenderer($('game'));
 const input = new Input();
+const touchInput = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
+const audio = new MatchAudio();
 let match = null;
+let cup = loadCup();
+let cupShootout = null;
+let cupShootoutOutcome = null;
+if (cup && !cup.champion) {
+  settings.mode = 'cup';
+  settings.home = cup.userTeam.id;
+  settings.away = cup.matches[0].away.id;
+}
+let league = loadLeague();
+if (league && !league.complete) {
+  settings.mode = 'career';
+  settings.home = league.userTeam.id;
+  const nextFixture = league.schedule[league.round][0];
+  settings.away = nextFixture.home.id === league.userTeam.id ? nextFixture.away.id : nextFixture.home.id;
+}
 let paused = false;
 let goals = [];
 let acc = 0;
+const REPLAY_FPS = 20;
+const REPLAY_FRAMES = REPLAY_FPS * 6;
+let replayBuffer = [];
+let replayFrames = null;
+let replayElapsed = 0;
+let replayCaptureElapsed = 0;
 
 // ---------- menu ----------
+function refreshSubstitutionMenu() {
+  if (!match) return;
+  const selector = $('subsTeam');
+  const managerTeams = match.teams.filter((team) => team.human);
+  const current = Number(selector.value);
+  selector.replaceChildren(...managerTeams.map((team) => {
+    const option = document.createElement('option');
+    option.value = String(team.index);
+    option.textContent = `${team.human.toUpperCase()} · ${team.data.name}`;
+    return option;
+  }));
+  if (managerTeams.some((team) => team.index === current)) selector.value = String(current);
+  const team = managerTeams.find((item) => item.index === Number(selector.value));
+  if (!team) {
+    $('subsStatus').textContent = 'No human-controlled team is available for management.';
+    $('subsOut').replaceChildren();
+    $('subsIn').replaceChildren();
+    $('subsConfirm').disabled = true;
+    return;
+  }
+  $('tacticSelect').value = team.tactic;
+  $('formationSelect').value = team.formation;
+
+  const active = match.players.filter((p) => p.team === team.index && p.onPitch && !p.sentOff);
+  $('subsOut').replaceChildren(...active.map((player) => {
+    const option = document.createElement('option');
+    option.value = String(player.id);
+    option.textContent = `${player.number} · ${player.name} (${player.role})`;
+    return option;
+  }));
+  refreshBenchOptions();
+}
+
+function refreshBenchOptions() {
+  if (!match) return;
+  const teamIdx = Number($('subsTeam').value);
+  const outgoingId = $('subsOut').value;
+  const outgoing = outgoingId === '' ? null : match.players[Number(outgoingId)];
+  const reserves = match.players.filter((p) => p.team === teamIdx && !p.onPitch && !p.sentOff && !p.subbedOff && outgoing);
+  $('subsIn').replaceChildren(...reserves.map((player) => {
+    const option = document.createElement('option');
+    option.value = String(player.id);
+    option.textContent = `${player.number} · ${player.name} (${player.role} reserve)`;
+    return option;
+  }));
+  refreshSubstitutionStatus();
+}
+
+function refreshSubstitutionStatus() {
+  if (!match) return;
+  const team = match.teams[Number($('subsTeam').value)];
+  const outgoingId = $('subsOut').value, incomingId = $('subsIn').value;
+  const outgoing = outgoingId === '' ? null : match.players[Number(outgoingId)];
+  const incoming = incomingId === '' ? null : match.players[Number(incomingId)];
+  const hasOption = !!outgoing && !!incoming;
+  $('subsStatus').textContent = team?.pendingSubstitution
+    ? `${team.substitutions}/3 used. Change queued for the next stoppage.`
+    : team
+      ? `${team.substitutions}/3 used. Applies now at a stoppage or queues until the next one.`
+    : 'Choose a team.';
+  $('subsConfirm').disabled = !team || !hasOption || team.substitutions >= 3 || !!team.pendingSubstitution;
+  $('subsCancel').disabled = !team?.pendingSubstitution;
+}
+
 function teamCard(team, side) {
   const el = document.createElement('button');
   el.className = 'team';
@@ -33,8 +145,78 @@ function teamCard(team, side) {
     <span class="kit"><i style="background:${team.kit.shirt}"></i><i style="background:${team.kit.shorts}"></i></span>
     <span class="tn">${team.name}</span>
     <span class="nick">${team.nickname}</span>`;
-  el.addEventListener('click', () => { settings[side] = team.id; refreshMenu(); });
+  el.addEventListener('click', () => {
+    settings[side] = team.id;
+    if (settings.mode === 'cup') clearCup();
+    if (settings.mode === 'career') clearLeague();
+    persistSettings();
+    refreshMenu();
+  });
   return el;
+}
+
+function setupTouchControls() {
+  const publish = (patch) => {
+    Object.assign(touchInput, patch);
+    input.setTouch(touchInput);
+  };
+  const stick = $('touchStick');
+  const knob = $('touchStickKnob');
+  let stickPointer = null;
+  const moveStick = (event) => {
+    if (event.pointerId !== stickPointer) return;
+    const rect = stick.getBoundingClientRect();
+    const max = rect.width * 0.34;
+    const rawX = event.clientX - (rect.left + rect.width / 2);
+    const rawY = event.clientY - (rect.top + rect.height / 2);
+    const distance = Math.hypot(rawX, rawY);
+    const scale = distance > max ? max / distance : 1;
+    const dx = rawX * scale, dy = rawY * scale;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    publish({ mx: dx / max, mz: dy / max });
+  };
+  const releaseStick = (event) => {
+    if (event.pointerId !== stickPointer) return;
+    stickPointer = null;
+    knob.style.transform = 'translate(0, 0)';
+    publish({ mx: 0, mz: 0 });
+  };
+  stick.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    stickPointer = event.pointerId;
+    stick.setPointerCapture(event.pointerId);
+    moveStick(event);
+  });
+  stick.addEventListener('pointermove', moveStick);
+  stick.addEventListener('pointerup', releaseStick);
+  stick.addEventListener('pointercancel', releaseStick);
+
+  const bindHeld = (id, field, onPress = {}) => {
+    const button = $(id);
+    const release = () => publish({ [field]: false });
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      publish({ ...onPress, [field]: true });
+    });
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+    button.addEventListener('lostpointercapture', release);
+  };
+  bindHeld('touchSprint', 'sprint');
+  bindHeld('touchShoot', 'shootHeld', { shootPressed: true });
+  $('touchPass').addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    publish({ passPressed: true });
+  });
+  window.addEventListener('blur', resetTouchControls);
+}
+
+function resetTouchControls() {
+  Object.assign(touchInput, { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false });
+  input.setTouch(touchInput);
+  const knob = $('touchStickKnob');
+  if (knob) knob.style.transform = 'translate(0, 0)';
 }
 
 function buildMenu() {
@@ -45,6 +227,9 @@ function buildMenu() {
   const seg = (id, key, cast = (v) => v) => {
     $(id).querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
       settings[key] = cast(b.dataset.v);
+      if (key === 'mode' && settings.mode !== 'cup') clearCup();
+      if (key === 'mode' && settings.mode !== 'career') clearLeague();
+      persistSettings();
       refreshMenu();
     }));
   };
@@ -53,13 +238,196 @@ function buildMenu() {
   seg('lenSeg', 'duration', Number);
   seg('eraSeg', 'era');
   $('startBtn').addEventListener('click', startMatch);
+  $('shootoutAim').querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+    if (!cupShootout) return;
+    cupShootout.aim = Number(button.dataset.aim);
+    $('shootoutAim').querySelectorAll('button').forEach((item) => item.classList.toggle('on', item === button));
+  }));
+  $('shootoutKick').addEventListener('click', takeCupShootoutAction);
+  $('shootoutNext').addEventListener('click', () => {
+    if (!cupShootout) return;
+    if (cupShootout.phase === 'complete') { finishCupShootout(); return; }
+    cupShootout.phase = 'human-shot';
+    $('shootoutStatus').textContent = `Your turn: ${cupShootout.shooters[0][cupShootout.taken[0] % cupShootout.shooters[0].length].name}`;
+    $('shootoutAim').querySelectorAll('button').forEach((button) => {
+      button.textContent = ['Left', 'Center', 'Right'][Number(button.dataset.aim) + 1];
+    });
+    $('shootoutKick').textContent = 'Take penalty';
+    $('shootoutKick').classList.remove('hidden');
+    $('shootoutNext').classList.add('hidden');
+  });
+  $('shootoutMenu').addEventListener('click', toMenu);
+  $('audioToggle').addEventListener('click', () => {
+    $('audioToggle').textContent = audio.toggle() ? 'Sound: On' : 'Sound: Off';
+  });
+  $('touchPause').addEventListener('click', () => {
+    if (match && match.phase !== 'fulltime') setPaused(!paused);
+  });
+  $('touchCamera').addEventListener('click', () => {
+    if (match) showSub(`Camera: ${renderer.cycleCamera()}`);
+  });
+  $('replaySkip').addEventListener('click', finishReplay);
   setupTutorial();
+  setupTouchControls();
   $('resumeBtn').addEventListener('click', () => setPaused(false));
+  $('subsBtn').addEventListener('click', () => {
+    $('subsPanel').classList.remove('hidden');
+    $('subsBtn').classList.add('hidden');
+    refreshSubstitutionMenu();
+  });
+  $('subsClose').addEventListener('click', () => {
+    $('subsPanel').classList.add('hidden');
+    $('subsBtn').classList.remove('hidden');
+  });
+  $('subsTeam').addEventListener('change', refreshSubstitutionMenu);
+  $('tacticSelect').addEventListener('change', () => {
+    if (setTeamTactic(match, Number($('subsTeam').value), $('tacticSelect').value)) handleEvents();
+  });
+  $('formationSelect').addEventListener('change', () => {
+    if (setTeamFormation(match, Number($('subsTeam').value), $('formationSelect').value)) handleEvents();
+  });
+  $('subsOut').addEventListener('change', refreshBenchOptions);
+  $('subsIn').addEventListener('change', refreshSubstitutionStatus);
+  $('subsConfirm').addEventListener('click', () => {
+    const teamIdx = Number($('subsTeam').value);
+    const outgoingId = Number($('subsOut').value);
+    const incomingId = Number($('subsIn').value);
+    if (!makeSubstitution(match, teamIdx, outgoingId, incomingId)) {
+      $('subsStatus').textContent = 'This change is no longer available.';
+      return;
+    }
+    handleEvents();
+    refreshSubstitutionMenu();
+  });
+  $('subsCancel').addEventListener('click', () => {
+    if (cancelPendingSubstitution(match, Number($('subsTeam').value))) handleEvents();
+    refreshSubstitutionMenu();
+  });
   $('restartBtn').addEventListener('click', startMatch);
   $('quitBtn').addEventListener('click', toMenu);
-  $('rematchBtn').addEventListener('click', startMatch);
+  $('rematchBtn').addEventListener('click', () => {
+    if (settings.mode === 'cup' && cup?.champion) clearCup();
+    if (settings.mode === 'career' && league?.complete) clearLeague();
+    startMatch();
+  });
   $('menuBtn').addEventListener('click', toMenu);
   refreshMenu();
+}
+
+function clearCup() {
+  cup = null;
+  try { localStorage.removeItem('legends-decades-cup'); } catch {}
+}
+
+function loadCup() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('legends-decades-cup') || 'null');
+    if (!saved) return null;
+    const teamById = (id) => TEAMS.find((team) => team.id === id) || null;
+    const restoreFixture = (fixture) => {
+      const home = teamById(fixture.homeId), away = teamById(fixture.awayId);
+      if (!home || !away) return null;
+      return {
+        home, away, winner: teamById(fixture.winnerId),
+        homeScore: fixture.homeScore, awayScore: fixture.awayScore,
+        homePenalties: Number.isInteger(fixture.homePenalties) ? fixture.homePenalties : null,
+        awayPenalties: Number.isInteger(fixture.awayPenalties) ? fixture.awayPenalties : null,
+        shootout: !!fixture.shootout, round: fixture.round,
+      };
+    };
+    const matches = (saved.matches || []).map(restoreFixture);
+    const history = (saved.history || []).map(restoreFixture);
+    const userTeam = teamById(saved.userTeamId);
+    if (!userTeam || matches.some((fixture) => !fixture) || history.some((fixture) => !fixture)) return null;
+    if (!matches.length && !saved.championId) return null;
+    return {
+      userTeam, round: saved.round || 0, lastUserRound: saved.lastUserRound || 0,
+      matches, history, champion: teamById(saved.championId), eliminated: !!saved.eliminated,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistCup() {
+  try {
+    if (!cup) { localStorage.removeItem('legends-decades-cup'); return; }
+    const serializeFixture = (fixture) => ({
+      homeId: fixture.home.id,
+      awayId: fixture.away.id,
+      winnerId: fixture.winner?.id || null,
+      homeScore: fixture.homeScore,
+      awayScore: fixture.awayScore,
+      homePenalties: fixture.homePenalties,
+      awayPenalties: fixture.awayPenalties,
+      shootout: fixture.shootout,
+      round: fixture.round,
+    });
+    localStorage.setItem('legends-decades-cup', JSON.stringify({
+      userTeamId: cup.userTeam.id,
+      round: cup.round,
+      lastUserRound: cup.lastUserRound,
+      matches: cup.matches.map(serializeFixture),
+      history: cup.history.map(serializeFixture),
+      championId: cup.champion?.id || null,
+      eliminated: cup.eliminated,
+    }));
+  } catch {}
+}
+
+function clearLeague() {
+  league = null;
+  try { localStorage.removeItem('legends-career-season'); } catch {}
+}
+
+function loadLeague() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('legends-career-season') || 'null');
+    if (!saved) return null;
+    const teamById = (id) => TEAMS.find((team) => team.id === id) || null;
+    const restoreFixture = (fixture) => {
+      const home = teamById(fixture.homeId), away = teamById(fixture.awayId);
+      if (!home || !away) return null;
+      return {
+        home, away, played: !!fixture.played,
+        homeScore: fixture.homeScore, awayScore: fixture.awayScore,
+      };
+    };
+    const schedule = (saved.schedule || []).map((round) => round.map(restoreFixture));
+    const history = (saved.history || []).map(restoreFixture);
+    const userTeam = teamById(saved.userTeamId);
+    if (!userTeam || schedule.length !== 18 || schedule.some((round) => round.length !== 5 || round.some((f) => !f))) return null;
+    if (history.some((fixture) => !fixture)) return null;
+    const round = Number.isInteger(saved.round) ? saved.round : 0;
+    if (round < 0 || round > schedule.length || (!saved.complete && round === schedule.length)) return null;
+    return {
+      userTeam, round, schedule, history,
+      complete: !!saved.complete, champion: teamById(saved.championId),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistLeague() {
+  try {
+    if (!league) { localStorage.removeItem('legends-career-season'); return; }
+    const serializeFixture = (fixture) => ({
+      homeId: fixture.home.id,
+      awayId: fixture.away.id,
+      played: fixture.played,
+      homeScore: fixture.homeScore,
+      awayScore: fixture.awayScore,
+    });
+    localStorage.setItem('legends-career-season', JSON.stringify({
+      userTeamId: league.userTeam.id,
+      round: league.round,
+      schedule: league.schedule.map((round) => round.map(serializeFixture)),
+      history: league.history.map(serializeFixture),
+      complete: league.complete,
+      championId: league.champion?.id || null,
+    }));
+  } catch {}
 }
 
 function refreshMenu() {
@@ -79,10 +447,34 @@ function refreshMenu() {
     '1p': ['Your team <span class="who p1">P1</span>', 'Opponent <span class="who ai">AI</span>'],
     '2p': ['Player 1 <span class="who p1">P1</span>', 'Player 2 <span class="who p2">P2</span>'],
     cpu: ['Home <span class="who ai">AI</span>', 'Away <span class="who ai">AI</span>'],
+    cup: ['Cup team <span class="who p1">P1</span>', 'Opening opponent <span class="who ai">AI</span>'],
+    penalties: ['Shooter <span class="who p1">P1</span>', 'Keeper <span class="who ai">AI</span>'],
+    indoor: ['Indoor side <span class="who p1">P1</span>', 'Indoor opposition <span class="who ai">AI</span>'],
+    practice: ['Practice team <span class="who p1">P1</span>', 'Training opposition <span class="who ai">AI</span>'],
+    career: ['Career team <span class="who p1">P1</span>', 'First opponent <span class="who ai">AI</span>'],
   }[settings.mode];
+  const modeBriefs = {
+    '1p': ['FRIENDLY MATCH', 'Take a decade side into a full 11-a-side match against the computer.'],
+    '2p': ['HEAD TO HEAD', 'Two local players, one keyboard or two gamepads.'],
+    cpu: ['SPECTATOR MATCH', 'Let the match engine play both teams while you watch the tactics unfold.'],
+    cup: ['DECADES CUP', 'Win three knockout rounds. Draws are settled by a playable shootout.'],
+    penalties: ['PENALTY SHOOTOUT', 'Pick each shot placement, then read the next kick and choose your keeper dive.'],
+    indoor: ['INDOOR SOCCER', 'Five-a-side under the lights. Boards keep the ball live and there is no offside.'],
+    career: ['CAREER SEASON', 'Play an 18-matchday league season and chase first place in the table.'],
+    practice: ['PRACTICE', 'Free play against easy opposition with no halftime or final whistle.'],
+  };
+  const [briefTitle, briefCopy] = modeBriefs[settings.mode];
+  $('modeBrief').innerHTML = `<b>${briefTitle}</b><span>${briefCopy}</span>`;
   $('homeLabel').innerHTML = labels[0];
-  $('awayLabel').innerHTML = labels[1];
+  const careerFixture = settings.mode === 'career' && league && !league.complete
+    ? league.schedule[league.round][0]
+    : null;
+  const careerOpponent = careerFixture && (careerFixture.home.id === league.userTeam.id ? careerFixture.away : careerFixture.home);
+  $('awayLabel').innerHTML = careerOpponent
+    ? `${careerOpponent.name} <span class="who ai">AI</span>`
+    : labels[1];
   $('diffRow').style.display = settings.mode === '2p' ? 'none' : '';
+  $('lengthRow').style.display = settings.mode === 'practice' || settings.mode === 'penalties' ? 'none' : '';
 }
 
 // ---------- tutorial page ----------
@@ -133,17 +525,362 @@ function eraFilter(home, away) {
 function controllers() {
   if (settings.mode === '2p') return ['p1', 'p2'];
   if (settings.mode === 'cpu') return ['ai', 'ai'];
+  if (settings.mode === 'career' && league) {
+    const fixture = league.schedule[league.round][0];
+    return fixture.home.id === league.userTeam.id ? ['p1', 'ai'] : ['ai', 'p1'];
+  }
   return ['p1', 'ai'];
 }
 
+function simulateAiMatch(fixture, duration = 30) {
+  const cpuMatch = createMatch({
+    home: fixture.home,
+    away: fixture.away,
+    controllers: ['ai', 'ai'],
+    difficulty: settings.difficulty,
+    duration: Math.min(duration, settings.duration),
+  });
+  let steps = 0;
+  const maxSteps = Math.ceil(cpuMatch.duration * 60 * 3);
+  while (cpuMatch.phase !== 'fulltime' && steps < maxSteps) {
+    stepMatch(cpuMatch, {}, FIXED_DT);
+    steps++;
+  }
+  fixture.homeScore = cpuMatch.teams[0].score;
+  fixture.awayScore = cpuMatch.teams[1].score;
+}
+
+function createLeague() {
+  const userTeam = getTeam(settings.home);
+  let preferred = getTeam(settings.away);
+  if (preferred.id === userTeam.id) {
+    const index = TEAMS.findIndex((team) => team.id === userTeam.id);
+    preferred = TEAMS[(index + 1) % TEAMS.length];
+  }
+  const rotation = [
+    userTeam,
+    ...TEAMS.filter((team) => team.id !== userTeam.id && team.id !== preferred.id),
+    preferred,
+  ];
+  const firstHalf = [];
+  for (let round = 0; round < rotation.length - 1; round++) {
+    const fixtures = [];
+    for (let i = 0; i < rotation.length / 2; i++) {
+      const a = rotation[i], b = rotation[rotation.length - 1 - i];
+      const home = (round + i) % 2 === 0 ? a : b;
+      const away = home === a ? b : a;
+      fixtures.push({ home, away, played: false });
+    }
+    firstHalf.push(fixtures);
+    rotation.splice(1, 0, rotation.pop());
+  }
+  const secondHalf = firstHalf.map((round) => round.map((fixture) => ({
+    home: fixture.away, away: fixture.home, played: false,
+  })));
+  return { userTeam, round: 0, schedule: [...firstHalf, ...secondHalf], history: [], complete: false, champion: null };
+}
+
+function createCup() {
+  const home = getTeam(settings.home);
+  const away = getTeam(settings.away);
+  const participants = [home];
+  if (away.id !== home.id) participants.push(away);
+  let next = (TEAMS.findIndex((team) => team.id === away.id) + 1) % TEAMS.length;
+  while (participants.length < 8) {
+    const team = TEAMS[next];
+    if (!participants.some((entry) => entry.id === team.id)) participants.push(team);
+    next = (next + 1) % TEAMS.length;
+  }
+  if (participants[1].id === home.id) participants.splice(1, 1, TEAMS[next]);
+  const matches = [];
+  for (let i = 0; i < participants.length; i += 2) {
+    matches.push({ home: participants[i], away: participants[i + 1], winner: null });
+  }
+  return { userTeam: home, round: 0, lastUserRound: 0, matches, history: [], champion: null, eliminated: false };
+}
+
+function shootoutWinner(home, away) {
+  const shooters = (team) => team.players
+    .filter((p, index) => index !== 0)
+    .sort((a, b) => b.stats.sho - a.stats.sho)
+    .slice(0, 5);
+  const homeShooters = shooters(home), awayShooters = shooters(away);
+  const homeKeeper = home.players[0].stats.gk;
+  const awayKeeper = away.players[0].stats.gk;
+  const scores = [0, 0];
+  const take = (team, keeper, i, side) => {
+    const player = team[i % team.length];
+    const chance = Math.max(0.52, Math.min(0.93, 0.76 + (player.stats.sho - 75) * 0.003 - (keeper - 75) * 0.002));
+    if (Math.random() < chance) scores[side]++;
+  };
+  for (let i = 0; i < 5; i++) {
+    take(homeShooters, awayKeeper, i, 0);
+    take(awayShooters, homeKeeper, i, 1);
+    const remaining = 4 - i;
+    if (scores[0] > scores[1] + remaining) return { winner: home, homeScore: scores[0], awayScore: scores[1] };
+    if (scores[1] > scores[0] + remaining) return { winner: away, homeScore: scores[0], awayScore: scores[1] };
+  }
+  for (let i = 5; scores[0] === scores[1]; i++) {
+    take(homeShooters, awayKeeper, i, 0);
+    take(awayShooters, homeKeeper, i, 1);
+  }
+  return {
+    winner: scores[0] > scores[1] ? home : away,
+    homeScore: scores[0], awayScore: scores[1],
+  };
+}
+
+function decideCupFixture(fixture) {
+  fixture.shootout = fixture.homeScore === fixture.awayScore;
+  if (fixture.shootout) {
+    const result = shootoutWinner(fixture.home, fixture.away);
+    fixture.winner = result.winner;
+    fixture.homePenalties = result.homeScore;
+    fixture.awayPenalties = result.awayScore;
+  } else {
+    fixture.winner = fixture.homeScore > fixture.awayScore ? fixture.home : fixture.away;
+    fixture.homePenalties = null;
+    fixture.awayPenalties = null;
+  }
+}
+
+function beginCupShootout() {
+  const teams = match.teams.map((team) => team.data);
+  const shooters = teams.map((team) => team.players
+    .filter((player, index) => index !== 0)
+    .sort((a, b) => b.stats.sho - a.stats.sho));
+  cupShootout = { teams, shooters, scores: [0, 0], taken: [0, 0], phase: 'human-shot', aim: 0 };
+  cupShootoutOutcome = null;
+  $('shootoutTeams').textContent = `${teams[0].name}  ·  ${teams[1].name}`;
+  $('shootoutScore').textContent = '0 — 0';
+  $('shootoutStatus').textContent = `Your turn: ${shooters[0][0].name}`;
+  $('shootoutAim').querySelectorAll('button').forEach((button) => {
+    button.textContent = ['Left', 'Center', 'Right'][Number(button.dataset.aim) + 1];
+    button.classList.toggle('on', button.dataset.aim === '0');
+  });
+  $('shootoutKick').textContent = 'Take penalty';
+  $('shootoutKick').classList.remove('hidden');
+  $('shootoutNext').classList.add('hidden');
+  $('fulltime').classList.add('hidden');
+  $('shootout').classList.remove('hidden');
+}
+
+function takeCupShootoutAction() {
+  if (!cupShootout) return;
+  const s = cupShootout;
+  const humanTeam = match.teams[0];
+  const keeper = match.teams[1].data.players[0].stats.gk;
+  if (s.phase === 'human-shot') {
+    const shooter = s.shooters[0][s.taken[0] % s.shooters[0].length];
+    const keeperAim = Math.floor(Math.random() * 3) - 1;
+    const chance = Math.max(0.3, Math.min(0.97, 0.9 - (keeperAim === s.aim ? 0.42 : 0)
+      + (shooter.stats.sho - 75) * 0.0025 - (keeper - 75) * 0.0015));
+    const goal = Math.random() < chance;
+    if (goal) s.scores[0]++;
+    s.taken[0]++;
+    s.lastShot = goal ? `${shooter.name} scores!` : `${shooter.name} misses or is saved.`;
+    s.phase = 'human-dive';
+    const rival = s.shooters[1][s.taken[1] % s.shooters[1].length];
+    $('shootoutStatus').textContent = `${s.lastShot} Now dive against ${rival.name}.`;
+    $('shootoutAim').querySelectorAll('button').forEach((button) => {
+      button.textContent = ['Dive Left', 'Dive Center', 'Dive Right'][Number(button.dataset.aim) + 1];
+    });
+    $('shootoutKick').textContent = 'Dive';
+  } else if (s.phase === 'human-dive') {
+    const shooter = s.shooters[1][s.taken[1] % s.shooters[1].length];
+    const rivalAim = Math.floor(Math.random() * 3) - 1;
+    const keeperSkill = humanTeam.data.players[0].stats.gk;
+    const chance = Math.max(0.3, Math.min(0.97, 0.9 - (rivalAim === s.aim ? 0.42 : 0)
+      + (shooter.stats.sho - 75) * 0.0025 - (keeperSkill - 75) * 0.0015));
+    const goal = Math.random() < chance;
+    if (goal) s.scores[1]++;
+    s.taken[1]++;
+    s.lastShot = goal ? `${shooter.name} scores.` : `${shooter.name} is denied!`;
+    $('shootoutScore').textContent = `${s.scores[0]} — ${s.scores[1]}`;
+    const bothCompletedFive = s.taken[0] >= 5 && s.taken[1] >= 5;
+    // Once both teams have taken five, continue in pairs until one team leads.
+    const resolved = bothCompletedFive
+      ? s.scores[0] !== s.scores[1]
+      : s.scores[0] > s.scores[1] + (5 - s.taken[1])
+        || s.scores[1] > s.scores[0] + (5 - s.taken[0]);
+    if (resolved) {
+      const winner = s.scores[0] > s.scores[1] ? s.teams[0] : s.teams[1];
+      cupShootoutOutcome = { winner, homeScore: s.scores[0], awayScore: s.scores[1] };
+      s.phase = 'complete';
+      $('shootoutStatus').textContent = `${s.lastShot} ${winner.name} win on penalties.`;
+      $('shootoutKick').classList.add('hidden');
+      $('shootoutNext').textContent = 'Continue';
+      $('shootoutNext').classList.remove('hidden');
+    } else {
+      s.phase = 'next';
+      $('shootoutStatus').textContent = `${s.lastShot} ${s.taken[0]} of 5 taken.`;
+      $('shootoutKick').classList.add('hidden');
+      $('shootoutNext').textContent = s.taken[0] >= 5 ? 'Sudden death: next pair' : 'Next kick';
+      $('shootoutNext').classList.remove('hidden');
+    }
+  }
+}
+
+function finishCupShootout() {
+  $('shootout').classList.add('hidden');
+  cupShootout = null;
+  if (settings.mode === 'penalties') {
+    $('ftTitle').textContent = 'Shootout complete';
+    $('ftScore').textContent = `${cupShootoutOutcome.winner.name} win ${cupShootoutOutcome.homeScore}–${cupShootoutOutcome.awayScore} on penalties`;
+    $('ftCupNote').classList.add('hidden');
+    $('ftCupResults').classList.add('hidden');
+    $('ftScorers').classList.add('hidden');
+    $('ftStats').classList.add('hidden');
+    $('rematchBtn').textContent = 'Play again';
+    $('fulltime').classList.remove('hidden');
+    cupShootoutOutcome = null;
+    return;
+  }
+  $('ftTitle').textContent = 'Full time';
+  showFullTime();
+}
+
+function simulateCupFixture(fixture, round) {
+  if (fixture.winner) return;
+  simulateAiMatch(fixture);
+  decideCupFixture(fixture);
+  fixture.round = round;
+  cup.history.push(fixture);
+}
+
+function leagueStandings() {
+  const table = TEAMS.map((team) => ({ team, played: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, points: 0 }));
+  const byId = new Map(table.map((row) => [row.team.id, row]));
+  for (const fixture of league.history) {
+    const home = byId.get(fixture.home.id), away = byId.get(fixture.away.id);
+    if (!fixture.played || fixture.homeScore == null || fixture.awayScore == null) continue;
+    home.played++; away.played++;
+    home.gf += fixture.homeScore; home.ga += fixture.awayScore;
+    away.gf += fixture.awayScore; away.ga += fixture.homeScore;
+    if (fixture.homeScore > fixture.awayScore) { home.wins++; home.points += 3; away.losses++; }
+    else if (fixture.homeScore < fixture.awayScore) { away.wins++; away.points += 3; home.losses++; }
+    else { home.draws++; away.draws++; home.points++; away.points++; }
+  }
+  return table.sort((a, b) => b.points - a.points
+    || (b.gf - b.ga) - (a.gf - a.ga)
+    || b.gf - a.gf || b.wins - a.wins
+    || a.team.name.localeCompare(b.team.name));
+}
+
+function simulateLeagueFixture(fixture) {
+  if (fixture.played) return;
+  simulateAiMatch(fixture);
+  fixture.played = true;
+  league.history.push(fixture);
+}
+
+function advanceLeagueAfterUserMatch() {
+  if (!league || league.complete || !match) return;
+  const fixtures = league.schedule[league.round];
+  const userFixture = fixtures[0];
+  if (userFixture.played) return;
+  userFixture.homeScore = match.teams[0].score;
+  userFixture.awayScore = match.teams[1].score;
+  userFixture.played = true;
+  league.history.push(userFixture);
+  for (const fixture of fixtures.slice(1)) simulateLeagueFixture(fixture);
+  league.round++;
+  if (league.round >= league.schedule.length) {
+    league.complete = true;
+    league.champion = leagueStandings()[0].team;
+  }
+  persistLeague();
+}
+
+function advanceCupAfterUserMatch() {
+  if (!cup || cup.champion || !match) return;
+  const fixture = cup.matches[0];
+  if (fixture.winner) return;
+  fixture.homeScore = match.teams[0].score;
+  fixture.awayScore = match.teams[1].score;
+  if (fixture.homeScore === fixture.awayScore && cupShootoutOutcome) {
+    fixture.shootout = true;
+    fixture.winner = cupShootoutOutcome.winner;
+    fixture.homePenalties = cupShootoutOutcome.homeScore;
+    fixture.awayPenalties = cupShootoutOutcome.awayScore;
+  } else {
+    decideCupFixture(fixture);
+  }
+  cupShootoutOutcome = null;
+  fixture.round = cup.round;
+  cup.lastUserRound = cup.round;
+  cup.history.push(fixture);
+
+  for (const cpuFixture of cup.matches.slice(1)) simulateCupFixture(cpuFixture, cup.round);
+  let winners = cup.matches.map((item) => item.winner);
+  if (fixture.winner !== cup.userTeam) {
+    cup.eliminated = true;
+    while (winners.length > 1) {
+      const next = [];
+      for (let i = 0; i < winners.length; i += 2) {
+        next.push({ home: winners[i], away: winners[i + 1], winner: null });
+      }
+      next.forEach((item) => simulateCupFixture(item, cup.round + 1));
+      winners = next.map((item) => item.winner);
+      cup.round++;
+    }
+    cup.champion = winners[0];
+    cup.matches = [];
+    return;
+  }
+
+  if (winners.length === 1) {
+    cup.champion = winners[0];
+    cup.matches = [];
+    return;
+  }
+  cup.round++;
+  cup.matches = [];
+  for (let i = 0; i < winners.length; i += 2) {
+    cup.matches.push({ home: winners[i], away: winners[i + 1], winner: null });
+  }
+  for (const cpuFixture of cup.matches.slice(1)) simulateCupFixture(cpuFixture, cup.round);
+}
+
 function startMatch() {
-  const home = getTeam(settings.home), away = getTeam(settings.away);
+  resetTouchControls();
+  cupShootout = null;
+  cupShootoutOutcome = null;
+  audio.unlock();
+  audio.setInMatch(true);
+  let home, away;
+  if (settings.mode === 'cup') {
+    if (!cup || cup.champion) cup = createCup();
+    persistCup();
+    home = cup.matches[0].home;
+    away = cup.matches[0].away;
+  } else if (settings.mode === 'career') {
+    clearCup();
+    if (!league || league.complete) league = createLeague();
+    persistLeague();
+    home = league.schedule[league.round][0].home;
+    away = league.schedule[league.round][0].away;
+  } else {
+    clearCup();
+    clearLeague();
+    home = getTeam(settings.home);
+    away = getTeam(settings.away);
+  }
   match = createMatch({
     home, away, controllers: controllers(),
-    difficulty: settings.difficulty, duration: settings.duration,
+    difficulty: settings.mode === 'practice' ? 'easy' : settings.difficulty,
+    duration: settings.duration, practice: settings.mode === 'practice', indoor: settings.mode === 'indoor',
+    extraTime: settings.mode === 'cup', extraTimeDuration: Math.max(30, Math.round(settings.duration / 4)),
   });
   goals = [];
   acc = 0;
+  replayBuffer = [];
+  replayFrames = null;
+  replayElapsed = replayCaptureElapsed = 0;
+  $('replaySkip').classList.add('hidden');
+  const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  const hasTouchPlayer = match.teams.some((team) => team.human === 'p1');
+  $('touchControls').classList.toggle('hidden', !touchDevice || !hasTouchPlayer);
   renderer.setMatch(match);
   $('game').style.filter = eraFilter(home, away);
 
@@ -153,32 +890,54 @@ function startMatch() {
   $('awayChip').style.background = match.teams[1].kit.shirt;
   $('p1panel').style.display = match.teams.some((t) => t.human === 'p1') ? '' : 'none';
   $('p2panel').style.display = match.teams.some((t) => t.human === 'p2') ? '' : 'none';
+  $('subsBtn').classList.toggle('hidden', !match.teams.some((t) => t.human));
+  $('formationRow').classList.toggle('hidden', !!match.indoor);
+  $('subsPanel').classList.add('hidden');
   // P1 panel sits on the side of the team P1 controls.
   const p1Team = match.teams.find((t) => t.human === 'p1');
   $('p1panel').classList.toggle('right', !!p1Team && p1Team.index === 1);
 
   $('menu').classList.add('hidden');
   $('fulltime').classList.add('hidden');
+  $('shootout').classList.add('hidden');
+  $('subsBtn').classList.add('hidden');
   $('hud').classList.remove('hidden');
   setPaused(false);
   input.enabled = true;
   $('game').focus?.();
+  if (settings.mode === 'penalties') {
+    match.phase = 'fulltime';
+    beginCupShootout();
+  }
 }
 
 function toMenu() {
+  resetTouchControls();
+  audio.setInMatch(false);
   match = null;
+  replayFrames = null;
+  replayBuffer = [];
+  $('replaySkip').classList.add('hidden');
+  $('touchControls').classList.add('hidden');
   paused = false;
   input.enabled = false;
   $('game').style.filter = 'none';
   $('hud').classList.add('hidden');
   $('pause').classList.add('hidden');
+  $('subsPanel').classList.add('hidden');
+  $('subsBtn').classList.remove('hidden');
   $('fulltime').classList.add('hidden');
+  $('shootout').classList.add('hidden');
   $('menu').classList.remove('hidden');
 }
 
 function setPaused(v) {
   paused = v;
   $('pause').classList.toggle('hidden', !v);
+  if (!v) {
+    $('subsPanel').classList.add('hidden');
+    $('subsBtn').classList.toggle('hidden', !match?.teams.some((team) => team.human));
+  }
 }
 
 window.addEventListener('keydown', (e) => {
@@ -195,6 +954,8 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'Escape' || e.code === 'KeyP') {
     if (match.phase !== 'fulltime') setPaused(!paused);
+  } else if (e.code === 'KeyR' && replayFrames) {
+    finishReplay();
   } else if (e.code === 'KeyC') {
     showSub(`Camera: ${renderer.cycleCamera()}`);
   }
@@ -209,18 +970,108 @@ function showSub(text, time = 1.6) {
   subTimer = time;
 }
 
+function snapshotForRender(state) {
+  const players = state.players.map((p) => ({
+    ...p,
+    pos: { ...p.pos },
+    vel: { ...p.vel },
+    face: { ...p.face },
+  }));
+  const playerById = (player) => player ? players[player.id] : null;
+  const teams = state.teams.map((team) => ({
+    ...team,
+    controlled: playerById(team.controlled),
+    next: playerById(team.next),
+  }));
+  return {
+    ...state,
+    players,
+    teams,
+    ball: {
+      ...state.ball,
+      pos: { ...state.ball.pos },
+      vel: { ...state.ball.vel },
+      owner: playerById(state.ball.owner),
+    },
+  };
+}
+
+function captureReplayFrame(force = false) {
+  if (!match) return;
+  replayCaptureElapsed += FIXED_DT;
+  if (!force && replayCaptureElapsed < 1 / REPLAY_FPS) return;
+  if (!force) replayCaptureElapsed -= 1 / REPLAY_FPS;
+  replayBuffer.push(snapshotForRender(match));
+  if (replayBuffer.length > REPLAY_FRAMES) replayBuffer.shift();
+}
+
+function beginGoalReplay() {
+  if (replayFrames || replayBuffer.length < REPLAY_FPS) return;
+  captureReplayFrame(true);
+  replayFrames = replayBuffer.slice(-REPLAY_FPS * 4);
+  replayElapsed = 0;
+  $('replaySkip').classList.remove('hidden');
+  showSub('GOAL REPLAY · press R to skip', 4.2);
+}
+
+function finishReplay() {
+  replayFrames = null;
+  replayElapsed = 0;
+  $('replaySkip').classList.add('hidden');
+}
+
 function handleEvents() {
   for (const e of match.events) {
+    audio.playEvent(e);
     if (e.type === 'goal') {
       const team = match.teams[e.team];
       goals.push({ team: e.team, name: e.scorer, own: e.ownGoal, minute: Math.max(1, displayMinute(match)) });
       showSub(`${e.ownGoal ? 'Own goal: ' : ''}${e.scorer} (${team.data.name})`, 2.4);
+      beginGoalReplay();
     } else if (e.type === 'woodwork') {
       showSub(e.what === 'bar' ? 'Off the crossbar!' : 'Off the post!', 1.2);
     } else if (e.type === 'save' && Math.random() < 0.6) {
       showSub(e.parry ? 'Great save!' : 'Safe hands', 1.0);
+    } else if (e.type === 'offside') {
+      showSub(e.interference
+        ? `${match.players[e.player].name} penalized for offside interference`
+        : `${match.players[e.player].name} offside`, 1.8);
+    } else if (e.type === 'doubleTouch') {
+      showSub(`${match.players[e.player].name} touched the ball twice — indirect free kick`, 2.0);
+    } else if (e.type === 'throwInGoal') {
+      showSub(e.ownGoalEnd
+        ? 'A throw-in cannot be an own goal — corner awarded'
+        : 'A throw-in cannot score directly — goal kick awarded', 2.0);
+    } else if (e.type === 'directRestartOwnGoal') {
+      showSub('A restart cannot go directly into your own goal — corner awarded', 2.0);
+    } else if (e.type === 'freeKickDirectGoal') {
+      showSub(e.ownGoalEnd
+        ? 'A free kick cannot score directly into your own goal — corner awarded'
+        : 'Indirect free kick needs another touch — goal kick awarded', 2.0);
+    } else if (e.type === 'foul') {
+      showSub(e.penalty ? 'Foul — penalty awarded' : 'Foul — free kick', 1.8);
+    } else if (e.type === 'card') {
+      const player = match.players[e.player];
+      showSub(e.secondYellow ? `Second yellow — ${player.name} sent off` : `${e.color === 'red' ? 'Red' : 'Yellow'} card — ${player.name}`, 2.2);
+    } else if (e.type === 'substitution') {
+      const incoming = match.players[e.incoming], outgoing = match.players[e.outgoing];
+      showSub(`${incoming.name} replaces ${outgoing.name}`, 2.0);
+    } else if (e.type === 'substitutionQueued') {
+      const incoming = match.players[e.incoming], outgoing = match.players[e.outgoing];
+      showSub(`${incoming.name} will replace ${outgoing.name} at the next stoppage`, 2.4);
+    } else if (e.type === 'substitutionCancelled') {
+      showSub('Queued substitution cancelled', 1.8);
+    } else if (e.type === 'injury') {
+      showSub(`${match.players[e.player].name} is injured`, 2.2);
+    } else if (e.type === 'tactic') {
+      showSub(`${match.teams[e.team].data.name}: ${e.tactic} tactics`, 1.8);
+    } else if (e.type === 'formation') {
+      showSub(`${match.teams[e.team].data.name}: ${e.formation}`, 1.8);
+    } else if (e.type === 'extraTime') {
+      showSub('Extra time — golden chance to settle the tie', 2.4);
     } else if (e.type === 'fulltime') {
-      showFullTime();
+      if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
+      else showFullTime();
     }
   }
   match.events.length = 0;
@@ -229,7 +1080,7 @@ function handleEvents() {
 function updateHud(dt) {
   const [h, a] = match.teams;
   $('score').textContent = `${h.score} - ${a.score}`;
-  $('clock').textContent = `${displayMinute(match)}'`;
+  $('clock').textContent = match.practice ? 'FREE PLAY' : `${displayMinute(match)}'`;
   const banner = $('banner');
   if (match.banner && match.phase !== 'fulltime') {
     banner.textContent = match.banner.text;
@@ -246,7 +1097,7 @@ function updateHud(dt) {
     if (!team) continue;
     const panel = $(`${id}panel`);
     const p = team.controlled;
-    panel.querySelector('.pname').textContent = p ? `${p.number}  ${p.name}` : '';
+    panel.querySelector('.pname').textContent = p ? `${p.number}  ${p.name}${p.injured ? ' · INJ' : ''}` : '';
     const n = team.next;
     panel.querySelector('.pnext span').textContent = n ? `${n.number}  ${n.name}` : '-';
     panel.querySelector('.stamina i').style.width = `${(p ? p.stamina : 0) * 100}%`;
@@ -256,6 +1107,9 @@ function updateHud(dt) {
 }
 
 function showFullTime() {
+  $('ftTitle').textContent = 'Full time';
+  $('ftScorers').classList.remove('hidden');
+  $('ftStats').classList.remove('hidden');
   const [h, a] = match.teams;
   $('ftScore').innerHTML = `<span>${h.data.name}</span> <b>${h.score} - ${a.score}</b> <span>${a.data.name}</span>`;
   $('ftScorers').innerHTML = goals
@@ -266,8 +1120,66 @@ function showFullTime() {
     ['Possession', `${Math.round((100 * h.possessionTime) / total)}%`, `${Math.round((100 * a.possessionTime) / total)}%`],
     ['Shots', h.shots, a.shots],
     ['On target', h.onTarget, a.onTarget],
+    ['Cards', `${h.yellowCards}Y / ${h.redCards}R`, `${a.yellowCards}Y / ${a.redCards}R`],
+    ['Injuries', h.injuries, a.injuries],
+    ['Subs', h.substitutions, a.substitutions],
   ];
   $('ftStats').innerHTML = rows.map(([k, x, y]) => `<tr><td>${x}</td><th>${k}</th><td>${y}</td></tr>`).join('');
+  if (settings.mode === 'cup' && cup) {
+    advanceCupAfterUserMatch();
+    persistCup();
+    const roundNames = ['Quarter-final', 'Semi-final', 'Final'];
+    const completedRound = cup.lastUserRound;
+    const userFixture = cup.history.find((fixture) => fixture.round === completedRound
+      && (fixture.home.id === cup.userTeam.id || fixture.away.id === cup.userTeam.id));
+    const hasPenaltyScore = Number.isInteger(userFixture?.homePenalties)
+      && Number.isInteger(userFixture?.awayPenalties);
+    const penaltiesText = userFixture?.shootout
+      ? ` ${hasPenaltyScore ? `Penalties ${userFixture.homePenalties}–${userFixture.awayPenalties}` : 'Decided on penalties'} (${userFixture.winner.name} advance).`
+      : '';
+    $('ftCupNote').textContent = cup.champion
+      ? `${cup.eliminated ? 'Eliminated. ' : ''}Decades Cup champion: ${cup.champion.name}.${penaltiesText}`
+      : `${roundNames[completedRound] || `Round ${completedRound + 1}`} complete.${penaltiesText} Next: ${cup.matches[0].home.name} vs ${cup.matches[0].away.name}`;
+    $('ftCupNote').classList.remove('hidden');
+    const results = $('ftCupResults');
+    results.replaceChildren(...cup.history.map((fixture) => {
+      const item = document.createElement('li');
+      const round = roundNames[fixture.round] || `Round ${fixture.round + 1}`;
+      const hasPenaltyScore = Number.isInteger(fixture.homePenalties) && Number.isInteger(fixture.awayPenalties);
+      const tieBreak = fixture.shootout
+        ? hasPenaltyScore ? ` (penalties ${fixture.homePenalties}–${fixture.awayPenalties})` : ' (penalties)'
+        : '';
+      item.textContent = `${round}: ${fixture.home.name} ${fixture.homeScore}–${fixture.awayScore} ${fixture.away.name}${tieBreak}`;
+      return item;
+    }));
+    results.classList.remove('hidden');
+    $('rematchBtn').textContent = cup.champion ? 'Start New Cup' : 'Next Cup Match';
+  } else if (settings.mode === 'career' && league) {
+    const completedMatchday = league.round + 1;
+    advanceLeagueAfterUserMatch();
+    const table = leagueStandings();
+    const userPlace = table.findIndex((row) => row.team.id === league.userTeam.id) + 1;
+    $('ftCupNote').textContent = league.complete
+      ? `Season complete. ${league.champion.name} win the league${league.champion.id === league.userTeam.id ? ' — champions!' : '.'}`
+      : `Matchday ${completedMatchday} of ${league.schedule.length}. ${league.userTeam.name} are ${userPlace}${userPlace === 1 ? 'st' : userPlace === 2 ? 'nd' : userPlace === 3 ? 'rd' : 'th'}. Next: ${league.schedule[league.round][0].away.id === league.userTeam.id ? league.schedule[league.round][0].home.name : league.schedule[league.round][0].away.name}`;
+    $('ftCupNote').classList.remove('hidden');
+    const results = $('ftCupResults');
+    results.replaceChildren(...table.map((row, index) => {
+      const item = document.createElement('li');
+      const goalDifference = row.gf - row.ga;
+      const sign = goalDifference > 0 ? '+' : '';
+      item.textContent = `${index + 1}. ${row.team.name} — ${row.points} pts, ${row.wins}-${row.draws}-${row.losses}, GD ${sign}${goalDifference}`;
+      if (row.team.id === league.userTeam.id) item.classList.add('user-row');
+      return item;
+    }));
+    results.classList.remove('hidden');
+    $('rematchBtn').textContent = league.complete ? 'Start New Season' : 'Next Matchday';
+  } else {
+    $('ftCupNote').classList.add('hidden');
+    $('ftCupResults').classList.add('hidden');
+    $('ftCupResults').replaceChildren();
+    $('rematchBtn').textContent = 'Rematch';
+  }
   $('fulltime').classList.remove('hidden');
 }
 
@@ -280,10 +1192,10 @@ function frame(now) {
   if (match) {
     input.pollPads();
     if (input.padStartPressed() && match.phase !== 'fulltime') { setPaused(!paused); input.endStep(); }
-    if (!paused) {
+    if (!paused && !replayFrames) {
       acc += dt;
       const onePlayer = settings.mode === '1p';
-      while (acc >= FIXED_DT) {
+      while (acc >= FIXED_DT && !replayFrames) {
         const inputs = {
           p1: input.sample(onePlayer ? ['p1', 'p2'] : ['p1'], onePlayer ? [0, 1, 2, 3] : [0]),
           p2: input.sample(['p2'], [1]),
@@ -291,12 +1203,20 @@ function frame(now) {
         input.endStep();
         stepMatch(match, inputs, FIXED_DT);
         acc -= FIXED_DT;
+        if (match.phase !== 'fulltime') captureReplayFrame();
         if (match.events.length) handleEvents();
       }
     } else {
-      input.endStep(); // drop key presses made while paused
+      input.endStep(); // drop key presses while paused or watching a replay
     }
-    renderer.update(match, paused ? 0 : dt);
+    let renderState = match;
+    if (!paused && replayFrames) {
+      replayElapsed += dt;
+      const frameIndex = Math.floor(replayElapsed * REPLAY_FPS);
+      if (frameIndex >= replayFrames.length) finishReplay();
+      else renderState = replayFrames[frameIndex];
+    }
+    renderer.update(renderState, paused ? 0 : dt);
     updateHud(dt);
   } else {
     renderer.renderIdle(dt);

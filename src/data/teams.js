@@ -1,5 +1,5 @@
-// Ten decade teams of legends. Order of players follows FORMATION:
-// GK, DEF, DEF, MID, FWD.
+// Ten decade squads of legends. `players` starts with the 11-player 4-3-3
+// lineup; `bench` contains the reserves available for in-match substitutions.
 // Stats (0-99): spd = pace, pas = passing, sho = shooting,
 // tac = tackling, dri = dribbling, gk = goalkeeping.
 // Edit freely: add players, change ratings or kits. Adding a team here is
@@ -7,6 +7,12 @@
 
 const p = (name, number, spd, pas, sho, tac, dri, gk = 20) => ({
   name, number, stats: { spd, pas, sho, tac, dri, gk },
+});
+const extra = (role, name, number, spd, pas, sho, tac, dri) => ({
+  ...p(name, number, spd, pas, sho, tac, dri), role,
+});
+const reserve = (role, name, number, spd, pas, sho, tac, dri, gk = 20) => ({
+  ...p(name, number, spd, pas, sho, tac, dri, gk), role,
 });
 
 export const TEAMS = [
@@ -121,6 +127,81 @@ export const TEAMS = [
     ],
   },
 ];
+
+// Six additional outfield players complete the 4-3-3 starting XI. The first
+// five entries above retain the prototype's GK/DEF/DEF/MID/FWD ordering;
+// extras are appended as DEF/DEF/MID/MID/FWD/FWD.
+const supportingPlayers = {
+  '1910': [
+    extra('DEF', 'Charlie Roberts', 4, 72, 68, 42, 84, 62), extra('DEF', 'Frank Barson', 5, 68, 58, 38, 86, 48),
+    extra('MID', 'Billy Meredith', 11, 82, 86, 72, 48, 90), extra('MID', 'Arthur Grimsdell', 6, 72, 70, 58, 76, 66),
+    extra('FWD', 'Steve Bloomer', 10, 82, 78, 91, 38, 84), extra('FWD', 'Jimmy Quinn', 11, 76, 68, 86, 42, 72),
+  ],
+  '1920': [
+    extra('DEF', 'Eraldo Monzeglio', 3, 75, 70, 42, 84, 62), extra('DEF', 'Jock Rutherford', 4, 70, 65, 48, 78, 58),
+    extra('MID', 'Alex James', 8, 68, 90, 70, 54, 88), extra('MID', 'José Leandro Andrade', 6, 82, 78, 60, 82, 82),
+    extra('FWD', 'Manuel Seoane', 11, 78, 72, 90, 42, 80), extra('FWD', 'Pedro Cea', 7, 76, 82, 84, 50, 84),
+  ],
+  '1930': [
+    extra('DEF', 'Domingos da Guia', 4, 76, 78, 46, 89, 76), extra('DEF', 'Víctor Lindberg', 2, 72, 66, 40, 80, 58),
+    extra('MID', 'Giovanni Ferrari', 8, 76, 82, 75, 54, 80), extra('MID', 'Raimundo Orsi', 6, 82, 78, 82, 48, 82),
+    extra('FWD', 'Guillermo Stábile', 9, 80, 72, 92, 38, 78), extra('FWD', 'Oldřich Nejedlý', 11, 76, 70, 88, 42, 74),
+  ],
+  '1940': [
+    extra('DEF', 'Nílton Santos', 6, 80, 82, 58, 89, 78), extra('DEF', 'Obdulio Varela', 4, 70, 75, 48, 90, 68),
+    extra('MID', 'Adolfo Pedernera', 8, 78, 88, 82, 50, 86), extra('MID', 'Zizinho', 10, 80, 84, 86, 48, 90),
+    extra('FWD', 'Gyula Zsengellér', 9, 78, 76, 91, 40, 80), extra('FWD', 'Tom Finney', 11, 84, 82, 85, 46, 88),
+  ],
+  '1950': [
+    extra('DEF', 'José Santamaría', 3, 74, 72, 42, 90, 60), extra('DEF', 'Obdulio Varela', 4, 70, 75, 48, 90, 68),
+    extra('MID', 'Didi', 8, 78, 91, 80, 52, 90), extra('MID', 'Raymond Kopa', 7, 84, 86, 80, 42, 92),
+    extra('FWD', 'Garrincha', 11, 92, 82, 86, 40, 96), extra('FWD', 'Nándor Hidegkuti', 10, 76, 84, 88, 46, 86),
+  ],
+  '1960': [
+    extra('DEF', 'Elías Figueroa', 4, 78, 76, 50, 92, 72), extra('DEF', 'Ruud Krol', 3, 82, 82, 56, 89, 80),
+    extra('MID', 'Bobby Charlton', 8, 82, 84, 90, 52, 86), extra('MID', 'Gianni Rivera', 10, 76, 91, 78, 46, 92),
+    extra('FWD', 'Jairzinho', 11, 90, 78, 90, 42, 90), extra('FWD', 'Tostão', 9, 82, 86, 88, 44, 92),
+  ],
+  '1970': [
+    extra('DEF', 'Ruud Krol', 3, 82, 82, 56, 89, 80), extra('DEF', 'Carlos Alberto', 4, 86, 82, 72, 88, 82),
+    extra('MID', 'Günter Netzer', 8, 76, 92, 78, 50, 88), extra('MID', 'Rivellino', 10, 82, 88, 86, 48, 93),
+    extra('FWD', 'Mario Kempes', 9, 86, 78, 92, 48, 84), extra('FWD', 'Kevin Keegan', 11, 84, 76, 88, 50, 86),
+  ],
+  '1980': [
+    extra('DEF', 'Gaetano Scirea', 4, 78, 84, 50, 91, 78), extra('DEF', 'Claudio Gentile', 2, 78, 70, 42, 94, 60),
+    extra('MID', 'Lothar Matthäus', 8, 86, 84, 82, 88, 78), extra('MID', 'Michel Platini', 10, 78, 94, 91, 48, 94),
+    extra('FWD', 'Gary Lineker', 11, 82, 70, 92, 38, 80), extra('FWD', 'Romário', 7, 88, 76, 94, 34, 94),
+  ],
+  '1990': [
+    extra('DEF', 'Cafu', 2, 92, 82, 62, 86, 84), extra('DEF', 'Lilian Thuram', 4, 84, 72, 46, 92, 68),
+    extra('MID', 'Luis Figo', 7, 84, 90, 82, 48, 93), extra('MID', 'Rivaldo', 10, 84, 88, 92, 44, 94),
+    extra('FWD', 'Dennis Bergkamp', 11, 78, 92, 90, 40, 96), extra('FWD', 'Hristo Stoichkov', 9, 86, 78, 93, 52, 89),
+  ],
+  '2000': [
+    extra('DEF', 'Rio Ferdinand', 4, 84, 78, 46, 90, 72), extra('DEF', 'Alessandro Nesta', 2, 80, 78, 42, 94, 70),
+    extra('MID', 'Xavi', 6, 74, 96, 66, 66, 93), extra('MID', 'Ronaldinho', 11, 88, 92, 91, 42, 97),
+    extra('FWD', 'Cristiano Ronaldo', 7, 94, 82, 94, 46, 94), extra('FWD', 'Samuel Eto’o', 9, 92, 78, 92, 42, 90),
+  ],
+};
+
+for (const team of TEAMS) team.players.push(...(supportingPlayers[team.id] || []));
+
+// Four named bench options per team give each side a reserve keeper and three
+// outfield choices. Matches allow three substitutions, as in the game's era.
+const benchPlayers = {
+  '1910': [reserve('GK', 'Sam Hardy', 12, 65, 58, 30, 42, 48, 84), reserve('DEF', 'Colin Veitch', 13, 75, 70, 50, 82, 68), reserve('MID', 'Billy Gillespie', 14, 76, 82, 75, 50, 82), reserve('FWD', 'George Wall', 15, 80, 74, 86, 42, 84)],
+  '1920': [reserve('GK', 'Elisha Scott', 12, 63, 58, 30, 42, 48, 87), reserve('DEF', 'George Male', 13, 73, 70, 48, 83, 64), reserve('MID', 'Jimmy Gordon', 14, 76, 78, 70, 54, 80), reserve('FWD', 'Hughie Gallacher', 15, 82, 76, 90, 42, 86)],
+  '1930': [reserve('GK', 'Alex Thepot', 12, 64, 59, 30, 42, 48, 86), reserve('DEF', 'Ernst Ocwirk', 13, 74, 80, 58, 84, 76), reserve('MID', 'Giovanni Ferrari', 14, 78, 84, 77, 54, 82), reserve('FWD', 'Guillermo Stábile', 15, 82, 75, 92, 40, 80)],
+  '1940': [reserve('GK', 'Bert Trautmann', 12, 67, 60, 30, 44, 50, 88), reserve('DEF', 'Tarcisio Burgnich', 13, 75, 72, 46, 88, 68), reserve('MID', 'Wilf Mannion', 14, 80, 84, 82, 52, 88), reserve('FWD', 'Gunnar Nordahl', 15, 78, 73, 93, 44, 82)],
+  '1950': [reserve('GK', 'Lev Yashin', 12, 68, 65, 30, 44, 52, 93), reserve('DEF', 'Bellini', 13, 74, 70, 42, 86, 62), reserve('MID', 'Omar Sívori', 14, 82, 88, 86, 46, 93), reserve('FWD', 'Just Fontaine', 15, 82, 78, 94, 40, 86)],
+  '1960': [reserve('GK', 'Gordon Banks', 12, 68, 65, 30, 44, 52, 92), reserve('DEF', 'Elías Figueroa', 13, 78, 78, 52, 92, 74), reserve('MID', 'Denis Law', 14, 84, 76, 91, 44, 88), reserve('FWD', 'Jimmy Greaves', 15, 84, 78, 95, 38, 90)],
+  '1970': [reserve('GK', 'Dino Zoff', 12, 67, 66, 30, 44, 50, 93), reserve('DEF', 'Paul Breitner', 13, 82, 84, 70, 85, 82), reserve('MID', 'Günter Netzer', 14, 77, 92, 78, 50, 88), reserve('FWD', 'Mario Kempes', 15, 87, 78, 93, 48, 86)],
+  '1980': [reserve('GK', 'Rinat Dasayev', 12, 68, 64, 30, 43, 50, 91), reserve('DEF', 'Gaetano Scirea', 13, 79, 84, 50, 91, 78), reserve('MID', 'Bryan Robson', 14, 84, 80, 82, 82, 78), reserve('FWD', 'Jean-Pierre Papin', 15, 86, 75, 93, 40, 86)],
+  '1990': [reserve('GK', 'Oliver Kahn', 12, 70, 65, 30, 45, 52, 94), reserve('DEF', 'Jaap Stam', 13, 82, 68, 42, 93, 64), reserve('MID', 'David Beckham', 14, 78, 94, 82, 52, 92), reserve('FWD', 'George Weah', 15, 92, 82, 95, 46, 92)],
+  '2000': [reserve('GK', 'Iker Casillas', 12, 72, 68, 30, 44, 54, 94), reserve('DEF', 'John Terry', 13, 74, 72, 54, 94, 66), reserve('MID', 'Steven Gerrard', 14, 86, 88, 86, 82, 86), reserve('FWD', 'Andriy Shevchenko', 15, 88, 80, 94, 42, 90)],
+};
+
+for (const team of TEAMS) team.bench = benchPlayers[team.id] || [];
 
 export function getTeam(id) {
   return TEAMS.find((t) => t.id === id) || TEAMS[0];
