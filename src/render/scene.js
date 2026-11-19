@@ -417,6 +417,13 @@ export function createRenderer(canvasEl) {
   );
   ball.castShadow = true;
   scene.add(ball);
+  const ballShadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.34, 24),
+    new THREE.MeshBasicMaterial({ color: '#101820', transparent: true, opacity: 0.42, depthWrite: false }),
+  );
+  ballShadow.rotation.x = -Math.PI / 2;
+  ballShadow.position.y = 0.035;
+  scene.add(ballShadow);
   const prevBall = new THREE.Vector3();
 
   // Arrow above each human's current player (cyan = P1, pink = P2).
@@ -526,6 +533,11 @@ export function createRenderer(canvasEl) {
     const b = state.ball;
     ball.position.set(b.pos.x, b.pos.y, b.pos.z);
     if (b.owner && b.owner.role === 'GK') ball.position.y = 1.05;
+    const ballHeight = Math.max(0, ball.position.y - BALL_R);
+    ballShadow.position.x = ball.position.x;
+    ballShadow.position.z = ball.position.z;
+    ballShadow.scale.setScalar(1 + Math.min(0.45, ballHeight * 0.08));
+    ballShadow.material.opacity = Math.max(0.12, 0.42 - ballHeight * 0.045);
     const dx = ball.position.x - prevBall.x, dz = ball.position.z - prevBall.z;
     const d = Math.hypot(dx, dz);
     if (d > 1e-5 && d < 5) {
