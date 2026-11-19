@@ -974,8 +974,10 @@ function showFullTime() {
     const completedRound = cup.lastUserRound;
     const userFixture = cup.history.find((fixture) => fixture.round === completedRound
       && (fixture.home.id === cup.userTeam.id || fixture.away.id === cup.userTeam.id));
+    const hasPenaltyScore = Number.isInteger(userFixture?.homePenalties)
+      && Number.isInteger(userFixture?.awayPenalties);
     const penaltiesText = userFixture?.shootout
-      ? ` Penalties: ${userFixture.homePenalties}–${userFixture.awayPenalties} (${userFixture.winner.name} advance).`
+      ? ` ${hasPenaltyScore ? `Penalties ${userFixture.homePenalties}–${userFixture.awayPenalties}` : 'Decided on penalties'} (${userFixture.winner.name} advance).`
       : '';
     $('ftCupNote').textContent = cup.champion
       ? `${cup.eliminated ? 'Eliminated. ' : ''}Decades Cup champion: ${cup.champion.name}.${penaltiesText}`
@@ -985,7 +987,10 @@ function showFullTime() {
     results.replaceChildren(...cup.history.map((fixture) => {
       const item = document.createElement('li');
       const round = roundNames[fixture.round] || `Round ${fixture.round + 1}`;
-      const tieBreak = fixture.shootout ? ` (penalties ${fixture.homePenalties}–${fixture.awayPenalties})` : '';
+      const hasPenaltyScore = Number.isInteger(fixture.homePenalties) && Number.isInteger(fixture.awayPenalties);
+      const tieBreak = fixture.shootout
+        ? hasPenaltyScore ? ` (penalties ${fixture.homePenalties}–${fixture.awayPenalties})` : ' (penalties)'
+        : '';
       item.textContent = `${round}: ${fixture.home.name} ${fixture.homeScore}–${fixture.awayScore} ${fixture.away.name}${tieBreak}`;
       return item;
     }));
