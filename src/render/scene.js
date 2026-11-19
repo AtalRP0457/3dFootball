@@ -292,6 +292,23 @@ function numberTexture(num, shirt, renderer) {
   return texture(c, renderer);
 }
 
+function jerseyTexture(shirt, trim, renderer) {
+  const [c, g] = canvas(128, 128);
+  g.fillStyle = shirt; g.fillRect(0, 0, 128, 128);
+  // Fine fabric weave and original diagonal paneling keep kits readable at
+  // broadcast distance without relying on branded artwork.
+  g.globalAlpha = 0.16;
+  g.strokeStyle = '#ffffff'; g.lineWidth = 1;
+  for (let i = -128; i < 192; i += 8) {
+    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 128, 128); g.stroke();
+  }
+  g.globalAlpha = 1;
+  g.fillStyle = trim;
+  g.fillRect(0, 8, 128, 6);
+  g.fillRect(58, 0, 12, 128);
+  return texture(c, renderer);
+}
+
 function makePlayer(p, kit, renderer) {
   const isGK = p.role === 'GK';
   const shirt = isGK ? kit.gk : kit.shirt;
@@ -300,7 +317,9 @@ function makePlayer(p, kit, renderer) {
   const skin = SKIN[(p.id * 7 + p.number) % SKIN.length];
   const hair = HAIR[(p.id * 3 + p.number) % HAIR.length];
   const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
-  const shirtM = mat(shirt), shortsM = mat(shorts), sockM = mat(socks), skinM = mat(skin);
+  const kitTrim = luminance(shirt) > 0.55 ? '#17304d' : '#f2d36b';
+  const shirtM = new THREE.MeshLambertMaterial({ map: jerseyTexture(shirt, kitTrim, renderer) });
+  const shortsM = mat(shorts), sockM = mat(socks), skinM = mat(skin);
   const bootM = mat('#111111');
 
   const root = new THREE.Group();
@@ -321,7 +340,7 @@ function makePlayer(p, kit, renderer) {
     new THREE.MeshBasicMaterial({ map: numberTexture(p.number, shirt, renderer), transparent: true }));
   frontNum.position.set(0, 1.22, 0.145);
   body.add(frontNum);
-  const trimM = mat(luminance(shirt) > 0.55 ? '#17304d' : '#f2d36b');
+  const trimM = mat(kitTrim);
   const trim = (w, h, d, x, y, z, material = trimM) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
     mesh.position.set(x, y, z); body.add(mesh); return mesh;
@@ -375,6 +394,9 @@ function makePlayer(p, kit, renderer) {
     lower.position.y = -0.56;
     lower.castShadow = true;
     leg.add(lower);
+    const sockBand = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.038, 0.18), trimM);
+    sockBand.position.y = -0.47;
+    leg.add(sockBand);
     const boot = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.08, 0.28), bootM);
     boot.position.set(0, -0.72, 0.05);
     leg.add(boot);
