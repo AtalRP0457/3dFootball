@@ -878,6 +878,7 @@ function startMatch() {
   $('p1panel').style.display = match.teams.some((t) => t.human === 'p1') ? '' : 'none';
   $('p2panel').style.display = match.teams.some((t) => t.human === 'p2') ? '' : 'none';
   $('subsBtn').classList.toggle('hidden', !match.teams.some((t) => t.human));
+  $('formationRow').classList.toggle('hidden', !!match.indoor);
   $('subsPanel').classList.add('hidden');
   // P1 panel sits on the side of the team P1 controls.
   const p1Team = match.teams.find((t) => t.human === 'p1');
