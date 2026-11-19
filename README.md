@@ -24,7 +24,7 @@ the code ownership split, local setup, and GitHub branch/review workflow. See
 - **1 Player vs AI**: you pick your team and an AI opponent (Easy / Normal / Hard).
 - **2 Players**: same keyboard (or two gamepads).
 - **Watch AI vs AI**
-- **Decades Cup**: an 8-team knockout tournament with quick AI-simulated fixtures. Tied user matches go to playable penalties: aim each shot, choose a keeper dive and continue through sudden death if needed.
+- **Decades Cup**: an 8-team knockout tournament with quick AI-simulated fixtures. Tied user matches play extra time, then go to playable penalties: aim each shot, choose a keeper dive and continue through sudden death if needed.
 - **Penalty Shootout**: a standalone sudden-death shootout where you place shots and choose your keeper's dive.
 - **Practice**: an open-ended match against easy AI with no halftime or full-time whistle.
 - **Indoor Soccer**: fast five-a-side play with active side and end boards that keep the ball in motion. Indoor sides use their own compact shape; substitutions remain available from Team Management.
