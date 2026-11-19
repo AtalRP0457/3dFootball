@@ -467,6 +467,18 @@ export function createRenderer(canvasEl) {
     markers[id] = { arrow };
   }
   const ringGeo = new THREE.RingGeometry(0.55, 0.78, 32);
+  const arenaGlow = new THREE.Group();
+  const glowMat = new THREE.MeshBasicMaterial({ color: '#33c8ff', transparent: true, opacity: 0.7 });
+  for (const z of [-HALF_W - 0.25, HALF_W + 0.25]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(PITCH.length + 1, 0.42, 0.12), glowMat);
+    rail.position.set(0, 0.28, z); arenaGlow.add(rail);
+  }
+  for (const x of [-HALF_L - 0.25, HALF_L + 0.25]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.42, PITCH.width + 1), glowMat);
+    rail.position.set(x, 0.28, 0); arenaGlow.add(rail);
+  }
+  arenaGlow.visible = false;
+  scene.add(arenaGlow);
 
   let playerMeshes = [];
   let camMode = 'broadcast';
@@ -475,6 +487,9 @@ export function createRenderer(canvasEl) {
   let time = 0;
 
   function setMatch(state) {
+    arenaGlow.visible = !!state.indoor;
+    scene.background.set(state.indoor ? '#071329' : '#8fbfe8');
+    scene.fog.color.set(state.indoor ? '#071329' : '#8fbfe8');
     for (const m of playerMeshes) scene.remove(m.root);
     playerMeshes = state.players.map((p) => {
       const m = makePlayer(p, state.teams[p.team].kit, renderer);

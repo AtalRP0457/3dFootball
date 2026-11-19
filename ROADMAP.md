@@ -84,6 +84,6 @@ those events without changing game state.
 
 The project has 11-a-side decade squads, 1P/2P/CPU matches, a Decades Cup,
 Career Season, basic rules and match management, touch controls, procedural
-stadium graphics, sound, goal replays, player-controlled cup shootouts, a standalone penalty shootout and open-ended practice matches. It still lacks several rule details,
+stadium graphics, sound, goal replays, player-controlled cup shootouts, a standalone penalty shootout, indoor five-a-side with rebound boards, and open-ended practice matches. It still lacks several rule details,
 the signature FIFA 98 variants, extensive animation and presentation, and
 release-level verification. Keep those gaps visible while developing.

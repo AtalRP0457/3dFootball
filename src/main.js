@@ -26,7 +26,7 @@ function loadSettings() {
     const teamIds = new Set(TEAMS.map((team) => team.id));
     return {
       ...DEFAULT_SETTINGS,
-      ...(saved && ['1p', '2p', 'cpu', 'cup', 'career', 'penalties', 'practice'].includes(saved.mode) ? { mode: saved.mode } : {}),
+      ...(saved && ['1p', '2p', 'cpu', 'cup', 'career', 'penalties', 'practice', 'indoor'].includes(saved.mode) ? { mode: saved.mode } : {}),
       ...(saved && teamIds.has(saved.home) ? { home: saved.home } : {}),
       ...(saved && teamIds.has(saved.away) ? { away: saved.away } : {}),
       ...(saved && ['easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
@@ -449,6 +449,7 @@ function refreshMenu() {
     cpu: ['Home <span class="who ai">AI</span>', 'Away <span class="who ai">AI</span>'],
     cup: ['Cup team <span class="who p1">P1</span>', 'Opening opponent <span class="who ai">AI</span>'],
     penalties: ['Shooter <span class="who p1">P1</span>', 'Keeper <span class="who ai">AI</span>'],
+    indoor: ['Indoor side <span class="who p1">P1</span>', 'Indoor opposition <span class="who ai">AI</span>'],
     practice: ['Practice team <span class="who p1">P1</span>', 'Training opposition <span class="who ai">AI</span>'],
     career: ['Career team <span class="who p1">P1</span>', 'First opponent <span class="who ai">AI</span>'],
   }[settings.mode];
@@ -856,7 +857,7 @@ function startMatch() {
   match = createMatch({
     home, away, controllers: controllers(),
     difficulty: settings.mode === 'practice' ? 'easy' : settings.difficulty,
-    duration: settings.duration, practice: settings.mode === 'practice',
+    duration: settings.duration, practice: settings.mode === 'practice', indoor: settings.mode === 'indoor',
   });
   goals = [];
   acc = 0;

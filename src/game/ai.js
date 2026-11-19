@@ -5,7 +5,7 @@
 // the opponent's goal and az is mirrored the same way, so the same rules
 // work for both teams.
 
-import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION, FORMATIONS } from './constants.js';
+import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.js';
 
 const len = (x, z) => Math.hypot(x, z);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -168,7 +168,7 @@ function offBallAI(state, p, team, c, dt) {
   }
 
   // Shape: work out a target spot in attack coordinates.
-  const slot = (FORMATIONS[team.formation] || FORMATION)[p.idx];
+  const slot = (state.indoor ? INDOOR_FORMATION : (FORMATIONS[team.formation] || FORMATION))[p.idx];
   const bax = b.pos.x * dir, baz = b.pos.z * dir;
   const hx = slot.x * HALF_L, hz = slot.z * HALF_W;
   let ax, az, sprint = false;

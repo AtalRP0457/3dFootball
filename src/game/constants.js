@@ -78,6 +78,16 @@ export const FORMATIONS = {
   ],
 };
 
+// Five-a-side shape used by the indoor mode. It intentionally has its own
+// compact roles instead of pretending a full 11-a-side formation is indoor.
+export const INDOOR_FORMATION = [
+  { role: 'GK', x: -0.88, z: 0 },
+  { role: 'DEF', x: -0.36, z: 0 },
+  { role: 'MID', x: 0.04, z: -0.38 },
+  { role: 'MID', x: 0.04, z: 0.38 },
+  { role: 'FWD', x: 0.42, z: 0 },
+];
+
 export const KICKOFF_ATTACK = [
   { x: -0.94, z: 0 },
   { x: -0.62, z: -0.24 },

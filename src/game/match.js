@@ -4,7 +4,7 @@
 import {
   HALF_L, HALF_W, GOAL, BOX, BALL_R, GRAVITY, ROLL_DECEL, AIR_DRAG, BOUNCE,
   CONTROL_RADIUS, DRIBBLE_OFFSET, PLAYER_RADIUS, SHOT_CHARGE_TIME,
-  MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, FORMATIONS,
+  MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, FORMATIONS, INDOOR_FORMATION,
   PENALTY_SPOT,
 } from './constants.js';
 import { updateAI } from './ai.js';
@@ -114,7 +114,11 @@ export function createMatch(cfg) {
         kickAnim: 0,
       });
     };
-    FORMATION.forEach((slot, idx) => addPlayer(team.data.players[idx], idx, slot.role, true));
+    const startingSlots = cfg.indoor ? INDOOR_FORMATION : FORMATION;
+    team.data.players.forEach((player, idx) => {
+      const slot = startingSlots[idx] || FORMATION[idx];
+      addPlayer(player, idx < startingSlots.length ? idx : -1, slot.role, idx < startingSlots.length);
+    });
     (team.data.bench || []).forEach((pd, benchIndex) => addPlayer(pd, -1, pd.role, false, benchIndex));
   });
 
@@ -140,6 +144,7 @@ export function createMatch(cfg) {
     clock: 0,
     duration: cfg.duration || 240,
     practice: !!cfg.practice,
+    indoor: !!cfg.indoor,
     penalty: null,
     openingKickoff: 0,
     phase: 'kickoff',
@@ -169,6 +174,7 @@ export function setTeamTactic(state, teamIdx, tactic) {
 
 export function setTeamFormation(state, teamIdx, formation) {
   const team = state.teams[teamIdx];
+  if (state.indoor) return false;
   const slots = FORMATIONS[formation];
   if (!team || !slots) return false;
   if (team.formation === formation) return true;
@@ -178,6 +184,10 @@ export function setTeamFormation(state, teamIdx, formation) {
   }
   state.events.push({ type: 'formation', team: teamIdx, formation });
   return true;
+}
+
+function formationFor(state, team) {
+  return state.indoor ? INDOOR_FORMATION : (FORMATIONS[team.formation] || FORMATION);
 }
 
 /** Make the change now at a stoppage, or queue it for the next dead ball. */
@@ -257,7 +267,7 @@ function applySubstitution(state, team, outgoing, incoming) {
   state.ball.offsidePlayers = state.ball.offsidePlayers.filter((player) => player !== outgoing);
   if (wasControlled) setControlled(state, team, incoming);
   team.substitutions++;
-  state.events.push({ type: 'substitution', team: teamIdx, outgoing: outgoing.id, incoming: incoming.id });
+  state.events.push({ type: 'substitution', team: team.index, outgoing: outgoing.id, incoming: incoming.id });
   return true;
 }
 
@@ -352,7 +362,7 @@ export function setupKickoff(state, teamIdx) {
   applyPendingSubstitutions(state);
   const b = state.ball;
   for (const team of state.teams) {
-    const slots = FORMATIONS[team.formation] || FORMATION;
+    const slots = formationFor(state, team);
     teamPlayers(state, team.index).forEach((p) => {
       if (!p.onPitch) return;
       if (p.sentOff) {
@@ -369,7 +379,7 @@ export function setupKickoff(state, teamIdx) {
       placePlayer(p, toWorld(team, localX, team.index === teamIdx && p.idx === 4 ? 0 : slot.z), team.dir);
     });
   }
-  const taker = teamPlayers(state, teamIdx).find((p) => p.idx === 4 && !p.sentOff)
+  const taker = teamPlayers(state, teamIdx).find((p) => p.idx === (state.indoor ? 4 : 4) && !p.sentOff)
     || nearestTo(state, teamIdx, { x: 0, z: 0 }, null, true);
   if (!taker) return;
   b.pos.x = 0; b.pos.y = BALL_R; b.pos.z = 0;
@@ -1227,6 +1237,14 @@ function checkOutOfPlay(state) {
       scoreGoal(state, scorer.index);
       return;
     }
+    if (state.indoor) {
+      b.pos.x = Math.sign(x) * (HALF_L - BALL_R);
+      b.vel.x *= -0.78;
+      b.vel.z *= 0.96;
+      b.lastTouch = null;
+      state.events.push({ type: 'board' });
+      return;
+    }
     if (state.penalty?.pending) {
       const expired = !state.practice && state.clock >= state.duration;
       state.penalty = null;
@@ -1247,6 +1265,14 @@ function checkOutOfPlay(state) {
     return;
   }
   if (Math.abs(z) > HALF_W + BALL_R) {
+    if (state.indoor) {
+      b.pos.z = Math.sign(z) * (HALF_W - BALL_R);
+      b.vel.z *= -0.78;
+      b.vel.x *= 0.96;
+      b.lastTouch = null;
+      state.events.push({ type: 'board' });
+      return;
+    }
     if (state.penalty?.pending) {
       const expired = !state.practice && state.clock >= state.duration;
       state.penalty = null;

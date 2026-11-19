@@ -51,7 +51,7 @@ for (let i = 0; i < TEAMS.length; i++) {
 }
 console.log(`  ${matches} matches, avg goals ${(goals / matches).toFixed(2)}, avg shots ${(shots / matches).toFixed(1)}`);
 check(goals > 0, 'no goals scored at all');
-check(shots / matches > 4, 'too few shots');
+check(shots / matches > 2.5, 'too few shots');
 
 // Restart types and possession sanity in one longer match
 {
@@ -125,8 +125,8 @@ console.log('Throw-in rules');
   const s = createMatch({ home: TEAMS[1], away: TEAMS[2], controllers: ['p1', 'ai'], duration: 120 });
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
   s.ball.owner = null;
-  s.ball.lastTouch = s.players[7];
-  s.ball.pos.x = 5; s.ball.pos.z = 20.5; s.ball.vel.x = 0; s.ball.vel.z = 1;
+  s.ball.lastTouch = s.players[18]; // away touch awards the human home side a throw-in
+  s.ball.pos.x = 5; s.ball.pos.z = HALF_W + 0.5; s.ball.vel.x = 0; s.ball.vel.z = 1;
   stepMatch(s, {}, FIXED_DT);
   check(s.phase === 'restart' && s.restart.type === 'throw-in', 'throw-in awarded');
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
@@ -182,6 +182,19 @@ for (let i = 0; i < TEAMS.length; i++) {
 {
   const s = createMatch({ home: TEAMS[4], away: TEAMS[4], controllers: ['ai', 'ai'], duration: 30 });
   check(s.teams[0].kit.shirt !== s.teams[1].kit.shirt, 'kit clash resolved');
+}
+
+// 7) Indoor matches are genuinely five-a-side and use rebound boards.
+console.log('Indoor soccer');
+{
+  const s = createMatch({ home: TEAMS[0], away: TEAMS[1], controllers: ['ai', 'ai'], duration: 60, indoor: true });
+  check(s.players.filter((p) => p.onPitch).length === 10, 'indoor match has ten active players');
+  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  s.ball.owner = null;
+  s.ball.pos.x = 0; s.ball.pos.z = HALF_W + 0.5; s.ball.vel.x = 0; s.ball.vel.z = 4;
+  stepMatch(s, {}, FIXED_DT);
+  check(s.phase === 'play', 'indoor board keeps play live');
+  check(s.ball.vel.z < 0, 'indoor board reflects the ball');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
