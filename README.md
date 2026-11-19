@@ -16,7 +16,8 @@ npm run dev      # then open the http://localhost:5173 link it prints
 `npm test` runs the headless match simulations (no browser needed).
 
 If you're building with friends, see [CONTRIBUTING.md](CONTRIBUTING.md) for
-the code ownership split, local setup, and GitHub branch/review workflow.
+the code ownership split, local setup, and GitHub branch/review workflow. See
+[ROADMAP.md](ROADMAP.md) for milestones toward a fuller FIFA 98-inspired game.
 
 ## Modes
 
