@@ -74,7 +74,8 @@ array with reserve roles and ratings. It appears in the menu automatically.
 
 ## Still in progress
 
-The prototype now has basic offside, foul and card decisions, rare injuries,
-and pause-menu substitutions. It does not yet model every Laws of the Game
-detail, including offside interference beyond receiving the ball, full player
-animations, or complete match presentation.
+The prototype now has basic offside calls for receiving the ball and for
+nearby challenges, plus foul and card decisions, rare injuries, and pause-menu
+substitutions. It does not yet model every Laws of the Game detail, including
+line-of-sight offside interference, all foul decisions, full player animations,
+or complete match presentation.

@@ -866,7 +866,9 @@ function handleEvents() {
     } else if (e.type === 'save' && Math.random() < 0.6) {
       showSub(e.parry ? 'Great save!' : 'Safe hands', 1.0);
     } else if (e.type === 'offside') {
-      showSub(`${match.players[e.player].name} offside`, 1.5);
+      showSub(e.interference
+        ? `${match.players[e.player].name} penalized for offside interference`
+        : `${match.players[e.player].name} offside`, 1.8);
     } else if (e.type === 'foul') {
       showSub(e.penalty ? 'Foul — penalty awarded' : 'Foul — free kick', 1.8);
     } else if (e.type === 'card') {
