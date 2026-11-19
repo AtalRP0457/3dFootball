@@ -309,6 +309,8 @@ function loadCup() {
       return {
         home, away, winner: teamById(fixture.winnerId),
         homeScore: fixture.homeScore, awayScore: fixture.awayScore,
+        homePenalties: Number.isInteger(fixture.homePenalties) ? fixture.homePenalties : null,
+        awayPenalties: Number.isInteger(fixture.awayPenalties) ? fixture.awayPenalties : null,
         shootout: !!fixture.shootout, round: fixture.round,
       };
     };
@@ -335,6 +337,8 @@ function persistCup() {
       winnerId: fixture.winner?.id || null,
       homeScore: fixture.homeScore,
       awayScore: fixture.awayScore,
+      homePenalties: fixture.homePenalties,
+      awayPenalties: fixture.awayPenalties,
       shootout: fixture.shootout,
       round: fixture.round,
     });
@@ -576,23 +580,37 @@ function shootoutWinner(home, away) {
     take(homeShooters, awayKeeper, i, 0);
     take(awayShooters, homeKeeper, i, 1);
     const remaining = 4 - i;
-    if (scores[0] > scores[1] + remaining) return home;
-    if (scores[1] > scores[0] + remaining) return away;
+    if (scores[0] > scores[1] + remaining) return { winner: home, homeScore: scores[0], awayScore: scores[1] };
+    if (scores[1] > scores[0] + remaining) return { winner: away, homeScore: scores[0], awayScore: scores[1] };
   }
-  for (let i = 5; i < 15 && scores[0] === scores[1]; i++) {
+  for (let i = 5; scores[0] === scores[1]; i++) {
     take(homeShooters, awayKeeper, i, 0);
     take(awayShooters, homeKeeper, i, 1);
   }
-  return scores[0] === scores[1] ? (Math.random() < 0.5 ? home : away) : scores[0] > scores[1] ? home : away;
+  return {
+    winner: scores[0] > scores[1] ? home : away,
+    homeScore: scores[0], awayScore: scores[1],
+  };
+}
+
+function decideCupFixture(fixture) {
+  fixture.shootout = fixture.homeScore === fixture.awayScore;
+  if (fixture.shootout) {
+    const result = shootoutWinner(fixture.home, fixture.away);
+    fixture.winner = result.winner;
+    fixture.homePenalties = result.homeScore;
+    fixture.awayPenalties = result.awayScore;
+  } else {
+    fixture.winner = fixture.homeScore > fixture.awayScore ? fixture.home : fixture.away;
+    fixture.homePenalties = null;
+    fixture.awayPenalties = null;
+  }
 }
 
 function simulateCupFixture(fixture, round) {
   if (fixture.winner) return;
   simulateAiMatch(fixture);
-  fixture.shootout = fixture.homeScore === fixture.awayScore;
-  fixture.winner = fixture.shootout
-    ? shootoutWinner(fixture.home, fixture.away)
-    : fixture.homeScore > fixture.awayScore ? fixture.home : fixture.away;
+  decideCupFixture(fixture);
   fixture.round = round;
   cup.history.push(fixture);
 }
@@ -647,10 +665,7 @@ function advanceCupAfterUserMatch() {
   if (fixture.winner) return;
   fixture.homeScore = match.teams[0].score;
   fixture.awayScore = match.teams[1].score;
-  fixture.shootout = fixture.homeScore === fixture.awayScore;
-  fixture.winner = fixture.shootout
-    ? shootoutWinner(fixture.home, fixture.away)
-    : fixture.homeScore > fixture.awayScore ? fixture.home : fixture.away;
+  decideCupFixture(fixture);
   fixture.round = cup.round;
   cup.lastUserRound = cup.round;
   cup.history.push(fixture);
@@ -957,15 +972,20 @@ function showFullTime() {
     persistCup();
     const roundNames = ['Quarter-final', 'Semi-final', 'Final'];
     const completedRound = cup.lastUserRound;
+    const userFixture = cup.history.find((fixture) => fixture.round === completedRound
+      && (fixture.home.id === cup.userTeam.id || fixture.away.id === cup.userTeam.id));
+    const penaltiesText = userFixture?.shootout
+      ? ` Penalties: ${userFixture.homePenalties}–${userFixture.awayPenalties} (${userFixture.winner.name} advance).`
+      : '';
     $('ftCupNote').textContent = cup.champion
-      ? `${cup.eliminated ? 'Eliminated. ' : ''}Decades Cup champion: ${cup.champion.name}`
-      : `${roundNames[completedRound] || `Round ${completedRound + 1}`} complete. Next: ${cup.matches[0].home.name} vs ${cup.matches[0].away.name}`;
+      ? `${cup.eliminated ? 'Eliminated. ' : ''}Decades Cup champion: ${cup.champion.name}.${penaltiesText}`
+      : `${roundNames[completedRound] || `Round ${completedRound + 1}`} complete.${penaltiesText} Next: ${cup.matches[0].home.name} vs ${cup.matches[0].away.name}`;
     $('ftCupNote').classList.remove('hidden');
     const results = $('ftCupResults');
     results.replaceChildren(...cup.history.map((fixture) => {
       const item = document.createElement('li');
       const round = roundNames[fixture.round] || `Round ${fixture.round + 1}`;
-      const tieBreak = fixture.shootout ? ' (penalties)' : '';
+      const tieBreak = fixture.shootout ? ` (penalties ${fixture.homePenalties}–${fixture.awayPenalties})` : '';
       item.textContent = `${round}: ${fixture.home.name} ${fixture.homeScore}–${fixture.awayScore} ${fixture.away.name}${tieBreak}`;
       return item;
     }));
