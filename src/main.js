@@ -20,6 +20,7 @@ const settings = {
 
 const renderer = createRenderer($('game'));
 const input = new Input();
+const touchInput = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
 const audio = new MatchAudio();
 let match = null;
 let cup = loadCup();
@@ -127,6 +128,70 @@ function teamCard(team, side) {
   return el;
 }
 
+function setupTouchControls() {
+  const publish = (patch) => {
+    Object.assign(touchInput, patch);
+    input.setTouch(touchInput);
+  };
+  const stick = $('touchStick');
+  const knob = $('touchStickKnob');
+  let stickPointer = null;
+  const moveStick = (event) => {
+    if (event.pointerId !== stickPointer) return;
+    const rect = stick.getBoundingClientRect();
+    const max = rect.width * 0.34;
+    const rawX = event.clientX - (rect.left + rect.width / 2);
+    const rawY = event.clientY - (rect.top + rect.height / 2);
+    const distance = Math.hypot(rawX, rawY);
+    const scale = distance > max ? max / distance : 1;
+    const dx = rawX * scale, dy = rawY * scale;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    publish({ mx: dx / max, mz: dy / max });
+  };
+  const releaseStick = (event) => {
+    if (event.pointerId !== stickPointer) return;
+    stickPointer = null;
+    knob.style.transform = 'translate(0, 0)';
+    publish({ mx: 0, mz: 0 });
+  };
+  stick.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    stickPointer = event.pointerId;
+    stick.setPointerCapture(event.pointerId);
+    moveStick(event);
+  });
+  stick.addEventListener('pointermove', moveStick);
+  stick.addEventListener('pointerup', releaseStick);
+  stick.addEventListener('pointercancel', releaseStick);
+
+  const bindHeld = (id, field, onPress = {}) => {
+    const button = $(id);
+    const release = () => publish({ [field]: false });
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      publish({ ...onPress, [field]: true });
+    });
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+    button.addEventListener('lostpointercapture', release);
+  };
+  bindHeld('touchSprint', 'sprint');
+  bindHeld('touchShoot', 'shootHeld', { shootPressed: true });
+  $('touchPass').addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    publish({ passPressed: true });
+  });
+  window.addEventListener('blur', resetTouchControls);
+}
+
+function resetTouchControls() {
+  Object.assign(touchInput, { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false });
+  input.setTouch(touchInput);
+  const knob = $('touchStickKnob');
+  if (knob) knob.style.transform = 'translate(0, 0)';
+}
+
 function buildMenu() {
   for (const t of TEAMS) {
     $('homeGrid').appendChild(teamCard(t, 'home'));
@@ -150,6 +215,7 @@ function buildMenu() {
   });
   $('replaySkip').addEventListener('click', finishReplay);
   setupTutorial();
+  setupTouchControls();
   $('resumeBtn').addEventListener('click', () => setPaused(false));
   $('subsBtn').addEventListener('click', () => {
     $('subsPanel').classList.remove('hidden');
@@ -589,6 +655,7 @@ function advanceCupAfterUserMatch() {
 }
 
 function startMatch() {
+  resetTouchControls();
   audio.unlock();
   audio.setInMatch(true);
   let home, away;
@@ -619,6 +686,9 @@ function startMatch() {
   replayFrames = null;
   replayElapsed = replayCaptureElapsed = 0;
   $('replaySkip').classList.add('hidden');
+  const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  const hasTouchPlayer = match.teams.some((team) => team.human === 'p1');
+  $('touchControls').classList.toggle('hidden', !touchDevice || !hasTouchPlayer);
   renderer.setMatch(match);
   $('game').style.filter = eraFilter(home, away);
 
@@ -644,11 +714,13 @@ function startMatch() {
 }
 
 function toMenu() {
+  resetTouchControls();
   audio.setInMatch(false);
   match = null;
   replayFrames = null;
   replayBuffer = [];
   $('replaySkip').classList.add('hidden');
+  $('touchControls').classList.add('hidden');
   paused = false;
   input.enabled = false;
   $('game').style.filter = 'none';

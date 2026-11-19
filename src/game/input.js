@@ -22,13 +22,17 @@ export class Input {
     this.padPrev = {};
     this.padPressed = {};
     this.enabled = false;
+    this.touch = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
     this.onKeyDown = (e) => {
       if (this.enabled && GAME_KEYS.has(e.code)) e.preventDefault();
       if (!this.down.has(e.code)) this.pressed.add(e.code);
       this.down.add(e.code);
     };
     this.onKeyUp = (e) => this.down.delete(e.code);
-    this.onBlur = () => this.down.clear();
+    this.onBlur = () => {
+      this.down.clear();
+      this.setTouch({ mx: 0, mz: 0, sprint: false, shootHeld: false });
+    };
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
@@ -36,6 +40,10 @@ export class Input {
 
   anyDown(codes) { return codes.some((c) => this.down.has(c)); }
   anyPressed(codes) { return codes.some((c) => this.pressed.has(c)); }
+
+  setTouch(input) {
+    Object.assign(this.touch, input);
+  }
 
   pollPads() {
     const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
@@ -82,6 +90,14 @@ export class Input {
       shootPressed = shootPressed || !!pr[1];
       sprint = sprint || btn(7) || btn(5);
     }
+    if (ids.includes('p1')) {
+      mx += this.touch.mx;
+      mz += this.touch.mz;
+      sprint = sprint || this.touch.sprint;
+      passPressed = passPressed || this.touch.passPressed;
+      shootHeld = shootHeld || this.touch.shootHeld;
+      shootPressed = shootPressed || this.touch.shootPressed;
+    }
     const l = Math.hypot(mx, mz);
     if (l > 1) { mx /= l; mz /= l; }
     return { mx, mz, sprint, passPressed, shootHeld, shootPressed };
@@ -95,5 +111,7 @@ export class Input {
   endStep() {
     this.pressed.clear();
     for (const k of Object.keys(this.padPressed)) this.padPressed[k] = [];
+    this.touch.passPressed = false;
+    this.touch.shootPressed = false;
   }
 }

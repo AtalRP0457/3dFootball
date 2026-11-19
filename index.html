@@ -37,6 +37,17 @@
       <div id="hint">Esc / P pause &middot; C camera &middot; R skip replay</div>
       <button id="audioToggle" class="audio-toggle" type="button" aria-label="Toggle match sound">Sound: On</button>
       <button id="replaySkip" class="audio-toggle replay-skip hidden" type="button">Skip Replay</button>
+      <div id="touchControls" class="touch-controls hidden" aria-label="Touch controls">
+        <div id="touchStick" class="touch-stick" aria-label="Move player">
+          <div class="stick-center"></div>
+          <div id="touchStickKnob" class="stick-knob"></div>
+        </div>
+        <div class="touch-actions">
+          <button id="touchSprint" class="touch-button sprint">SPRINT</button>
+          <button id="touchPass" class="touch-button pass">PASS</button>
+          <button id="touchShoot" class="touch-button shoot">SHOOT</button>
+        </div>
+      </div>
     </div>
 
     <!-- Main menu -->
@@ -105,6 +116,7 @@
             <tr><td>Pass &middot; switch player</td><td>F or Space</td><td>. (period)</td><td>A / Cross</td></tr>
             <tr><td>Shoot (hold for power) &middot; tackle</td><td>G</td><td>/ (slash)</td><td>B / Circle</td></tr>
             <tr><td>Sprint</td><td>Left Shift</td><td>Right Shift</td><td>RT / RB</td></tr>
+            <tr><td>Touch screen</td><td colspan="3">Virtual stick to move; Pass, hold Shoot, and hold Sprint.</td></tr>
           </table>
           <p class="legend"><span class="dot g"></span> green ring: the player you control &nbsp;
           <span class="dot y"></span> yellow ring: who you get next (pass target, or switch target without the ball) &nbsp;
