@@ -1120,9 +1120,6 @@ function updatePossession(state) {
     return;
   }
   if (b.restartDoubleTouchBy) b.restartDoubleTouchBy = null;
-  if (b.directThrowInGoalBlockedBy && b.directThrowInGoalBlockedBy !== best) b.directThrowInGoalBlockedBy = null;
-  if (b.directKickoffOwnGoalBlockedBy && b.directKickoffOwnGoalBlockedBy !== best) b.directKickoffOwnGoalBlockedBy = null;
-  if (b.freeKickGoalRestrictedBy && b.freeKickGoalRestrictedBy.player !== best) b.freeKickGoalRestrictedBy = null;
 
   if (b.offsidePlayers.includes(best)) {
     const spot = { x: b.pos.x, z: b.pos.z };
@@ -1139,7 +1136,11 @@ function updatePossession(state) {
 
   const isGK = best.role === 'GK' && inOwnBox(state, best);
   if (isGK && b.shotLive && b.shotTeam !== best.team) {
-    if (!keeperSave(state, best)) best.kickCd = 0.5; // beaten
+    if (keeperSave(state, best)) {
+      b.directThrowInGoalBlockedBy = null;
+      b.directKickoffOwnGoalBlockedBy = null;
+      b.freeKickGoalRestrictedBy = null;
+    } else best.kickCd = 0.5; // beaten without touching the ball
     return;
   }
   // Hard, fast balls are often blocked rather than controlled.
