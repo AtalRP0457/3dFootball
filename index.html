@@ -23,14 +23,14 @@
         <div class="pname"></div>
         <div class="pnext">Next: <span></span></div>
         <div class="bar stamina"><i></i></div>
-        <div class="bar power"><i></i></div>
+        <div class="power-label">SHOT POWER</div><div class="bar power"><i></i></div>
       </div>
       <div class="ppanel p2" id="p2panel">
         <div class="tag">P2</div>
         <div class="pname"></div>
         <div class="pnext">Next: <span></span></div>
         <div class="bar stamina"><i></i></div>
-        <div class="bar power"><i></i></div>
+        <div class="power-label">SHOT POWER</div><div class="bar power"><i></i></div>
       </div>
       <div id="banner"></div>
       <div id="subBanner"></div>
@@ -56,7 +56,7 @@
     <div id="menu" class="overlay">
       <div class="card">
         <h1 class="logo">LEGENDS</h1>
-        <div class="sub">The Decades Cup &middot; prototype</div>
+        <div class="sub">Road to Football History &middot; Preview Build</div>
 
         <div class="row">
           <label>Mode</label>
@@ -298,6 +298,24 @@
         <table id="ftStats"></table>
         <button class="big" id="rematchBtn">Rematch</button>
         <button id="menuBtn">Main menu</button>
+      </div>
+    </div>
+
+    <!-- Decades Cup penalty shootout -->
+    <div id="shootout" class="overlay hidden">
+      <div class="card small shootout-card">
+        <h2>Penalty shootout</h2>
+        <p id="shootoutTeams"></p>
+        <div id="shootoutScore" class="shootout-score"></div>
+        <p id="shootoutStatus" aria-live="polite"></p>
+        <div id="shootoutAim" class="shootout-aim">
+          <button type="button" data-aim="-1">Left</button>
+          <button type="button" data-aim="0" class="on">Center</button>
+          <button type="button" data-aim="1">Right</button>
+        </div>
+        <button class="big" id="shootoutKick">Take penalty</button>
+        <button class="big hidden" id="shootoutNext">Next kick</button>
+        <button id="shootoutMenu">Save and quit to menu</button>
       </div>
     </div>
 

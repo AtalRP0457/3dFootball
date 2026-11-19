@@ -19,7 +19,7 @@ const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0673b'];
 const HAIR = ['#1b1b1b', '#3b2416', '#6b4423', '#c9a15b', '#2a1a0f'];
 
 const CAMERA_MODES = {
-  broadcast: { h: 28, back: 36, ahead: 0.82, fov: 46, clampX: 16 },
+  broadcast: { h: 22, back: 29, ahead: 0.82, fov: 44, clampX: 13 },
   wide: { h: 46, back: 48, ahead: 0.6, fov: 50, clampX: 24 },
   close: { h: 17, back: 24, ahead: 0.95, fov: 48, clampX: 8 },
 };
@@ -317,12 +317,40 @@ function makePlayer(p, kit, renderer) {
   num.position.set(0, 1.24, -0.145);
   num.rotation.y = Math.PI;
   body.add(num);
+  const frontNum = new THREE.Mesh(new THREE.PlaneGeometry(0.19, 0.19),
+    new THREE.MeshBasicMaterial({ map: numberTexture(p.number, shirt, renderer), transparent: true }));
+  frontNum.position.set(0, 1.22, 0.145);
+  body.add(frontNum);
+  const trimM = mat(luminance(shirt) > 0.55 ? '#17304d' : '#f2d36b');
+  const trim = (w, h, d, x, y, z, material = trimM) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    mesh.position.set(x, y, z); body.add(mesh); return mesh;
+  };
+  trim(0.18, 0.045, 0.29, 0, 1.515, 0);
+  for (const sx of [-1, 1]) {
+    trim(0.045, 0.52, 0.012, sx * 0.235, 1.2, 0.146);
+    trim(0.145, 0.035, 0.15, sx * 0.32, 1.31, 0);
+    trim(0.035, 0.26, 0.018, sx * 0.23, 0.8, 0.155);
+  }
   const shortsMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.3), shortsM);
   shortsMesh.position.y = 0.8;
   body.add(shortsMesh);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), skinM);
   head.position.y = 1.7;
   body.add(head);
+  const faceDetail = mat('#241a17');
+  for (const sx of [-1, 1]) {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), skinM);
+    ear.position.set(sx * 0.15, 1.69, 0); body.add(ear);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), faceDetail);
+    eye.position.set(sx * 0.055, 1.72, 0.145); body.add(eye);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.012, 0.018), faceDetail);
+    brow.position.set(sx * 0.055, 1.75, 0.145); body.add(brow);
+  }
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.023, 8, 6), skinM);
+  nose.position.set(0, 1.685, 0.16); body.add(nose);
+  const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.009, 0.012), faceDetail);
+  mouth.position.set(0, 1.65, 0.15); body.add(mouth);
   const hairMesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.168, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(hair),
   );

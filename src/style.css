@@ -41,7 +41,8 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 .bar { height: 6px; margin-top: 6px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; transition: width 0.05s linear; }
 .bar.stamina i { background: linear-gradient(90deg, #16a34a, #84cc16); }
-.bar.power { opacity: 0.35; }
+.power-label { margin-top: 6px; color: #f4d56a; font-size: 9px; font-weight: 900; letter-spacing: .16em; }
+.bar.power { height: 9px; margin-top: 3px; border: 1px solid rgba(255,255,255,.48); background: rgba(2,8,20,.9); opacity: .9; }
 .bar.power i { background: linear-gradient(90deg, #facc15, #ef4444); }
 .ppanel.charging .bar.power { opacity: 1; }
 
@@ -171,6 +172,12 @@ button.big:hover { filter: brightness(1.08); }
 #ftStats { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
 #ftStats td, #ftStats th { padding: 5px; border-bottom: 1px solid var(--edge); }
 #ftStats th { font-weight: 600; opacity: 0.75; text-transform: uppercase; font-size: 12px; }
+.shootout-card { max-width: 460px; }
+#shootoutTeams { opacity: 0.8; margin: 0 0 8px; }
+.shootout-score { font-size: 28px; font-weight: 900; color: var(--gold); letter-spacing: 0.08em; }
+#shootoutStatus { min-height: 2.8em; margin: 10px 0; font-weight: 700; }
+.shootout-aim { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.shootout-aim button { padding: 12px; }
 
 @media (max-width: 760px) {
   .teams { grid-template-columns: 1fr; }
@@ -202,6 +209,29 @@ button.wide { display: block; width: 100%; padding: 10px; letter-spacing: 0.1em;
 .card.tut { width: min(760px, 100%); }
 .tut-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .tut-tabs button { font-size: 13px; padding: 6px 10px; }
+
+/* Bold, angular late-90s football menu treatment, using original branding. */
+.card:not(.small) {
+  background: linear-gradient(135deg, rgba(7,18,43,.97), rgba(12,35,78,.96));
+  border: 2px solid rgba(187,216,255,.72); border-radius: 2px;
+  box-shadow: 10px 10px 0 rgba(1,8,24,.7), 0 0 34px rgba(29,99,205,.24);
+}
+.logo {
+  color: #fff; background: none; -webkit-text-fill-color: #fff;
+  font-size: clamp(48px, 7vw, 76px); letter-spacing: .04em;
+  text-shadow: 4px 4px 0 #174b9c, 7px 7px 0 #d51f37;
+  filter: none;
+}
+.sub { display: table; margin: 12px auto 20px; padding: 7px 14px; background: #c91f36; color: white; opacity: 1; font-weight: 900; letter-spacing: .16em; transform: skewX(-9deg); }
+.seg { gap: 5px; }
+.seg button { border-radius: 0; border-color: rgba(168,202,255,.42); background: rgba(2,9,23,.65); text-transform: uppercase; letter-spacing: .035em; }
+.seg button:hover { background: #174b9c; }
+.seg button.on { background: #174b9c; color: #fff; border-color: #8fc1ff; box-shadow: inset 0 -3px 0 #e12d43; }
+button.big { border-radius: 0; color: white; background: linear-gradient(100deg, #d91f39, #f13a45); box-shadow: 0 4px 0 #741628; }
+.teams .col { padding: 10px; background: rgba(1,8,22,.38); border: 1px solid rgba(159,194,244,.3); }
+.team { border: 1px solid transparent; }
+.team.on { background: rgba(24,78,157,.52); border-color: #8fc1ff; border-radius: 0; }
+.vs { color: #f5d668; }
 .tut-step h3 { margin: 4px 0 10px; font-size: 22px; font-style: italic; color: var(--gold); text-transform: uppercase; }
 .tut-step ul, .tut-step ol { line-height: 1.55; padding-left: 20px; }
 .tut-step b.g { color: #22c55e; } .tut-step b.y { color: #facc15; } .tut-step b.r { color: #ef4444; }

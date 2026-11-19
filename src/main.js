@@ -48,6 +48,8 @@ const touchInput = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld:
 const audio = new MatchAudio();
 let match = null;
 let cup = loadCup();
+let cupShootout = null;
+let cupShootoutOutcome = null;
 if (cup && !cup.champion) {
   settings.mode = 'cup';
   settings.home = cup.userTeam.id;
@@ -236,6 +238,25 @@ function buildMenu() {
   seg('lenSeg', 'duration', Number);
   seg('eraSeg', 'era');
   $('startBtn').addEventListener('click', startMatch);
+  $('shootoutAim').querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+    if (!cupShootout) return;
+    cupShootout.aim = Number(button.dataset.aim);
+    $('shootoutAim').querySelectorAll('button').forEach((item) => item.classList.toggle('on', item === button));
+  }));
+  $('shootoutKick').addEventListener('click', takeCupShootoutAction);
+  $('shootoutNext').addEventListener('click', () => {
+    if (!cupShootout) return;
+    if (cupShootout.phase === 'complete') { finishCupShootout(); return; }
+    cupShootout.phase = 'human-shot';
+    $('shootoutStatus').textContent = `Your turn: ${cupShootout.shooters[0][cupShootout.taken[0] % cupShootout.shooters[0].length].name}`;
+    $('shootoutAim').querySelectorAll('button').forEach((button) => {
+      button.textContent = ['Left', 'Center', 'Right'][Number(button.dataset.aim) + 1];
+    });
+    $('shootoutKick').textContent = 'Take penalty';
+    $('shootoutKick').classList.remove('hidden');
+    $('shootoutNext').classList.add('hidden');
+  });
+  $('shootoutMenu').addEventListener('click', toMenu);
   $('audioToggle').addEventListener('click', () => {
     $('audioToggle').textContent = audio.toggle() ? 'Sound: On' : 'Sound: Off';
   });
@@ -607,6 +628,89 @@ function decideCupFixture(fixture) {
   }
 }
 
+function beginCupShootout() {
+  const teams = match.teams.map((team) => team.data);
+  const shooters = teams.map((team) => team.players
+    .filter((player, index) => index !== 0)
+    .sort((a, b) => b.stats.sho - a.stats.sho));
+  cupShootout = { teams, shooters, scores: [0, 0], taken: [0, 0], phase: 'human-shot', aim: 0 };
+  cupShootoutOutcome = null;
+  $('shootoutTeams').textContent = `${teams[0].name}  ·  ${teams[1].name}`;
+  $('shootoutScore').textContent = '0 — 0';
+  $('shootoutStatus').textContent = `Your turn: ${shooters[0][0].name}`;
+  $('shootoutAim').querySelectorAll('button').forEach((button) => {
+    button.textContent = ['Left', 'Center', 'Right'][Number(button.dataset.aim) + 1];
+    button.classList.toggle('on', button.dataset.aim === '0');
+  });
+  $('shootoutKick').textContent = 'Take penalty';
+  $('shootoutKick').classList.remove('hidden');
+  $('shootoutNext').classList.add('hidden');
+  $('fulltime').classList.add('hidden');
+  $('shootout').classList.remove('hidden');
+}
+
+function takeCupShootoutAction() {
+  if (!cupShootout) return;
+  const s = cupShootout;
+  const humanTeam = match.teams[0];
+  const keeper = match.teams[1].data.players[0].stats.gk;
+  if (s.phase === 'human-shot') {
+    const shooter = s.shooters[0][s.taken[0] % s.shooters[0].length];
+    const keeperAim = Math.floor(Math.random() * 3) - 1;
+    const chance = Math.max(0.3, Math.min(0.97, 0.9 - (keeperAim === s.aim ? 0.42 : 0)
+      + (shooter.stats.sho - 75) * 0.0025 - (keeper - 75) * 0.0015));
+    const goal = Math.random() < chance;
+    if (goal) s.scores[0]++;
+    s.taken[0]++;
+    s.lastShot = goal ? `${shooter.name} scores!` : `${shooter.name} misses or is saved.`;
+    s.phase = 'human-dive';
+    const rival = s.shooters[1][s.taken[1] % s.shooters[1].length];
+    $('shootoutStatus').textContent = `${s.lastShot} Now dive against ${rival.name}.`;
+    $('shootoutAim').querySelectorAll('button').forEach((button) => {
+      button.textContent = ['Dive Left', 'Dive Center', 'Dive Right'][Number(button.dataset.aim) + 1];
+    });
+    $('shootoutKick').textContent = 'Dive';
+  } else if (s.phase === 'human-dive') {
+    const shooter = s.shooters[1][s.taken[1] % s.shooters[1].length];
+    const rivalAim = Math.floor(Math.random() * 3) - 1;
+    const keeperSkill = humanTeam.data.players[0].stats.gk;
+    const chance = Math.max(0.3, Math.min(0.97, 0.9 - (rivalAim === s.aim ? 0.42 : 0)
+      + (shooter.stats.sho - 75) * 0.0025 - (keeperSkill - 75) * 0.0015));
+    const goal = Math.random() < chance;
+    if (goal) s.scores[1]++;
+    s.taken[1]++;
+    s.lastShot = goal ? `${shooter.name} scores.` : `${shooter.name} is denied!`;
+    $('shootoutScore').textContent = `${s.scores[0]} — ${s.scores[1]}`;
+    const bothCompletedFive = s.taken[0] >= 5 && s.taken[1] >= 5;
+    // Once both teams have taken five, continue in pairs until one team leads.
+    const resolved = bothCompletedFive
+      ? s.scores[0] !== s.scores[1]
+      : s.scores[0] > s.scores[1] + (5 - s.taken[1])
+        || s.scores[1] > s.scores[0] + (5 - s.taken[0]);
+    if (resolved) {
+      const winner = s.scores[0] > s.scores[1] ? s.teams[0] : s.teams[1];
+      cupShootoutOutcome = { winner, homeScore: s.scores[0], awayScore: s.scores[1] };
+      s.phase = 'complete';
+      $('shootoutStatus').textContent = `${s.lastShot} ${winner.name} win on penalties.`;
+      $('shootoutKick').classList.add('hidden');
+      $('shootoutNext').textContent = 'Continue';
+      $('shootoutNext').classList.remove('hidden');
+    } else {
+      s.phase = 'next';
+      $('shootoutStatus').textContent = `${s.lastShot} ${s.taken[0]} of 5 taken.`;
+      $('shootoutKick').classList.add('hidden');
+      $('shootoutNext').textContent = s.taken[0] >= 5 ? 'Sudden death: next pair' : 'Next kick';
+      $('shootoutNext').classList.remove('hidden');
+    }
+  }
+}
+
+function finishCupShootout() {
+  $('shootout').classList.add('hidden');
+  cupShootout = null;
+  showFullTime();
+}
+
 function simulateCupFixture(fixture, round) {
   if (fixture.winner) return;
   simulateAiMatch(fixture);
@@ -665,7 +769,15 @@ function advanceCupAfterUserMatch() {
   if (fixture.winner) return;
   fixture.homeScore = match.teams[0].score;
   fixture.awayScore = match.teams[1].score;
-  decideCupFixture(fixture);
+  if (fixture.homeScore === fixture.awayScore && cupShootoutOutcome) {
+    fixture.shootout = true;
+    fixture.winner = cupShootoutOutcome.winner;
+    fixture.homePenalties = cupShootoutOutcome.homeScore;
+    fixture.awayPenalties = cupShootoutOutcome.awayScore;
+  } else {
+    decideCupFixture(fixture);
+  }
+  cupShootoutOutcome = null;
   fixture.round = cup.round;
   cup.lastUserRound = cup.round;
   cup.history.push(fixture);
@@ -703,6 +815,8 @@ function advanceCupAfterUserMatch() {
 
 function startMatch() {
   resetTouchControls();
+  cupShootout = null;
+  cupShootoutOutcome = null;
   audio.unlock();
   audio.setInMatch(true);
   let home, away;
@@ -753,6 +867,7 @@ function startMatch() {
 
   $('menu').classList.add('hidden');
   $('fulltime').classList.add('hidden');
+  $('shootout').classList.add('hidden');
   $('subsBtn').classList.add('hidden');
   $('hud').classList.remove('hidden');
   setPaused(false);
@@ -776,6 +891,7 @@ function toMenu() {
   $('subsPanel').classList.add('hidden');
   $('subsBtn').classList.remove('hidden');
   $('fulltime').classList.add('hidden');
+  $('shootout').classList.add('hidden');
   $('menu').classList.remove('hidden');
 }
 
@@ -916,7 +1032,8 @@ function handleEvents() {
     } else if (e.type === 'formation') {
       showSub(`${match.teams[e.team].data.name}: ${e.formation}`, 1.8);
     } else if (e.type === 'fulltime') {
-      showFullTime();
+      if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
+      else showFullTime();
     }
   }
   match.events.length = 0;

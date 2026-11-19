@@ -559,7 +559,9 @@ export function choosePassTarget(state, p, dx, dz) {
     if (d < 1.5) continue;
     const cos = (ox * dx + oz * dz) / d;
     const ang = Math.acos(clamp(cos, -1, 1));
-    const score = ang * 16 + d * 0.3 + (t.role === 'GK' ? 10 : 0) + (ang > 1.2 ? 40 : 0);
+    // Favor a nearby option in the chosen direction so a normal tap is a
+    // playable short pass; distance still matters after directional fit.
+    const score = ang * 15 + d * 0.78 + (t.role === 'GK' ? 10 : 0) + (ang > 1.2 ? 40 : 0);
     if (score < bestScore) { bestScore = score; best = t; }
   }
   return best;
@@ -611,7 +613,7 @@ export function doPass(state, p, target) {
     b.vel.x = ex * h; b.vel.z = ez * h;
     b.vel.y = (GRAVITY * flight) / 2;
   } else {
-    const speed = clamp(Math.sqrt(2 * ROLL_DECEL * d) + 4, 8, 22);
+    const speed = clamp(Math.sqrt(2 * ROLL_DECEL * d) + 2, 4, 22);
     b.vel.x = ex * speed; b.vel.z = ez * speed;
     b.vel.y = 0.4;
   }
