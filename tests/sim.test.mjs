@@ -214,6 +214,13 @@ console.log('Indoor soccer');
   stepMatch(s, {}, FIXED_DT);
   check(s.phase === 'play', 'indoor board keeps play live');
   check(s.ball.vel.z < 0, 'indoor board reflects the ball');
+  const passer = s.players.find((p) => p.team === 0 && p.onPitch && p.role !== 'GK');
+  const receiver = s.players.find((p) => p.team === 0 && p.onPitch && p !== passer && p.role !== 'GK');
+  passer.pos.x = 0; passer.pos.z = 0;
+  receiver.pos.x = 25; receiver.pos.z = 0;
+  s.ball.owner = passer; s.ball.pos.x = 0; s.ball.pos.z = 0;
+  doPass(s, passer, receiver);
+  check(s.ball.offsidePlayers.length === 0, 'indoor passes do not create offside calls');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');

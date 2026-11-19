@@ -586,7 +586,7 @@ export function doPass(state, p, target) {
   // the opponents' half and ahead of both the ball and the second-last rival.
   const restartExempt = b.restartNoOffsideBy === p;
   if (restartExempt) b.restartNoOffsideBy = null;
-  if (restartExempt) {
+  if (state.indoor || restartExempt) {
     b.offsidePlayers = [];
   } else {
     const dir = team.dir;
@@ -1047,6 +1047,7 @@ function inOwnBox(state, p) {
 
 function checkOffsideChallenge(state) {
   const b = state.ball;
+  if (state.indoor) return false;
   if (b.owner || b.pos.y > 2.2 || !b.offsidePlayers.length) return false;
   for (const attacker of b.offsidePlayers) {
     if (!attacker.onPitch || attacker.sentOff) continue;
