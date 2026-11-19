@@ -453,6 +453,18 @@ function refreshMenu() {
     practice: ['Practice team <span class="who p1">P1</span>', 'Training opposition <span class="who ai">AI</span>'],
     career: ['Career team <span class="who p1">P1</span>', 'First opponent <span class="who ai">AI</span>'],
   }[settings.mode];
+  const modeBriefs = {
+    '1p': ['FRIENDLY MATCH', 'Take a decade side into a full 11-a-side match against the computer.'],
+    '2p': ['HEAD TO HEAD', 'Two local players, one keyboard or two gamepads.'],
+    cpu: ['SPECTATOR MATCH', 'Let the match engine play both teams while you watch the tactics unfold.'],
+    cup: ['DECADES CUP', 'Win three knockout rounds. Draws are settled by a playable shootout.'],
+    penalties: ['PENALTY SHOOTOUT', 'Pick each shot placement, then read the next kick and choose your keeper dive.'],
+    indoor: ['INDOOR SOCCER', 'Five-a-side under the lights. Boards keep the ball live and there is no offside.'],
+    career: ['CAREER SEASON', 'Play an 18-matchday league season and chase first place in the table.'],
+    practice: ['PRACTICE', 'Free play against easy opposition with no halftime or final whistle.'],
+  };
+  const [briefTitle, briefCopy] = modeBriefs[settings.mode];
+  $('modeBrief').innerHTML = `<b>${briefTitle}</b><span>${briefCopy}</span>`;
   $('homeLabel').innerHTML = labels[0];
   const careerFixture = settings.mode === 'career' && league && !league.complete
     ? league.schedule[league.round][0]

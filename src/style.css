@@ -113,6 +113,13 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 .row { display: flex; align-items: center; gap: 14px; margin: 12px 0; flex-wrap: wrap; }
 .row label { width: 120px; font-weight: 700; opacity: 0.85; text-transform: uppercase; font-size: 13px; letter-spacing: 0.08em; }
 .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.mode-brief {
+  display: flex; align-items: baseline; gap: 14px; margin: 2px 0 16px 134px;
+  padding: 9px 12px; background: linear-gradient(90deg, rgba(22,75,156,.82), rgba(3,13,35,.5));
+  border-left: 4px solid #e12d43; color: #dcecff; min-height: 38px;
+}
+.mode-brief b { color: #fff; font-size: 13px; letter-spacing: .11em; white-space: nowrap; }
+.mode-brief span { font-size: 13px; opacity: .9; }
 
 button {
   font: inherit; font-weight: 700; color: #fff; cursor: pointer;
@@ -183,6 +190,7 @@ button.big:hover { filter: brightness(1.08); }
   .teams { grid-template-columns: 1fr; }
   .grid { grid-template-columns: repeat(5, 1fr); }
   .logo { font-size: 52px; }
+  .mode-brief { margin-left: 0; align-items: flex-start; flex-direction: column; gap: 3px; }
 }
 
 @media (pointer: coarse) {
