@@ -21,7 +21,7 @@ const HAIR = ['#1b1b1b', '#3b2416', '#6b4423', '#c9a15b', '#2a1a0f'];
 const CAMERA_MODES = {
   broadcast: { h: 22, back: 29, ahead: 0.82, fov: 44, clampX: 13 },
   wide: { h: 46, back: 48, ahead: 0.6, fov: 50, clampX: 24 },
-  close: { h: 17, back: 24, ahead: 0.95, fov: 48, clampX: 8 },
+  close: { h: 17, back: 24, ahead: 0.95, fov: 40, clampX: 8 },
 };
 export const CAMERA_ORDER = Object.keys(CAMERA_MODES);
 
@@ -535,10 +535,20 @@ export function createRenderer(canvasEl) {
     const b = state.ball.pos;
     const x = THREE.MathUtils.clamp(b.x * mode.ahead, -HALF_L + mode.clampX, HALF_L - mode.clampX);
     const zShift = b.z * 0.25;
+    // Tighten only when the attack reaches the final third. It makes faces,
+    // kit details and keeper action readable while preserving the wide view at
+    // midfield where passing options matter most.
+    const attackZoom = camMode === 'broadcast'
+      ? THREE.MathUtils.smoothstep(Math.abs(b.x), HALF_L * 0.54, HALF_L * 0.9)
+      : 0;
+    const indoorZoom = state.indoor ? 1 : 0;
+    const height = mode.h - attackZoom * 3 - indoorZoom * 3;
+    const back = mode.back - attackZoom * 5 - indoorZoom * 5;
+    const fov = mode.fov - attackZoom * 3.5 - indoorZoom * 3;
     return {
-      pos: new THREE.Vector3(x, mode.h, HALF_W + mode.back + zShift * 0.5),
+      pos: new THREE.Vector3(x, height, HALF_W + back + zShift * 0.5),
       look: new THREE.Vector3(x, 0, -1 + zShift),
-      fov: mode.fov,
+      fov,
     };
   }
 

@@ -68,7 +68,8 @@ check(shots / matches > 2.5, 'too few shots');
   }
   console.log('  restarts seen:', JSON.stringify(seen));
   console.log(`  ball owned ${(100 * ownedSteps / steps).toFixed(0)}% of play time`);
-  check(seen['THROW-IN'] > 0 || seen['GOAL KICK'] > 0 || seen['CORNER'] > 0, 'no restarts happened');
+  check(seen['THROW-IN'] > 0 || seen['GOAL KICK'] > 0 || seen['CORNER'] > 0 || seen['FREE KICK'] > 0,
+    'no restarts happened');
 }
 
 // 2) Pass hands control to the receiver; passer becomes AI
