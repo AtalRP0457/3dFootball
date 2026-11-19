@@ -131,7 +131,7 @@ export function createMatch(cfg) {
       restartNoOffsideBy: null, // restart taker exempt from offside on the first kick
       restartDoubleTouchBy: null, // restart taker cannot play the ball twice in succession
       directThrowInGoalBlockedBy: null, // throw-ins cannot score directly before another touch
-      directKickoffOwnGoalBlockedBy: null,
+      directRestartOwnGoalBlockedBy: null,
       freeKickGoalRestrictedBy: null,
       shotId: 0,
       shotTeam: -1,
@@ -378,7 +378,7 @@ export function setupKickoff(state, teamIdx) {
   b.restartNoOffsideBy = null;
   b.restartDoubleTouchBy = taker;
   b.directThrowInGoalBlockedBy = null;
-  b.directKickoffOwnGoalBlockedBy = taker;
+  b.directRestartOwnGoalBlockedBy = taker;
   b.freeKickGoalRestrictedBy = null;
   taker.mustPass = true; taker.mustPassTimer = 0;
   for (const t of state.teams) setControlled(state, t, t.index === teamIdx ? taker : nearestTo(state, t.index, b.pos));
@@ -453,7 +453,7 @@ function startRestart(state, type, teamIdx, spot) {
   b.restartNoOffsideBy = ['throw-in', 'goal kick', 'corner'].includes(type) ? taker : null;
   b.restartDoubleTouchBy = taker;
   b.directThrowInGoalBlockedBy = type === 'throw-in' ? taker : null;
-  b.directKickoffOwnGoalBlockedBy = null;
+  b.directRestartOwnGoalBlockedBy = taker;
   b.freeKickGoalRestrictedBy = isFreeKick
     ? { player: taker, indirect: type === 'indirect free kick' }
     : null;
@@ -513,7 +513,7 @@ function startPenalty(state, teamIdx) {
   state.ball.restartNoOffsideBy = null;
   state.ball.restartDoubleTouchBy = shooter;
   state.ball.directThrowInGoalBlockedBy = null;
-  state.ball.directKickoffOwnGoalBlockedBy = null;
+  state.ball.directRestartOwnGoalBlockedBy = null;
   state.ball.freeKickGoalRestrictedBy = null;
   state.ball.shotLive = false;
   shooter.mustPass = false;
@@ -711,7 +711,7 @@ function doTackle(state, p) {
       b.lastTouch = p; b.intended = null;
       b.restartDoubleTouchBy = null;
       b.directThrowInGoalBlockedBy = null;
-      b.directKickoffOwnGoalBlockedBy = null;
+      b.directRestartOwnGoalBlockedBy = null;
       b.freeKickGoalRestrictedBy = null;
     }
     // Nobody to tackle: just a short lunge (cooldown only, no freeze).
@@ -750,7 +750,7 @@ function doTackle(state, p) {
     b.intended = null;
     b.restartDoubleTouchBy = null;
     b.directThrowInGoalBlockedBy = null;
-    b.directKickoffOwnGoalBlockedBy = null;
+    b.directRestartOwnGoalBlockedBy = null;
     b.freeKickGoalRestrictedBy = null;
     b.offsidePlayers = [];
     b.restartNoOffsideBy = null;
@@ -1138,7 +1138,7 @@ function updatePossession(state) {
   if (isGK && b.shotLive && b.shotTeam !== best.team) {
     if (keeperSave(state, best)) {
       b.directThrowInGoalBlockedBy = null;
-      b.directKickoffOwnGoalBlockedBy = null;
+      b.directRestartOwnGoalBlockedBy = null;
       b.freeKickGoalRestrictedBy = null;
     } else best.kickCd = 0.5; // beaten without touching the ball
     return;
@@ -1153,7 +1153,7 @@ function updatePossession(state) {
       b.shotLive = false;
       b.restartDoubleTouchBy = null;
       b.directThrowInGoalBlockedBy = null;
-      b.directKickoffOwnGoalBlockedBy = null;
+      b.directRestartOwnGoalBlockedBy = null;
       b.freeKickGoalRestrictedBy = null;
       best.kickCd = 0.3;
       state.events.push({ type: 'block', player: best.id });
@@ -1172,7 +1172,7 @@ function updatePossession(state) {
   b.restartNoOffsideBy = null;
   b.restartDoubleTouchBy = null;
   b.directThrowInGoalBlockedBy = null;
-  b.directKickoffOwnGoalBlockedBy = null;
+  b.directRestartOwnGoalBlockedBy = null;
   b.freeKickGoalRestrictedBy = null;
   b.shotLive = false;
   b.vel.y = 0;
@@ -1203,28 +1203,21 @@ function checkOutOfPlay(state) {
         }
         return;
       }
-      const kickoffTaker = b.directKickoffOwnGoalBlockedBy;
-      if (kickoffTaker && endSign !== state.teams[kickoffTaker.team].dir) {
-        state.events.push({ type: 'kickoffOwnGoal' });
-        startRestart(state, 'corner', 1 - kickoffTaker.team, {
+      const restartTaker = b.directRestartOwnGoalBlockedBy;
+      if (restartTaker && endSign !== state.teams[restartTaker.team].dir) {
+        state.events.push({ type: 'directRestartOwnGoal' });
+        startRestart(state, 'corner', 1 - restartTaker.team, {
           x: endSign * (HALF_L - 0.3), z: Math.sign(z || 1) * (HALF_W - 0.3),
         });
         return;
       }
       const freeKick = b.freeKickGoalRestrictedBy;
-      if (freeKick && (endSign !== state.teams[freeKick.player.team].dir || freeKick.indirect)) {
+      if (freeKick?.indirect) {
         const defendingTeam = 1 - freeKick.player.team;
-        const ownGoalEnd = endSign !== state.teams[freeKick.player.team].dir;
-        state.events.push({ type: 'freeKickDirectGoal', ownGoalEnd, indirect: freeKick.indirect });
-        if (ownGoalEnd) {
-          startRestart(state, 'corner', defendingTeam, {
-            x: endSign * (HALF_L - 0.3), z: Math.sign(z || 1) * (HALF_W - 0.3),
-          });
-        } else {
-          startRestart(state, 'goal kick', defendingTeam, {
-            x: endSign * (HALF_L - 4), z: 0,
-          });
-        }
+        state.events.push({ type: 'freeKickDirectGoal', ownGoalEnd: false, indirect: true });
+        startRestart(state, 'goal kick', defendingTeam, {
+          x: endSign * (HALF_L - 4), z: 0,
+        });
         return;
       }
       const scorer = state.teams.find((t) => t.dir === endSign);
