@@ -1,7 +1,7 @@
 # Legends — prototype
 
 A 3D arcade soccer game in the spirit of FIFA 98, built with three.js.
-Ten decade teams (1910–2000) of all-time greats, 5-a-side, played in the browser on localhost.
+Ten decade teams (1910–2000) of all-time greats, 11-a-side in a 4-3-3 formation, played in the browser on localhost.
 
 ## Run it
 
@@ -15,11 +15,20 @@ npm run dev      # then open the http://localhost:5173 link it prints
 
 `npm test` runs the headless match simulations (no browser needed).
 
+If you're building with friends, see [CONTRIBUTING.md](CONTRIBUTING.md) for
+the code ownership split, local setup, and GitHub branch/review workflow.
+
 ## Modes
 
 - **1 Player vs AI**: you pick your team and an AI opponent (Easy / Normal / Hard).
 - **2 Players**: same keyboard (or two gamepads).
 - **Watch AI vs AI**
+- **Decades Cup**: an 8-team knockout tournament with quick AI-simulated fixtures and stat-based penalty shootouts for tied matches.
+- **Career Season**: an 18-matchday, 10-team league with AI-simulated matches, standings and saved progress.
+- **Full 11-player teams** with four named reserves, up to three substitutions, a 4-3-3 formation, full-size pitch, halftime end switch, offside calls, fouls, free kicks, penalties and yellow/red cards
+- **Goal replays** show the last four seconds from the broadcast camera; press R or use Skip Replay to return to play.
+- **Procedural match sound** for kicks, tackles, saves, whistles, goals and crowd ambience; toggle it in the HUD
+- **Team management** from the pause menu: set balanced, attacking or defensive support shape, and make up to three substitutions
 
 ## Controls
 
@@ -57,10 +66,13 @@ would need rebuilding.
 
 ## Adding a team
 
-Add an entry to `TEAMS` in `src/data/teams.js` with five players in the order
-GK, DEF, DEF, MID, FWD. It appears in the menu automatically.
+Add an entry to `TEAMS` in `src/data/teams.js` with eleven starting players in
+the order GK, DEF, DEF, MID, FWD, DEF, DEF, MID, MID, FWD, FWD, plus a `bench`
+array with reserve roles and ratings. It appears in the menu automatically.
 
-## Not in the prototype yet
+## Still in progress
 
-11-a-side, offside, fouls and penalties, halftime side switch, audio,
-tournament or career modes, replays, proper player models.
+The prototype now has basic offside, foul and card decisions, rare injuries,
+and pause-menu substitutions. It does not yet model every Laws of the Game
+detail, including offside interference beyond receiving the ball, full player
+animations, or complete match presentation.

@@ -34,7 +34,9 @@
       </div>
       <div id="banner"></div>
       <div id="subBanner"></div>
-      <div id="hint">Esc / P pause &middot; C camera</div>
+      <div id="hint">Esc / P pause &middot; C camera &middot; R skip replay</div>
+      <button id="audioToggle" class="audio-toggle" type="button" aria-label="Toggle match sound">Sound: On</button>
+      <button id="replaySkip" class="audio-toggle replay-skip hidden" type="button">Skip Replay</button>
     </div>
 
     <!-- Main menu -->
@@ -49,6 +51,8 @@
             <button data-v="1p" class="on">1 Player vs AI</button>
             <button data-v="2p">2 Players</button>
             <button data-v="cpu">Watch AI vs AI</button>
+            <button data-v="cup">Decades Cup</button>
+            <button data-v="career">Career Season</button>
           </div>
         </div>
 
@@ -211,8 +215,12 @@
             <li><b>Kick-off, throw-in:</b> the taker can't run. Choose a direction and press Pass. Shooting a throw-in just throws it.</li>
             <li><b>Corner:</b> press Pass for a pass, or Shoot to whip it towards goal.</li>
             <li><b>Goal kick:</b> your keeper takes it automatically.</li>
-            <li>5-a-side for now: no offside, fouls or penalties.</li>
-            <li><kbd>Esc</kbd> or <kbd>P</kbd> pauses &middot; <kbd>C</kbd> changes the camera (broadcast, wide, close).</li>
+            <li>11-a-side in a 4-3-3. Offside is called when a player beyond both the ball and second-last defender receives a pass.</li>
+            <li>Late tackles can be called as fouls; fouls in the penalty area award a penalty kick.</li>
+            <li>Hard fouls can injure a player. Injured players lose pace and accuracy; use Team Management to replace them.</li>
+            <li>Pause to open Team Management. Each side has four reserves and can make up to three substitutions; a change queued during play takes effect at the next stoppage.</li>
+            <li>The teams change ends at halftime. Sound can be toggled from the match HUD.</li>
+            <li><kbd>Esc</kbd> or <kbd>P</kbd> pauses &middot; <kbd>C</kbd> changes the camera &middot; <kbd>R</kbd> skips a goal replay.</li>
           </ul>
           <div class="legend big-legend">
             <span><span class="dot g"></span> You</span>
@@ -234,6 +242,23 @@
       <div class="card small">
         <h2>Paused</h2>
         <button class="big" id="resumeBtn">Resume</button>
+        <button id="subsBtn">Team management</button>
+        <div id="subsPanel" class="subs-manager hidden">
+          <label>Team <select id="subsTeam"></select></label>
+          <label>Team tactic
+            <select id="tacticSelect">
+              <option value="balanced">Balanced</option>
+              <option value="attacking">Attacking · push higher</option>
+              <option value="defensive">Defensive · hold shape</option>
+            </select>
+          </label>
+          <label>Player off <select id="subsOut"></select></label>
+          <label>Player on <select id="subsIn"></select></label>
+          <p id="subsStatus" aria-live="polite"></p>
+          <button id="subsConfirm" class="big">Make substitution</button>
+          <button id="subsCancel">Cancel queued change</button>
+          <button id="subsClose">Back to pause menu</button>
+        </div>
         <button id="pauseTutorialBtn">How to play</button>
         <button id="restartBtn">Restart match</button>
         <button id="quitBtn">Main menu</button>
@@ -245,6 +270,8 @@
       <div class="card small">
         <h2>Full time</h2>
         <div id="ftScore"></div>
+        <p id="ftCupNote" class="cup-note"></p>
+        <ol id="ftCupResults" class="cup-results hidden"></ol>
         <ul id="ftScorers"></ul>
         <table id="ftStats"></table>
         <button class="big" id="rematchBtn">Rematch</button>

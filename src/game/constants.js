@@ -2,12 +2,15 @@
 // Coordinate system: x runs along the pitch length (goals at -x and +x),
 // z runs across the width, y is up. The camera sits on the +z side.
 
-export const PITCH = { length: 64, width: 40 };
+export const PITCH = { length: 105, width: 68 };
 export const HALF_L = PITCH.length / 2;
 export const HALF_W = PITCH.width / 2;
 
-export const GOAL = { width: 6, height: 2.3, depth: 1.8 };
-export const BOX = { depth: 10, width: 22 }; // penalty area
+export const GOAL = { width: 7.32, height: 2.44, depth: 2.0 };
+export const BOX = { depth: 16.5, width: 40.32 }; // penalty area
+export const GOAL_AREA = { depth: 5.5, width: 18.32 };
+export const PENALTY_SPOT = 11;
+export const PENALTY_ARC_RADIUS = 9.15;
 
 export const BALL_R = 0.22;
 export const GRAVITY = 9.81;
@@ -29,28 +32,46 @@ export const DIFFICULTY = {
   hard: { reaction: 0.14, speed: 1.05, error: 0.7, tackle: 1.25, keeper: 0.08 },
 };
 
-// Formation for a team attacking towards +x. Values are fractions of the
-// half length (x) and half width (z). Mirrored for the other team.
+// 4-3-3 formation for a team attacking towards +x. Values are fractions of
+// the half length (x) and half width (z). Mirrored for the other team.
 export const FORMATION = [
   { role: 'GK', x: -0.94, z: 0 },
-  { role: 'DEF', x: -0.6, z: -0.42 },
-  { role: 'DEF', x: -0.6, z: 0.42 },
-  { role: 'MID', x: -0.2, z: 0 },
-  { role: 'FWD', x: 0.25, z: 0.05 },
+  { role: 'DEF', x: -0.62, z: -0.24 },
+  { role: 'DEF', x: -0.62, z: 0.24 },
+  { role: 'MID', x: -0.12, z: 0 },
+  { role: 'FWD', x: 0.2, z: 0 },
+  { role: 'DEF', x: -0.5, z: -0.72 },
+  { role: 'DEF', x: -0.5, z: 0.72 },
+  { role: 'MID', x: -0.16, z: -0.46 },
+  { role: 'MID', x: -0.16, z: 0.46 },
+  { role: 'FWD', x: 0.32, z: -0.4 },
+  { role: 'FWD', x: 0.32, z: 0.4 },
 ];
 
 export const KICKOFF_ATTACK = [
   { x: -0.94, z: 0 },
-  { x: -0.55, z: -0.42 },
-  { x: -0.55, z: 0.42 },
-  { x: -0.12, z: -0.25 },
+  { x: -0.62, z: -0.24 },
+  { x: -0.62, z: 0.24 },
+  { x: -0.12, z: 0 },
   { x: -0.02, z: 0 }, // takes the kick-off
+  { x: -0.5, z: -0.72 },
+  { x: -0.5, z: 0.72 },
+  { x: -0.16, z: -0.46 },
+  { x: -0.16, z: 0.46 },
+  { x: -0.3, z: -0.4 },
+  { x: -0.3, z: 0.4 },
 ];
 
 export const KICKOFF_DEFEND = [
   { x: -0.94, z: 0 },
-  { x: -0.6, z: -0.42 },
-  { x: -0.6, z: 0.42 },
+  { x: -0.62, z: -0.24 },
+  { x: -0.62, z: 0.24 },
   { x: -0.35, z: 0 },
   { x: -0.24, z: 0.1 },
+  { x: -0.5, z: -0.72 },
+  { x: -0.5, z: 0.72 },
+  { x: -0.16, z: -0.46 },
+  { x: -0.16, z: 0.46 },
+  { x: -0.3, z: -0.4 },
+  { x: -0.3, z: 0.4 },
 ];

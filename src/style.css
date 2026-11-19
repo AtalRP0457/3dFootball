@@ -55,6 +55,11 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 #subBanner { top: calc(30% + 92px); font-size: 26px; background: var(--panel); padding: 6px 18px; border-radius: 3px; }
 #banner.show, #subBanner.show { opacity: 1; }
 #hint { position: absolute; top: 20px; right: 20px; font-size: 13px; opacity: 0.6; }
+.audio-toggle {
+  position: absolute; top: 46px; right: 18px; pointer-events: auto;
+  padding: 5px 9px; font-size: 12px; background: var(--panel);
+}
+.replay-skip { top: 80px; }
 
 /* ---------- overlays ---------- */
 .overlay {
@@ -97,6 +102,12 @@ button.big {
 }
 button.big:hover { filter: brightness(1.08); }
 .card.small button { display: block; width: 100%; margin-top: 8px; }
+.subs-manager { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--edge); text-align: left; }
+.subs-manager label { display: block; margin: 8px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.subs-manager select { display: block; width: 100%; margin-top: 4px; padding: 8px; color: #fff; background: #142340; border: 1px solid var(--edge); border-radius: 4px; font: inherit; }
+.subs-manager p { min-height: 1.3em; margin: 8px 0; color: var(--gold); font-size: 13px; }
+.subs-manager button.big { margin: 10px 0 6px; padding: 10px; font-size: 16px; }
+.subs-manager button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .teams { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: start; margin-top: 8px; }
 .teams h3 { margin: 6px 0 10px; text-transform: uppercase; letter-spacing: 0.08em; font-size: 15px; }
@@ -122,6 +133,12 @@ button.big:hover { filter: brightness(1.08); }
 .controls th, .controls td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--edge); }
 
 #ftScore { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+#ftCupNote { margin: 8px 0; color: var(--gold); font-weight: 700; }
+.cup-results {
+  max-height: 180px; overflow-y: auto; text-align: left; padding-left: 22px;
+  margin: 8px 0 12px; font-size: 13px; line-height: 1.5; opacity: 0.9;
+}
+.cup-results .user-row { color: var(--gold); font-weight: 800; }
 #ftScore b { display: inline-block; background: var(--gold); color: #111; padding: 2px 12px; margin: 0 8px; border-radius: 3px; }
 #ftScorers { list-style: none; padding: 0; margin: 6px 0 12px; font-size: 14px; opacity: 0.9; }
 #ftScorers li.l { text-align: left; }

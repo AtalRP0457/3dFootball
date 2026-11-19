@@ -2,7 +2,10 @@
 // FIFA 98 style broadcast camera. Reads match state, never changes it.
 
 import * as THREE from 'three';
-import { PITCH, HALF_L, HALF_W, GOAL, BOX, BALL_R } from '../game/constants.js';
+import {
+  PITCH, HALF_L, HALF_W, GOAL, BOX, GOAL_AREA, PENALTY_SPOT,
+  PENALTY_ARC_RADIUS, BALL_R,
+} from '../game/constants.js';
 
 const MARGIN = 4; // grass beyond the touchlines (metres)
 const HUMAN_COLORS = { p1: '#22d3ee', p2: '#f43f5e' };
@@ -16,9 +19,9 @@ const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0673b'];
 const HAIR = ['#1b1b1b', '#3b2416', '#6b4423', '#c9a15b', '#2a1a0f'];
 
 const CAMERA_MODES = {
-  broadcast: { h: 20, back: 24, ahead: 0.82, fov: 40, clampX: 10 },
-  wide: { h: 34, back: 34, ahead: 0.6, fov: 42, clampX: 18 },
-  close: { h: 11, back: 15, ahead: 0.95, fov: 44, clampX: 4 },
+  broadcast: { h: 28, back: 36, ahead: 0.82, fov: 46, clampX: 16 },
+  wide: { h: 46, back: 48, ahead: 0.6, fov: 50, clampX: 24 },
+  close: { h: 17, back: 24, ahead: 0.95, fov: 48, clampX: 8 },
 };
 export const CAMERA_ORDER = Object.keys(CAMERA_MODES);
 
@@ -60,7 +63,7 @@ function pitchTexture(renderer) {
   g.lineWidth = 0.12 * S;
   g.strokeRect(X(-HALF_L), Z(-HALF_W), PITCH.length * S, PITCH.width * S);
   g.beginPath(); g.moveTo(X(0), Z(-HALF_W)); g.lineTo(X(0), Z(HALF_W)); g.stroke();
-  g.beginPath(); g.arc(X(0), Z(0), 6 * S, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.arc(X(0), Z(0), 9.15 * S, 0, Math.PI * 2); g.stroke();
   g.beginPath(); g.arc(X(0), Z(0), 0.25 * S, 0, Math.PI * 2); g.fill();
 
   for (const sx of [-1, 1]) {
@@ -69,15 +72,15 @@ function pitchTexture(renderer) {
     // Penalty area
     g.strokeRect(Math.min(X(gx), X(inner(BOX.depth))), Z(-BOX.width / 2), BOX.depth * S, BOX.width * S);
     // Goal area
-    g.strokeRect(Math.min(X(gx), X(inner(3.5))), Z(-5.5), 3.5 * S, 11 * S);
+    g.strokeRect(Math.min(X(gx), X(inner(GOAL_AREA.depth))), Z(-GOAL_AREA.width / 2), GOAL_AREA.depth * S, GOAL_AREA.width * S);
     // Penalty spot and arc
-    const spot = inner(7.5);
+    const spot = inner(PENALTY_SPOT);
     g.beginPath(); g.arc(X(spot), Z(0), 0.2 * S, 0, Math.PI * 2); g.fill();
     g.save();
     g.beginPath();
     g.rect(sx > 0 ? 0 : X(inner(BOX.depth)), 0, sx > 0 ? X(inner(BOX.depth)) : W, H);
     g.clip();
-    g.beginPath(); g.arc(X(spot), Z(0), 6 * S, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(X(spot), Z(0), PENALTY_ARC_RADIUS * S, 0, Math.PI * 2); g.stroke();
     g.restore();
   }
   // Corner arcs, clipped to the pitch so only the inside quarter shows.
@@ -485,6 +488,7 @@ export function createRenderer(canvasEl) {
     state.players.forEach((p, i) => {
       const m = playerMeshes[i];
       if (!m) return;
+      m.root.visible = p.onPitch && !p.sentOff;
       m.root.position.set(p.pos.x, 0, p.pos.z);
       m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
       const sp = Math.hypot(p.vel.x, p.vel.z);
@@ -539,7 +543,7 @@ export function createRenderer(canvasEl) {
       let kind = 'other';
       if (team.controlled === p && team.human) kind = 'current';
       else if (team.next === p && team.human) kind = 'next';
-      m.ring.visible = live;
+      m.ring.visible = live && p.onPitch && !p.sentOff;
       m.ring.material.color.set(RING[kind]);
       const pulse = kind === 'next' ? 1 + Math.sin(time * 8) * 0.12 : 1;
       const size = kind === 'other' ? 0.8 : 1.1;

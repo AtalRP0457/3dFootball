@@ -5,6 +5,7 @@ import {
   HALF_L, HALF_W, GOAL, BOX, BALL_R, GRAVITY, ROLL_DECEL, AIR_DRAG, BOUNCE,
   CONTROL_RADIUS, DRIBBLE_OFFSET, PLAYER_RADIUS, SHOT_CHARGE_TIME,
   MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, KICKOFF_ATTACK, KICKOFF_DEFEND,
+  PENALTY_SPOT,
 } from './constants.js';
 import { updateAI } from './ai.js';
 
@@ -61,6 +62,12 @@ export function createMatch(cfg) {
       shots: 0,
       onTarget: 0,
       possessionTime: 0,
+      yellowCards: 0,
+      redCards: 0,
+      injuries: 0,
+      substitutions: 0,
+      pendingSubstitution: null,
+      tactic: 'balanced',
       // AI on a human's team plays at normal level; pure-AI teams use the
       // chosen difficulty.
       diff: DIFFICULTY[human ? 'normal' : cfg.difficulty || 'normal'],
@@ -69,17 +76,23 @@ export function createMatch(cfg) {
 
   const players = [];
   teams.forEach((team) => {
-    FORMATION.forEach((slot, idx) => {
-      const pd = team.data.players[idx];
+    const addPlayer = (pd, idx, role, onPitch, benchIndex = -1) => {
       players.push({
         id: players.length,
         team: team.index,
         idx,
-        role: slot.role,
+        role,
+        benchRole: role,
+        benchIndex,
+        onPitch,
         name: pd.name,
         number: pd.number,
         stats: pd.stats,
-        pos: { x: 0, z: 0 },
+        yellowCards: 0,
+        sentOff: false,
+        subbedOff: false,
+        injured: false,
+        pos: { x: team.dir * (HALF_L + 7 + Math.max(0, benchIndex) * 1.2), z: 0 },
         vel: { x: 0, z: 0 },
         face: { x: team.dir, z: 0 },
         stamina: 1,
@@ -97,7 +110,9 @@ export function createMatch(cfg) {
         lastShotChecked: -1,
         kickAnim: 0,
       });
-    });
+    };
+    FORMATION.forEach((slot, idx) => addPlayer(team.data.players[idx], idx, slot.role, true));
+    (team.data.bench || []).forEach((pd, benchIndex) => addPlayer(pd, -1, pd.role, false, benchIndex));
   });
 
   const state = {
@@ -109,14 +124,19 @@ export function createMatch(cfg) {
       owner: null,
       lastTouch: null,
       intended: null, // player a pass is aimed at
+      offsidePlayers: [], // players in an offside position at the last teammate pass
+      restartNoOffsideBy: null, // restart taker exempt from offside on the first kick
       shotId: 0,
       shotTeam: -1,
       shotLive: false,
     },
     clock: 0,
     duration: cfg.duration || 240,
+    penalty: null,
+    openingKickoff: 0,
     phase: 'kickoff',
     phaseTimer: 0,
+    halftimeDone: false,
     restart: null,
     events: [],
     banner: null,
@@ -128,6 +148,135 @@ export function createMatch(cfg) {
 
 export function teamPlayers(state, t) {
   return state.players.filter((p) => p.team === t);
+}
+
+export function setTeamTactic(state, teamIdx, tactic) {
+  const team = state.teams[teamIdx];
+  if (!team || !['balanced', 'attacking', 'defensive'].includes(tactic)) return false;
+  if (team.tactic === tactic) return true;
+  team.tactic = tactic;
+  state.events.push({ type: 'tactic', team: teamIdx, tactic });
+  return true;
+}
+
+/** Make the change now at a stoppage, or queue it for the next dead ball. */
+export function makeSubstitution(state, teamIdx, outgoingId, incomingId) {
+  const team = state.teams[teamIdx];
+  const outgoing = state.players[outgoingId];
+  const incoming = state.players[incomingId];
+  if (!team || !outgoing || !incoming || outgoing.team !== teamIdx || incoming.team !== teamIdx) return false;
+  if (!outgoing.onPitch || outgoing.sentOff || incoming.onPitch || incoming.sentOff || incoming.subbedOff) return false;
+  if (outgoing.role !== incoming.role || team.substitutions >= 3 || team.pendingSubstitution
+      || state.penalty?.active || state.penalty?.pending) return false;
+  if (!['kickoff', 'restart', 'goal', 'halftime'].includes(state.phase)) {
+    team.pendingSubstitution = { outgoing: outgoingId, incoming: incomingId };
+    state.events.push({ type: 'substitutionQueued', team: teamIdx, outgoing: outgoingId, incoming: incomingId });
+    return true;
+  }
+  return applySubstitution(state, team, outgoing, incoming);
+}
+
+export function cancelPendingSubstitution(state, teamIdx) {
+  const team = state.teams[teamIdx];
+  if (!team?.pendingSubstitution) return false;
+  team.pendingSubstitution = null;
+  state.events.push({ type: 'substitutionCancelled', team: teamIdx });
+  return true;
+}
+
+function applySubstitution(state, team, outgoing, incoming) {
+  if (!outgoing.onPitch || outgoing.sentOff || incoming.onPitch || incoming.sentOff || incoming.subbedOff) return false;
+  if (outgoing.role !== incoming.role || team.substitutions >= 3) return false;
+  const slot = outgoing.idx;
+  const position = { ...outgoing.pos };
+  const wasControlled = team.controlled === outgoing;
+  const hadBall = state.ball.owner === outgoing;
+  const oldRole = outgoing.role;
+  const outgoingMustPass = outgoing.mustPass;
+  const outgoingThrowIn = outgoing.throwIn;
+  const outgoingHoldTimer = outgoing.holdTimer;
+
+  outgoing.onPitch = false;
+  outgoing.subbedOff = true;
+  outgoing.idx = -1;
+  outgoing.benchRole = oldRole;
+  outgoing.pos.x = state.teams[teamIdx].dir * (HALF_L + 7 + incoming.benchIndex * 1.2);
+  outgoing.pos.z = 0;
+  outgoing.vel.x = outgoing.vel.z = 0;
+  outgoing.intent.mx = outgoing.intent.mz = 0;
+  outgoing.intent.action = null;
+  outgoing.human = null;
+  outgoing.charge = 0;
+
+  incoming.onPitch = true;
+  incoming.idx = slot;
+  incoming.role = oldRole;
+  incoming.pos.x = position.x;
+  incoming.pos.z = position.z;
+  incoming.face.x = outgoing.face.x;
+  incoming.face.z = outgoing.face.z;
+  incoming.vel.x = incoming.vel.z = 0;
+  incoming.stun = 0;
+  incoming.intent.mx = incoming.intent.mz = 0;
+  incoming.intent.action = null;
+  incoming.mustPass = hadBall && outgoingMustPass;
+  incoming.mustPassTimer = hadBall ? outgoing.mustPassTimer : 0;
+  incoming.throwIn = hadBall && outgoingThrowIn;
+  incoming.holdTimer = hadBall ? outgoingHoldTimer : 0;
+  outgoing.mustPass = false;
+  outgoing.throwIn = false;
+
+  if (hadBall) {
+    state.ball.owner = incoming;
+    state.ball.lastTouch = incoming;
+    state.ball.intended = null;
+  } else if (state.ball.intended === outgoing) {
+    state.ball.intended = incoming;
+  }
+  state.ball.offsidePlayers = state.ball.offsidePlayers.filter((player) => player !== outgoing);
+  if (wasControlled) setControlled(state, team, incoming);
+  team.substitutions++;
+  state.events.push({ type: 'substitution', team: teamIdx, outgoing: outgoing.id, incoming: incoming.id });
+  return true;
+}
+
+function applyPendingSubstitutions(state) {
+  for (const team of state.teams) {
+    const pending = team.pendingSubstitution;
+    if (!pending) continue;
+    team.pendingSubstitution = null;
+    const applied = applySubstitution(state, team, state.players[pending.outgoing], state.players[pending.incoming]);
+    if (!applied) state.events.push({ type: 'substitutionCancelled', team: team.index });
+  }
+}
+
+function automateHalftimeSubstitutions(state) {
+  for (const team of state.teams) {
+    if (team.human || team.substitutions >= 3) continue;
+    while (team.substitutions < 3) {
+      const replaceable = state.players.filter((player) => player.team === team.index
+        && player.onPitch && !player.sentOff && !player.subbedOff
+        && (player.injured || player.stamina <= 0.58)
+        && state.players.some((reserve) => reserve.team === team.index && !reserve.onPitch
+          && !reserve.sentOff && !reserve.subbedOff && reserve.role === player.role));
+      const outgoing = replaceable.sort((a, b) =>
+        Number(b.injured) - Number(a.injured) || a.stamina - b.stamina,
+      )[0];
+      if (!outgoing) break;
+      const incoming = state.players
+        .filter((p) => p.team === team.index && !p.onPitch && !p.sentOff && !p.subbedOff && p.role === outgoing.role)
+        .sort((a, b) => ratingForRole(b) - ratingForRole(a))[0];
+      if (!incoming || !makeSubstitution(state, team.index, outgoing.id, incoming.id)) break;
+    }
+  }
+}
+
+function ratingForRole(player) {
+  const s = player.stats;
+  if (player.role === 'GK') return s.gk;
+  if (player.role === 'DEF') return s.tac * 0.55 + s.spd * 0.2 + s.pas * 0.15 + s.dri * 0.1;
+  if (player.role === 'MID') return s.pas * 0.35 + s.dri * 0.25 + s.spd * 0.2 + s.tac * 0.2;
+  return s.sho * 0.4 + s.spd * 0.25 + s.dri * 0.25 + s.pas * 0.1;
 }
 
 export function toWorld(team, fx, fz) {
@@ -155,6 +304,7 @@ function setBanner(state, text, time = 1.6) {
 // ---------- human control ----------
 function setControlled(state, team, p) {
   if (!team.human) return;
+  if (p?.sentOff) p = null;
   if (team.controlled === p) return;
   if (team.controlled) team.controlled.human = null;
   team.controlled = p;
@@ -168,7 +318,7 @@ function setControlled(state, team, p) {
 function nearestTo(state, teamIdx, point, exclude = null, allowGK = false) {
   let best = null, bd = Infinity;
   for (const p of state.players) {
-    if (p.team !== teamIdx || p === exclude) continue;
+    if (p.team !== teamIdx || p === exclude || !p.onPitch || p.sentOff) continue;
     if (!allowGK && p.role === 'GK') continue;
     const d = dist(p.pos, point);
     if (d < bd) { bd = d; best = p; }
@@ -178,17 +328,30 @@ function nearestTo(state, teamIdx, point, exclude = null, allowGK = false) {
 
 // ---------- set pieces ----------
 export function setupKickoff(state, teamIdx) {
+  applyPendingSubstitutions(state);
   const b = state.ball;
   for (const team of state.teams) {
     const layout = team.index === teamIdx ? KICKOFF_ATTACK : KICKOFF_DEFEND;
-    teamPlayers(state, team.index).forEach((p, i) => {
-      placePlayer(p, toWorld(team, layout[i].x, layout[i].z), team.dir);
+    teamPlayers(state, team.index).forEach((p) => {
+      if (!p.onPitch) return;
+      if (p.sentOff) {
+        p.pos.x = team.dir * (HALF_L + 2.5);
+        p.pos.z = 0;
+        p.vel.x = p.vel.z = 0;
+        p.intent.mx = p.intent.mz = 0;
+        return;
+      }
+      placePlayer(p, toWorld(team, layout[p.idx].x, layout[p.idx].z), team.dir);
     });
   }
-  const taker = teamPlayers(state, teamIdx)[4];
+  const taker = teamPlayers(state, teamIdx).find((p) => p.idx === 4 && !p.sentOff)
+    || nearestTo(state, teamIdx, { x: 0, z: 0 }, null, true);
+  if (!taker) return;
   b.pos.x = 0; b.pos.y = BALL_R; b.pos.z = 0;
   b.vel.x = b.vel.y = b.vel.z = 0;
   b.owner = taker; b.lastTouch = taker; b.intended = null; b.shotLive = false;
+  b.offsidePlayers = [];
+  b.restartNoOffsideBy = null;
   taker.mustPass = true; taker.mustPassTimer = 0;
   for (const t of state.teams) setControlled(state, t, t.index === teamIdx ? taker : nearestTo(state, t.index, b.pos));
   state.phase = 'kickoff';
@@ -197,22 +360,28 @@ export function setupKickoff(state, teamIdx) {
 }
 
 function startRestart(state, type, teamIdx, spot) {
+  applyPendingSubstitutions(state);
   const b = state.ball;
+  state.penalty = null;
   const team = state.teams[teamIdx];
   let taker;
   if (type === 'goal kick') {
-    taker = teamPlayers(state, teamIdx)[0];
+    taker = teamPlayers(state, teamIdx).find((p) => p.onPitch && p.role === 'GK' && !p.sentOff)
+      || nearestTo(state, teamIdx, spot, null, true);
   } else {
     taker = nearestTo(state, teamIdx, spot);
   }
-  // Everyone else drifts back to shape; opponents keep 5 m away.
+  if (!taker) taker = nearestTo(state, teamIdx, spot, null, true);
+  if (!taker) return;
+  const minDistance = type === 'throw-in' ? 2 : ['free kick', 'corner'].includes(type) ? 9.15 : 5;
+  // Everyone else drifts back to shape; opponents respect the restart distance.
   for (const p of state.players) {
-    if (p === taker) continue;
+    if (!p.onPitch || p === taker || p.sentOff) continue;
     const d = dist(p.pos, spot);
-    if (p.team !== teamIdx && d < 5) {
+    if (p.team !== teamIdx && d < minDistance) {
       const nx = (p.pos.x - spot.x) / (d || 1), nz = (p.pos.z - spot.z) / (d || 1);
-      p.pos.x = spot.x + nx * 5; p.pos.z = spot.z + nz * 5;
-      if (d === 0) p.pos.x = spot.x - team.dir * 5;
+      p.pos.x = spot.x + nx * minDistance; p.pos.z = spot.z + nz * minDistance;
+      if (d === 0) p.pos.x = spot.x - team.dir * minDistance;
       // Stay on the field side of the spot.
       p.pos.x = clamp(p.pos.x, -HALF_L + 0.5, HALF_L - 0.5);
       p.pos.z = clamp(p.pos.z, -HALF_W + 0.5, HALF_W - 0.5);
@@ -221,7 +390,7 @@ function startRestart(state, type, teamIdx, spot) {
     p.charge = 0;
   }
   // The taker faces into the pitch.
-  const fx = type === 'corner' ? -Math.sign(spot.x) : type === 'goal kick' ? team.dir : 0;
+  const fx = type === 'corner' ? -Math.sign(spot.x) : type === 'goal kick' || type === 'free kick' ? team.dir : 0;
   const fz = type === 'throw-in' ? -Math.sign(spot.z) : type === 'corner' ? -Math.sign(spot.z) * 0.6 : 0;
   placePlayer(taker, spot, 1);
   const fl = len(fx, fz) || 1;
@@ -229,6 +398,8 @@ function startRestart(state, type, teamIdx, spot) {
   if (type === 'throw-in') taker.pos.z += Math.sign(spot.z) * 0.4;
 
   b.owner = taker; b.lastTouch = taker; b.intended = null; b.shotLive = false;
+  b.offsidePlayers = [];
+  b.restartNoOffsideBy = ['throw-in', 'goal kick', 'corner'].includes(type) ? taker : null;
   b.vel.x = b.vel.y = b.vel.z = 0;
   attachBall(b, taker);
   taker.mustPass = true; taker.mustPassTimer = 0;
@@ -242,6 +413,58 @@ function startRestart(state, type, teamIdx, spot) {
   state.phase = 'restart';
   state.phaseTimer = 0.9;
   setBanner(state, type.toUpperCase(), 1.1);
+}
+
+function inPenaltyArea(state, defendingTeamIdx, point) {
+  const defendingTeam = state.teams[defendingTeamIdx];
+  const goalX = -HALF_L * defendingTeam.dir;
+  return Math.abs(point.x - goalX) < BOX.depth && Math.abs(point.z) < BOX.width / 2;
+}
+
+function startPenalty(state, teamIdx) {
+  const team = state.teams[teamIdx];
+  const opponent = state.teams[1 - teamIdx];
+  const candidates = teamPlayers(state, teamIdx).filter((p) => p.onPitch && p.role !== 'GK' && !p.sentOff);
+  const shooter = team.human && team.controlled && !team.controlled.sentOff && team.controlled.role !== 'GK'
+    ? team.controlled
+    : candidates.reduce((best, p) => !best || p.stats.sho > best.stats.sho ? p : best, null)
+      || teamPlayers(state, teamIdx).find((p) => p.onPitch && p.role === 'GK' && !p.sentOff);
+  const keeper = teamPlayers(state, opponent.index).find((p) => p.onPitch && p.role === 'GK' && !p.sentOff);
+  if (!shooter) return;
+  const goalX = HALF_L * team.dir;
+  const spot = { x: goalX - team.dir * PENALTY_SPOT, z: 0 };
+
+  // Keep everyone behind the penalty arc until the kick is taken.
+  for (const p of state.players) {
+    if (!p.onPitch || p.sentOff || p === shooter || p === keeper) continue;
+    const teamOffset = p.team === teamIdx ? -1.2 : 1.2;
+    const z = (p.idx - 5.5) * 5.1 + teamOffset;
+    const x = -team.dir * 3 + (p.team === teamIdx ? -3 : 3);
+    placePlayer(p, { x, z }, team.dir);
+  }
+  placePlayer(shooter, { x: spot.x - team.dir * DRIBBLE_OFFSET, z: 0 }, team.dir);
+  if (keeper) placePlayer(keeper, { x: goalX - team.dir * 0.15, z: 0 }, -team.dir);
+
+  state.ball.pos.x = spot.x;
+  state.ball.pos.y = BALL_R;
+  state.ball.pos.z = 0;
+  state.ball.vel.x = state.ball.vel.y = state.ball.vel.z = 0;
+  state.ball.owner = shooter;
+  state.ball.lastTouch = shooter;
+  state.ball.intended = null;
+  state.ball.offsidePlayers = [];
+  state.ball.restartNoOffsideBy = null;
+  state.ball.shotLive = false;
+  shooter.mustPass = false;
+  shooter.charge = 0;
+  setControlled(state, team, shooter);
+  if (opponent.human) setControlled(state, opponent, nearestTo(state, opponent.index, spot));
+
+  state.penalty = { attacker: teamIdx, shooter, active: true, pending: false, elapsed: 0 };
+  state.restart = { type: 'penalty', team: teamIdx };
+  state.phase = 'penalty';
+  state.phaseTimer = 1.6;
+  setBanner(state, 'PENALTY', 1.6);
 }
 
 // ---------- ball actions ----------
@@ -269,7 +492,7 @@ export function choosePassTarget(state, p, dx, dz) {
   if (l < 0.1) { dx = p.face.x; dz = p.face.z; } else { dx /= l; dz /= l; }
   let best = null, bestScore = Infinity;
   for (const t of state.players) {
-    if (t.team !== p.team || t === p) continue;
+    if (t.team !== p.team || t === p || !t.onPitch || t.sentOff) continue;
     const ox = t.pos.x - p.pos.x, oz = t.pos.z - p.pos.z;
     const d = len(ox, oz);
     if (d < 1.5) continue;
@@ -285,6 +508,29 @@ export function doPass(state, p, target) {
   const b = state.ball;
   const team = state.teams[p.team];
   if (!target) return;
+  // Offside position is judged when the ball is played. A player must be in
+  // the opponents' half and ahead of both the ball and the second-last rival.
+  const restartExempt = b.restartNoOffsideBy === p;
+  if (restartExempt) b.restartNoOffsideBy = null;
+  if (restartExempt) {
+    b.offsidePlayers = [];
+  } else {
+    const dir = team.dir;
+    const defenders = state.players
+      .filter((other) => other.team !== p.team && other.onPitch && !other.sentOff)
+      .map((other) => other.pos.x * dir)
+      .sort((a, b) => b - a);
+    const secondLastDefender = defenders[1] ?? HALF_L;
+    const ballLine = b.pos.x * dir;
+    b.offsidePlayers = teamPlayers(state, p.team).filter((teammate) =>
+      teammate.onPitch
+        && !teammate.sentOff
+        && teammate !== p
+        && teammate.pos.x * dir > 0
+        && teammate.pos.x * dir > ballLine + 0.05
+        && teammate.pos.x * dir > secondLastDefender + 0.05,
+    );
+  }
   const lead = Math.min(1.0, dist(p.pos, target.pos) / 16);
   const tx = target.pos.x + target.vel.x * lead;
   const tz = target.pos.z + target.vel.z * lead;
@@ -292,7 +538,8 @@ export function doPass(state, p, target) {
   const d = len(dx, dz) || 1;
   dx /= d; dz /= d;
   const errMul = p.human ? 1 : team.diff.error;
-  const err = (1 - p.stats.pas / 100) * 0.22 * errMul * rand();
+  const fatigue = (1 + (1 - p.stamina) * 0.25) * (p.injured ? 1.3 : 1);
+  const err = (1 - p.stats.pas / 100) * 0.22 * errMul * fatigue * rand();
   const c = Math.cos(err), s = Math.sin(err);
   const ex = dx * c - dz * s, ez = dx * s + dz * c;
 
@@ -320,6 +567,7 @@ export function doPass(state, p, target) {
 export function doShot(state, p, power, aimInput = 0) {
   const b = state.ball;
   const team = state.teams[p.team];
+  const penaltyShot = state.penalty?.active && state.penalty.shooter === p;
   const goalX = HALF_L * team.dir;
   power = clamp(power, 0.2, 1);
   const half = GOAL.width / 2 - 0.45;
@@ -329,20 +577,65 @@ export function doShot(state, p, power, aimInput = 0) {
   dx /= d; dz /= d;
   const errMul = p.human ? 1 : team.diff.error;
   const skill = 1 - p.stats.sho / 100;
-  const err = (skill * 0.14 + (power > 0.85 ? 0.04 : 0) + d / 900) * errMul * rand();
+  const fatigue = (1 + (1 - p.stamina) * 0.25) * (p.injured ? 1.3 : 1);
+  const err = (skill * 0.14 + (power > 0.85 ? 0.04 : 0) + d / 900) * errMul * fatigue * rand();
   const c = Math.cos(err), s = Math.sin(err);
   const h = 15 + 15 * power;
   b.vel.x = (dx * c - dz * s) * h;
   b.vel.z = (dx * s + dz * c) * h;
-  b.vel.y = 1 + 4.2 * power * power + skill * Math.random() * 3 + d * 0.03;
+  b.vel.y = penaltyShot
+    ? 0.35 + power * 0.9
+    : 1 + 4.2 * power * power + skill * Math.random() * 3 + d * 0.03;
   b.intended = null;
+  b.offsidePlayers = [];
+  b.restartNoOffsideBy = null;
   b.shotId += 1;
   b.shotTeam = p.team;
   b.shotLive = true;
+  if (penaltyShot) {
+    state.penalty.active = false;
+    state.penalty.pending = true;
+    state.penalty.elapsed = 0;
+  }
   team.shots += 1;
   release(state, p);
   p.kickCd = 0.45;
   state.events.push({ type: 'shot', player: p.id, power });
+}
+
+function sendOff(state, p, secondYellow = false) {
+  const team = state.teams[p.team];
+  p.sentOff = true;
+  p.human = null;
+  p.charge = 0;
+  p.vel.x = p.vel.z = 0;
+  p.intent.mx = p.intent.mz = 0;
+  p.intent.sprint = false;
+  p.pos.x = team.dir * (HALF_L + 2.5);
+  p.pos.z = 0;
+  team.redCards++;
+  if (team.controlled === p) setControlled(state, team, nearestTo(state, team.index, p.pos));
+  state.events.push({ type: 'card', team: team.index, player: p.id, color: 'red', secondYellow });
+}
+
+function issueCard(state, p, color) {
+  const team = state.teams[p.team];
+  if (color === 'red') {
+    sendOff(state, p);
+    return;
+  }
+  p.yellowCards++;
+  team.yellowCards++;
+  if (p.yellowCards >= 2) sendOff(state, p, true);
+  else state.events.push({ type: 'card', team: team.index, player: p.id, color: 'yellow', secondYellow: false });
+}
+
+function injurePlayer(state, p) {
+  if (p.injured) return;
+  p.injured = true;
+  p.stun = Math.max(p.stun, 0.9);
+  state.teams[p.team].injuries++;
+  state.events.push({ type: 'injury', team: p.team, player: p.id });
 }
 
 function doTackle(state, p) {
@@ -361,12 +654,37 @@ function doTackle(state, p) {
   }
   if (dist(p.pos, victim.pos) > 1.7) { p.stun = 0.45; return; }
   const team = state.teams[p.team];
+  const behind = (p.pos.x - victim.pos.x) * victim.face.x
+    + (p.pos.z - victim.pos.z) * victim.face.z < -0.35;
+  const movingFast = p.intent.sprint || len(p.vel.x, p.vel.z) > 5;
+  const foulChance = clamp(
+    0.035 + (behind ? 0.18 : 0) + (movingFast ? 0.07 : 0)
+      + Math.max(0, victim.stats.dri - p.stats.tac) / 1250,
+    0.02, 0.38,
+  );
+  if (Math.random() < foulChance) {
+    const spot = { x: victim.pos.x, z: victim.pos.z };
+    const penalty = inPenaltyArea(state, p.team, spot);
+    victim.stun = 0.25;
+    p.stun = 0.35;
+    state.events.push({ type: 'foul', team: victim.team, player: p.id, victim: victim.id, penalty });
+    if (movingFast && Math.random() < 0.045) injurePlayer(state, victim);
+    if (p.role !== 'GK') {
+      if (behind && movingFast && Math.random() < 0.12) issueCard(state, p, 'red');
+      else if ((behind || movingFast) && Math.random() < 0.45) issueCard(state, p, 'yellow');
+    }
+    if (penalty) startPenalty(state, victim.team);
+    else startRestart(state, 'free kick', victim.team, spot);
+    return;
+  }
   const mul = p.human ? 1 : team.diff.tackle;
   const chance = clamp((0.45 + (p.stats.tac - victim.stats.dri) / 90) * mul, 0.12, 0.88);
   if (Math.random() < chance) {
     b.owner = null;
     b.lastTouch = p;
     b.intended = null;
+    b.offsidePlayers = [];
+    b.restartNoOffsideBy = null;
     const kx = p.face.x * 0.7 + rand(-0.4, 0.4), kz = p.face.z * 0.7 + rand(-0.4, 0.4);
     b.vel.x = kx * 6; b.vel.z = kz * 6; b.vel.y = 0.3;
     victim.stun = 0.5;
@@ -386,7 +704,7 @@ function doTackle(state, p) {
  */
 export function computeNext(state, team) {
   const p = team.controlled;
-  if (!team.human || !p) return null;
+  if (!team.human || !p || p.sentOff) return null;
   const b = state.ball;
   const inp = team.lastInput || { mx: 0, mz: 0 };
   if (b.owner === p) return choosePassTarget(state, p, inp.mx, inp.mz);
@@ -405,8 +723,9 @@ function updateNext(state) {
 function applyHumanInput(state, team, input, dt) {
   const b = state.ball;
   let p = team.controlled;
-  if (!p || (p.role === 'GK')) {
+  if (!p || p.sentOff || (p.role === 'GK')) {
     p = nearestTo(state, team.index, b.pos);
+    if (!p) return;
     setControlled(state, team, p);
   }
   // When a teammate (AI) gains the ball, take control of them.
@@ -433,6 +752,17 @@ function applyHumanInput(state, team, input, dt) {
 
   const it = p.intent;
   it.mx = input.mx; it.mz = input.mz; it.sprint = !!input.sprint; it.action = null;
+  if (state.penalty?.active) {
+    it.mx = it.mz = 0;
+    it.sprint = false;
+    if (p === state.penalty.shooter && b.owner === p) {
+      if (input.shootHeld) p.charge = Math.min(1, p.charge + dt / SHOT_CHARGE_TIME);
+      else if (p.charge > 0) it.action = { type: 'shoot', power: Math.max(0.25, p.charge), aim: input.mz };
+    } else {
+      p.charge = 0;
+    }
+    return;
+  }
   const hasInput = len(input.mx, input.mz) > 0.15;
 
   // Receiving a pass with no stick input: run onto the ball.
@@ -464,6 +794,12 @@ function applyHumanInput(state, team, input, dt) {
 
 // ---------- movement ----------
 function movePlayer(state, p, dt) {
+  if (!p.onPitch || p.sentOff) {
+    p.vel.x = p.vel.z = 0;
+    p.intent.mx = p.intent.mz = 0;
+    p.intent.action = null;
+    return;
+  }
   const b = state.ball;
   const it = p.intent;
   const team = state.teams[p.team];
@@ -484,8 +820,12 @@ function movePlayer(state, p, dt) {
   let mx = it.mx, mz = it.mz;
   const l = len(mx, mz);
   if (l > 1) { mx /= l; mz /= l; }
-  const canSprint = it.sprint && p.stamina > 0.05;
+  const canSprint = it.sprint && p.stamina > 0.05 && !p.injured;
   let speed = 4.6 + (p.stats.spd / 100) * 2.6;
+  // Fatigue has a gradual effect so tired players remain controllable but
+  // cannot match a fresh player's pace for the whole match.
+  speed *= 1 - (1 - p.stamina) * 0.18;
+  if (p.injured) speed *= 0.78;
   if (canSprint) speed *= 1.3;
   if (b.owner === p) speed *= 0.86 + p.stats.dri / 1000;
   if (p.stun > 0) speed *= 0.35;
@@ -521,6 +861,7 @@ function separatePlayers(state) {
   for (let i = 0; i < ps.length; i++) {
     for (let j = i + 1; j < ps.length; j++) {
       const a = ps[i], c = ps[j];
+      if (!a.onPitch || !c.onPitch || a.sentOff || c.sentOff) continue;
       const dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z;
       const d = len(dx, dz);
       if (d > 0 && d < min) {
@@ -642,6 +983,7 @@ function keeperSave(state, gk) {
     b.owner = gk;
     b.lastTouch = gk;
     b.intended = null;
+    if (state.penalty?.pending) state.penalty = null;
     gk.holdTimer = 1.0;
     gk.mustPass = true;
     gk.mustPassTimer = 0;
@@ -657,6 +999,7 @@ function updatePossession(state) {
   const speed = len(b.vel.x, b.vel.z);
   let best = null, bd = Infinity;
   for (const p of state.players) {
+    if (!p.onPitch || p.sentOff) continue;
     if (p.kickCd > 0 || p.stun > 0) continue;
     const isGK = p.role === 'GK' && inOwnBox(state, p);
     const reachH = isGK ? 2.5 : 1.1;
@@ -666,6 +1009,19 @@ function updatePossession(state) {
     if (d < r && d < bd) { bd = d; best = p; }
   }
   if (!best) return;
+
+  if (b.offsidePlayers.includes(best)) {
+    const spot = { x: b.pos.x, z: b.pos.z };
+    const defendingTeam = 1 - best.team;
+    b.owner = null;
+    b.intended = null;
+    b.offsidePlayers = [];
+    b.restartNoOffsideBy = null;
+    b.vel.x = b.vel.y = b.vel.z = 0;
+    state.events.push({ type: 'offside', team: best.team, player: best.id });
+    startRestart(state, 'free kick', defendingTeam, spot);
+    return;
+  }
 
   const isGK = best.role === 'GK' && inOwnBox(state, best);
   if (isGK && b.shotLive && b.shotTeam !== best.team) {
@@ -693,6 +1049,8 @@ function updatePossession(state) {
   b.owner = best;
   b.lastTouch = best;
   b.intended = null;
+  b.offsidePlayers = [];
+  b.restartNoOffsideBy = null;
   b.shotLive = false;
   b.vel.y = 0;
   if (isGK) { best.holdTimer = 1.0; best.mustPass = true; best.mustPassTimer = 0; }
@@ -711,6 +1069,11 @@ function checkOutOfPlay(state) {
       scoreGoal(state, scorer.index);
       return;
     }
+    if (state.penalty?.pending) {
+      const expired = state.clock >= state.duration;
+      state.penalty = null;
+      if (expired) { endMatch(state); return; }
+    }
     const defending = state.teams.find((t) => t.dir === -endSign);
     const lastTeam = b.lastTouch ? b.lastTouch.team : -1;
     if (lastTeam === defending.index) {
@@ -726,6 +1089,11 @@ function checkOutOfPlay(state) {
     return;
   }
   if (Math.abs(z) > HALF_W + BALL_R) {
+    if (state.penalty?.pending) {
+      const expired = state.clock >= state.duration;
+      state.penalty = null;
+      if (expired) { endMatch(state); return; }
+    }
     const lastTeam = b.lastTouch ? b.lastTouch.team : 0;
     startRestart(state, 'throw-in', 1 - lastTeam, {
       x: clamp(x, -HALF_L + 1, HALF_L - 1), z: Math.sign(z) * HALF_W,
@@ -747,6 +1115,7 @@ function scoreGoal(state, teamIdx) {
   setBanner(state, 'GOAL!', 2.4);
   b.shotLive = false;
   b.intended = null;
+  state.penalty = null;
   state.phase = 'goal';
   state.phaseTimer = 2.6;
   state.kickoffNext = 1 - teamIdx;
@@ -782,6 +1151,27 @@ export function stepMatch(state, inputs, dt) {
     return;
   }
 
+  // Stop the match clock at the midpoint, change ends, then restart with
+  // the team that did not take the opening kick-off.
+  if (state.phase === 'halftime') {
+    state.phaseTimer -= dt;
+    if (state.phaseTimer <= 0) {
+      for (const team of state.teams) team.dir *= -1;
+      setupKickoff(state, 1 - state.openingKickoff);
+    }
+    return;
+  }
+
+  if (state.phase === 'penalty') {
+    state.phaseTimer -= dt;
+    updateNext(state);
+    if (state.phaseTimer <= 0) {
+      state.phase = 'play';
+      state.restart = null;
+    }
+    return;
+  }
+
   if (state.phase === 'kickoff' || state.phase === 'restart') {
     state.phaseTimer -= dt;
     updateNext(state);
@@ -791,6 +1181,15 @@ export function stepMatch(state, inputs, dt) {
 
   // ----- play -----
   state.clock += dt;
+  if (state.penalty?.active) state.penalty.elapsed += dt;
+  if (state.penalty?.pending) {
+    state.penalty.elapsed += dt;
+    if (state.penalty.elapsed > 10) {
+      const expired = state.clock >= state.duration;
+      state.penalty = null;
+      if (expired) { endMatch(state); return; }
+    }
+  }
   if (b.owner) state.teams[b.owner.team].possessionTime += dt;
 
   for (const p of state.players) p.intent.action = null;
@@ -798,6 +1197,10 @@ export function stepMatch(state, inputs, dt) {
     if (team.human) applyHumanInput(state, team, inputs[team.human], dt);
   }
   updateAI(state, dt);
+  if (state.penalty?.active && state.penalty.elapsed > 8
+      && !state.penalty.shooter.intent.action) {
+    state.penalty.shooter.intent.action = { type: 'shoot', power: 0.65, aim: 0 };
+  }
 
   // Must-pass safety timeout (throw-ins, kick-offs, keeper holding).
   for (const p of state.players) {
@@ -819,7 +1222,12 @@ export function stepMatch(state, inputs, dt) {
       doPass(state, p, choosePassTarget(state, p, p.face.x, p.face.z));
     } else if (a.type === 'shoot' && b.owner === p) doShot(state, p, a.power, a.aim || 0);
     else if (a.type === 'tackle') doTackle(state, p);
+    if (state.phase !== 'play') break;
   }
+
+  // A foul or dismissal starts a stoppage; do not run another movement or
+  // ball step after the restart has been positioned.
+  if (state.phase !== 'play') return;
 
   for (const p of state.players) movePlayer(state, p, dt);
   separatePlayers(state);
@@ -831,7 +1239,23 @@ export function stepMatch(state, inputs, dt) {
   if (b.intended && !b.owner && len(b.vel.x, b.vel.z) < 0.5) b.intended = null;
 
   updateNext(state);
-  if (state.clock >= state.duration && state.phase === 'play') endMatch(state);
+  if (!state.halftimeDone && state.clock >= state.duration / 2 && state.phase === 'play') {
+    state.halftimeDone = true;
+    state.phase = 'halftime';
+    state.phaseTimer = 3;
+    state.ball.owner = null;
+    state.ball.intended = null;
+    state.ball.offsidePlayers = [];
+    state.ball.restartNoOffsideBy = null;
+    state.ball.vel.x = state.ball.vel.y = state.ball.vel.z = 0;
+    setBanner(state, 'HALF TIME', 3);
+    state.events.push({ type: 'halftime' });
+    applyPendingSubstitutions(state);
+    automateHalftimeSubstitutions(state);
+    return;
+  }
+  if (state.clock >= state.duration && state.phase === 'play'
+      && !state.penalty?.active && !state.penalty?.pending) endMatch(state);
 }
 
 function endMatch(state) {
