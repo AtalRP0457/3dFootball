@@ -25,6 +25,8 @@ the code ownership split, local setup, and GitHub branch/review workflow. See
 - **2 Players**: same keyboard (or two gamepads).
 - **Watch AI vs AI**
 - **Decades Cup**: an 8-team knockout tournament with quick AI-simulated fixtures. Tied user matches go to playable penalties: aim each shot, choose a keeper dive and continue through sudden death if needed.
+- **Penalty Shootout**: a standalone sudden-death shootout where you place shots and choose your keeper's dive.
+- **Practice**: an open-ended match against easy AI with no halftime or full-time whistle.
 - **Career Season**: an 18-matchday, 10-team league with AI-simulated matches, standings and saved progress.
 - **Full 11-player teams** with four named reserves, up to three substitutions, 4-3-3/4-4-2/3-5-2 formations, full-size pitch, halftime end switch, offside calls, fouls, free kicks, penalties and yellow/red cards
 - **Goal replays** show the last four seconds from the broadcast camera; press R or use Skip Replay to return to play.

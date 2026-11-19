@@ -26,7 +26,7 @@ function loadSettings() {
     const teamIds = new Set(TEAMS.map((team) => team.id));
     return {
       ...DEFAULT_SETTINGS,
-      ...(saved && ['1p', '2p', 'cpu', 'cup', 'career'].includes(saved.mode) ? { mode: saved.mode } : {}),
+      ...(saved && ['1p', '2p', 'cpu', 'cup', 'career', 'penalties', 'practice'].includes(saved.mode) ? { mode: saved.mode } : {}),
       ...(saved && teamIds.has(saved.home) ? { home: saved.home } : {}),
       ...(saved && teamIds.has(saved.away) ? { away: saved.away } : {}),
       ...(saved && ['easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
@@ -448,6 +448,8 @@ function refreshMenu() {
     '2p': ['Player 1 <span class="who p1">P1</span>', 'Player 2 <span class="who p2">P2</span>'],
     cpu: ['Home <span class="who ai">AI</span>', 'Away <span class="who ai">AI</span>'],
     cup: ['Cup team <span class="who p1">P1</span>', 'Opening opponent <span class="who ai">AI</span>'],
+    penalties: ['Shooter <span class="who p1">P1</span>', 'Keeper <span class="who ai">AI</span>'],
+    practice: ['Practice team <span class="who p1">P1</span>', 'Training opposition <span class="who ai">AI</span>'],
     career: ['Career team <span class="who p1">P1</span>', 'First opponent <span class="who ai">AI</span>'],
   }[settings.mode];
   $('homeLabel').innerHTML = labels[0];
@@ -459,6 +461,7 @@ function refreshMenu() {
     ? `${careerOpponent.name} <span class="who ai">AI</span>`
     : labels[1];
   $('diffRow').style.display = settings.mode === '2p' ? 'none' : '';
+  $('lengthRow').style.display = settings.mode === 'practice' || settings.mode === 'penalties' ? 'none' : '';
 }
 
 // ---------- tutorial page ----------
@@ -708,6 +711,19 @@ function takeCupShootoutAction() {
 function finishCupShootout() {
   $('shootout').classList.add('hidden');
   cupShootout = null;
+  if (settings.mode === 'penalties') {
+    $('ftTitle').textContent = 'Shootout complete';
+    $('ftScore').textContent = `${cupShootoutOutcome.winner.name} win ${cupShootoutOutcome.homeScore}–${cupShootoutOutcome.awayScore} on penalties`;
+    $('ftCupNote').classList.add('hidden');
+    $('ftCupResults').classList.add('hidden');
+    $('ftScorers').classList.add('hidden');
+    $('ftStats').classList.add('hidden');
+    $('rematchBtn').textContent = 'Play again';
+    $('fulltime').classList.remove('hidden');
+    cupShootoutOutcome = null;
+    return;
+  }
+  $('ftTitle').textContent = 'Full time';
   showFullTime();
 }
 
@@ -839,7 +855,8 @@ function startMatch() {
   }
   match = createMatch({
     home, away, controllers: controllers(),
-    difficulty: settings.difficulty, duration: settings.duration,
+    difficulty: settings.mode === 'practice' ? 'easy' : settings.difficulty,
+    duration: settings.duration, practice: settings.mode === 'practice',
   });
   goals = [];
   acc = 0;
@@ -873,6 +890,10 @@ function startMatch() {
   setPaused(false);
   input.enabled = true;
   $('game').focus?.();
+  if (settings.mode === 'penalties') {
+    match.phase = 'fulltime';
+    beginCupShootout();
+  }
 }
 
 function toMenu() {
@@ -1042,7 +1063,7 @@ function handleEvents() {
 function updateHud(dt) {
   const [h, a] = match.teams;
   $('score').textContent = `${h.score} - ${a.score}`;
-  $('clock').textContent = `${displayMinute(match)}'`;
+  $('clock').textContent = match.practice ? 'FREE PLAY' : `${displayMinute(match)}'`;
   const banner = $('banner');
   if (match.banner && match.phase !== 'fulltime') {
     banner.textContent = match.banner.text;
@@ -1069,6 +1090,9 @@ function updateHud(dt) {
 }
 
 function showFullTime() {
+  $('ftTitle').textContent = 'Full time';
+  $('ftScorers').classList.remove('hidden');
+  $('ftStats').classList.remove('hidden');
   const [h, a] = match.teams;
   $('ftScore').innerHTML = `<span>${h.data.name}</span> <b>${h.score} - ${a.score}</b> <span>${a.data.name}</span>`;
   $('ftScorers').innerHTML = goals

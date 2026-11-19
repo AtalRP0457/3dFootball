@@ -139,6 +139,7 @@ export function createMatch(cfg) {
     },
     clock: 0,
     duration: cfg.duration || 240,
+    practice: !!cfg.practice,
     penalty: null,
     openingKickoff: 0,
     phase: 'kickoff',
@@ -1227,7 +1228,7 @@ function checkOutOfPlay(state) {
       return;
     }
     if (state.penalty?.pending) {
-      const expired = state.clock >= state.duration;
+      const expired = !state.practice && state.clock >= state.duration;
       state.penalty = null;
       if (expired) { endMatch(state); return; }
     }
@@ -1247,7 +1248,7 @@ function checkOutOfPlay(state) {
   }
   if (Math.abs(z) > HALF_W + BALL_R) {
     if (state.penalty?.pending) {
-      const expired = state.clock >= state.duration;
+      const expired = !state.practice && state.clock >= state.duration;
       state.penalty = null;
       if (expired) { endMatch(state); return; }
     }
@@ -1302,7 +1303,7 @@ export function stepMatch(state, inputs, dt) {
     updateBall(state, dt);
     for (const p of state.players) { p.intent.mx = 0; p.intent.mz = 0; movePlayer(state, p, dt); }
     if (state.phaseTimer <= 0) {
-      if (state.clock >= state.duration) endMatch(state);
+      if (!state.practice && state.clock >= state.duration) endMatch(state);
       else setupKickoff(state, state.kickoffNext);
     }
     return;
@@ -1342,7 +1343,7 @@ export function stepMatch(state, inputs, dt) {
   if (state.penalty?.pending) {
     state.penalty.elapsed += dt;
     if (state.penalty.elapsed > 10) {
-      const expired = state.clock >= state.duration;
+      const expired = !state.practice && state.clock >= state.duration;
       state.penalty = null;
       if (expired) { endMatch(state); return; }
     }
@@ -1397,7 +1398,7 @@ export function stepMatch(state, inputs, dt) {
   if (b.intended && !b.owner && len(b.vel.x, b.vel.z) < 0.5) b.intended = null;
 
   updateNext(state);
-  if (!state.halftimeDone && state.clock >= state.duration / 2 && state.phase === 'play') {
+  if (!state.practice && !state.halftimeDone && state.clock >= state.duration / 2 && state.phase === 'play') {
     state.halftimeDone = true;
     state.phase = 'halftime';
     state.phaseTimer = 3;
@@ -1412,7 +1413,7 @@ export function stepMatch(state, inputs, dt) {
     automateHalftimeSubstitutions(state);
     return;
   }
-  if (state.clock >= state.duration && state.phase === 'play'
+  if (!state.practice && state.clock >= state.duration && state.phase === 'play'
       && !state.penalty?.active && !state.penalty?.pending) endMatch(state);
 }
 
