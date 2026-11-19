@@ -93,7 +93,9 @@ export function createMatch(cfg) {
         sentOff: false,
         subbedOff: false,
         injured: false,
-        pos: { x: team.dir * (HALF_L + 7 + Math.max(0, benchIndex) * 1.2), z: 0 },
+        pos: onPitch
+          ? { x: 0, z: 0 }
+          : { x: team.dir * (HALF_L - 1), z: team.dir * (HALF_W - 1) },
         vel: { x: 0, z: 0 },
         face: { x: team.dir, z: 0 },
         stamina: 1,
@@ -214,8 +216,8 @@ function applySubstitution(state, team, outgoing, incoming) {
   outgoing.subbedOff = true;
   outgoing.idx = -1;
   outgoing.benchRole = oldRole;
-  outgoing.pos.x = state.teams[teamIdx].dir * (HALF_L + 7 + incoming.benchIndex * 1.2);
-  outgoing.pos.z = 0;
+  outgoing.pos.x = team.dir * (HALF_L - 1);
+  outgoing.pos.z = team.dir * (HALF_W - 1);
   outgoing.vel.x = outgoing.vel.z = 0;
   outgoing.intent.mx = outgoing.intent.mz = 0;
   outgoing.intent.action = null;
