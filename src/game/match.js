@@ -1003,6 +1003,32 @@ function inOwnBox(state, p) {
   return Math.abs(p.pos.x - gx) < BOX.depth && Math.abs(p.pos.z) < BOX.width / 2;
 }
 
+function checkOffsideChallenge(state) {
+  const b = state.ball;
+  if (b.owner || b.pos.y > 2.2 || !b.offsidePlayers.length) return false;
+  for (const attacker of b.offsidePlayers) {
+    if (!attacker.onPitch || attacker.sentOff) continue;
+    const defender = state.players.find((p) => p.onPitch && !p.sentOff
+      && p.team !== attacker.team
+      && dist(p.pos, b.pos) < 2.2
+      && dist(p.pos, attacker.pos) < 1.7);
+    if (!defender) continue;
+
+    const spot = { x: attacker.pos.x, z: attacker.pos.z };
+    const defendingTeam = state.teams[defender.team];
+    b.owner = null;
+    b.intended = null;
+    b.offsidePlayers = [];
+    b.restartNoOffsideBy = null;
+    b.shotLive = false;
+    b.vel.x = b.vel.y = b.vel.z = 0;
+    state.events.push({ type: 'offside', team: attacker.team, player: attacker.id, interference: true });
+    startRestart(state, 'free kick', defendingTeam.index, spot);
+    return true;
+  }
+  return false;
+}
+
 function keeperSave(state, gk) {
   const b = state.ball;
   const team = state.teams[gk.team];
@@ -1274,6 +1300,7 @@ export function stepMatch(state, inputs, dt) {
   for (const p of state.players) movePlayer(state, p, dt);
   separatePlayers(state);
   updateBall(state, dt);
+  if (checkOffsideChallenge(state)) return;
   updatePossession(state);
   checkOutOfPlay(state);
 
