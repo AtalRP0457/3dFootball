@@ -877,6 +877,10 @@ function handleEvents() {
         : 'A throw-in cannot score directly — goal kick awarded', 2.0);
     } else if (e.type === 'kickoffOwnGoal') {
       showSub('A kickoff cannot go directly into your own goal — corner awarded', 2.0);
+    } else if (e.type === 'freeKickDirectGoal') {
+      showSub(e.ownGoalEnd
+        ? 'A free kick cannot score directly into your own goal — corner awarded'
+        : 'Indirect free kick needs another touch — goal kick awarded', 2.0);
     } else if (e.type === 'foul') {
       showSub(e.penalty ? 'Foul — penalty awarded' : 'Foul — free kick', 1.8);
     } else if (e.type === 'card') {

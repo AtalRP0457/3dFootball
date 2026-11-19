@@ -111,7 +111,7 @@ export class MatchAudio {
     else if (event.type === 'save') this.noise(0.12, 0.06, event.parry ? 300 : 520);
     else if (event.type === 'foul' || event.type === 'offside'
       || event.type === 'doubleTouch' || event.type === 'throwInGoal'
-      || event.type === 'kickoffOwnGoal') {
+      || event.type === 'kickoffOwnGoal' || event.type === 'freeKickDirectGoal') {
       this.tone(1800, 0.24, 0.08, 'sine', 2350);
       this.tone(1650, 0.2, 0.06, 'sine', 2100);
     } else if (event.type === 'card') {
