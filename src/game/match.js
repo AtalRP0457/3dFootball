@@ -624,7 +624,9 @@ export function doPass(state, p, target) {
     b.vel.x = ex * h; b.vel.z = ez * h;
     b.vel.y = (GRAVITY * flight) / 2;
   } else {
-    const speed = clamp(Math.sqrt(2 * ROLL_DECEL * d) + 2, 4, 22);
+    // Match rolling speed to distance. The old fixed boost made a six-metre
+    // pass travel roughly twice that far, which is why every pass felt long.
+    const speed = clamp(Math.sqrt(2 * ROLL_DECEL * d) + 0.5, 3.2, 22);
     b.vel.x = ex * speed; b.vel.z = ez * speed;
     b.vel.y = 0.4;
   }

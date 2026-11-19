@@ -1,5 +1,5 @@
 // Headless tests for the match engine. Run with: npm test
-import { createMatch, stepMatch, teamPlayers } from '../src/game/match.js';
+import { createMatch, stepMatch, teamPlayers, choosePassTarget, doPass } from '../src/game/match.js';
 import { TEAMS } from '../src/data/teams.js';
 import { FIXED_DT, HALF_L, HALF_W } from '../src/game/constants.js';
 
@@ -117,6 +117,25 @@ console.log('Next player highlight');
   const shown = team.next;
   stepMatch(s, { p1: { passPressed: true } }, FIXED_DT);
   check(team.controlled === shown, 'switch goes to the yellow player');
+}
+
+// 2d) A nearby teammate in the aimed direction wins over a much longer option,
+// and the rolling pass speed is calibrated to that short distance.
+console.log('Short pass targeting');
+{
+  const s = createMatch({ home: TEAMS[3], away: TEAMS[7], controllers: ['p1', 'ai'], duration: 120 });
+  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  const passer = s.teams[0].controlled;
+  const teammates = teamPlayers(s, 0).filter((p) => p !== passer && p.onPitch && p.role !== 'GK');
+  const [near, far] = teammates;
+  passer.pos.x = passer.pos.z = 0;
+  near.pos.x = 4; near.pos.z = 0;
+  far.pos.x = 18; far.pos.z = 0;
+  s.ball.owner = passer; s.ball.pos.x = 0; s.ball.pos.z = 0;
+  const target = choosePassTarget(s, passer, 1, 0);
+  check(target === near, 'aimed pass prefers nearby teammate over a long option');
+  doPass(s, passer, target);
+  check(Math.hypot(s.ball.vel.x, s.ball.vel.z) < 6.1, 'short pass leaves at controlled speed');
 }
 
 // 2c) Throw-ins can't be shot
