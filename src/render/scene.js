@@ -602,6 +602,14 @@ export function createRenderer(canvasEl) {
       if (state.ball.owner === p && p.role === 'GK') {
         m.arms[0].rotation.x = m.arms[1].rotation.x = -1.3;
       }
+      // A clear team reaction gives goals and their replays a readable payoff.
+      if (state.phase === 'goal' && state.lastGoal?.team === p.team && p.role !== 'GK') {
+        const cheer = Math.sin(time * 9 + p.id) * 0.18;
+        m.arms[0].rotation.x = -2.15 + cheer;
+        m.arms[1].rotation.x = -2.15 - cheer;
+        m.arms[0].rotation.z = -0.35;
+        m.arms[1].rotation.z = 0.35;
+      }
     });
 
     // Ball: position and rolling spin from displacement
