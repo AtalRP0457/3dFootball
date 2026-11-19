@@ -869,6 +869,8 @@ function handleEvents() {
       showSub(e.interference
         ? `${match.players[e.player].name} penalized for offside interference`
         : `${match.players[e.player].name} offside`, 1.8);
+    } else if (e.type === 'doubleTouch') {
+      showSub(`${match.players[e.player].name} touched the ball twice — indirect free kick`, 2.0);
     } else if (e.type === 'foul') {
       showSub(e.penalty ? 'Foul — penalty awarded' : 'Foul — free kick', 1.8);
     } else if (e.type === 'card') {

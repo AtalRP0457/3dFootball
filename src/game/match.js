@@ -129,6 +129,7 @@ export function createMatch(cfg) {
       intended: null, // player a pass is aimed at
       offsidePlayers: [], // players in an offside position at the last teammate pass
       restartNoOffsideBy: null, // restart taker exempt from offside on the first kick
+      restartDoubleTouchBy: null, // restart taker cannot play the ball twice in succession
       shotId: 0,
       shotTeam: -1,
       shotLive: false,
@@ -372,6 +373,7 @@ export function setupKickoff(state, teamIdx) {
   b.owner = taker; b.lastTouch = taker; b.intended = null; b.shotLive = false;
   b.offsidePlayers = [];
   b.restartNoOffsideBy = null;
+  b.restartDoubleTouchBy = taker;
   taker.mustPass = true; taker.mustPassTimer = 0;
   for (const t of state.teams) setControlled(state, t, t.index === teamIdx ? taker : nearestTo(state, t.index, b.pos));
   state.phase = 'kickoff';
@@ -442,6 +444,7 @@ function startRestart(state, type, teamIdx, spot) {
   b.owner = taker; b.lastTouch = taker; b.intended = null; b.shotLive = false;
   b.offsidePlayers = [];
   b.restartNoOffsideBy = ['throw-in', 'goal kick', 'corner'].includes(type) ? taker : null;
+  b.restartDoubleTouchBy = taker;
   b.vel.x = b.vel.y = b.vel.z = 0;
   attachBall(b, taker);
   taker.mustPass = true; taker.mustPassTimer = 0;
@@ -496,6 +499,7 @@ function startPenalty(state, teamIdx) {
   state.ball.intended = null;
   state.ball.offsidePlayers = [];
   state.ball.restartNoOffsideBy = null;
+  state.ball.restartDoubleTouchBy = shooter;
   state.ball.shotLive = false;
   shooter.mustPass = false;
   shooter.charge = 0;
@@ -690,6 +694,7 @@ function doTackle(state, p) {
     if (!b.owner && dist(p.pos, b.pos) < 1.6 && b.pos.y < 0.8) {
       b.vel.x = p.face.x * 7; b.vel.z = p.face.z * 7; b.vel.y = 0.2;
       b.lastTouch = p; b.intended = null;
+      b.restartDoubleTouchBy = null;
     }
     // Nobody to tackle: just a short lunge (cooldown only, no freeze).
     return;
@@ -725,6 +730,7 @@ function doTackle(state, p) {
     b.owner = null;
     b.lastTouch = p;
     b.intended = null;
+    b.restartDoubleTouchBy = null;
     b.offsidePlayers = [];
     b.restartNoOffsideBy = null;
     const kx = p.face.x * 0.7 + rand(-0.4, 0.4), kz = p.face.z * 0.7 + rand(-0.4, 0.4);
@@ -1078,6 +1084,22 @@ function updatePossession(state) {
   }
   if (!best) return;
 
+  if (b.restartDoubleTouchBy === best) {
+    const spot = { x: b.pos.x, z: b.pos.z };
+    const opposingTeam = 1 - best.team;
+    b.owner = null;
+    b.intended = null;
+    b.offsidePlayers = [];
+    b.restartNoOffsideBy = null;
+    b.restartDoubleTouchBy = null;
+    b.shotLive = false;
+    b.vel.x = b.vel.y = b.vel.z = 0;
+    state.events.push({ type: 'doubleTouch', team: best.team, player: best.id });
+    startRestart(state, 'free kick', opposingTeam, spot);
+    return;
+  }
+  if (b.restartDoubleTouchBy) b.restartDoubleTouchBy = null;
+
   if (b.offsidePlayers.includes(best)) {
     const spot = { x: b.pos.x, z: b.pos.z };
     const defendingTeam = 1 - best.team;
@@ -1104,6 +1126,7 @@ function updatePossession(state) {
       b.vel.y = Math.abs(b.vel.y) * 0.3 + 1;
       b.lastTouch = best;
       b.shotLive = false;
+      b.restartDoubleTouchBy = null;
       best.kickCd = 0.3;
       state.events.push({ type: 'block', player: best.id });
       return;
@@ -1119,6 +1142,7 @@ function updatePossession(state) {
   b.intended = null;
   b.offsidePlayers = [];
   b.restartNoOffsideBy = null;
+    b.restartDoubleTouchBy = null;
   b.shotLive = false;
   b.vel.y = 0;
   if (isGK) { best.holdTimer = 1.0; best.mustPass = true; best.mustPassTimer = 0; }
