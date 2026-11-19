@@ -130,6 +130,7 @@ export function createMatch(cfg) {
       offsidePlayers: [], // players in an offside position at the last teammate pass
       restartNoOffsideBy: null, // restart taker exempt from offside on the first kick
       restartDoubleTouchBy: null, // restart taker cannot play the ball twice in succession
+      directThrowInGoalBlockedBy: null, // throw-ins cannot score directly before another touch
       shotId: 0,
       shotTeam: -1,
       shotLive: false,
@@ -374,6 +375,7 @@ export function setupKickoff(state, teamIdx) {
   b.offsidePlayers = [];
   b.restartNoOffsideBy = null;
   b.restartDoubleTouchBy = taker;
+  b.directThrowInGoalBlockedBy = null;
   taker.mustPass = true; taker.mustPassTimer = 0;
   for (const t of state.teams) setControlled(state, t, t.index === teamIdx ? taker : nearestTo(state, t.index, b.pos));
   state.phase = 'kickoff';
@@ -445,6 +447,7 @@ function startRestart(state, type, teamIdx, spot) {
   b.offsidePlayers = [];
   b.restartNoOffsideBy = ['throw-in', 'goal kick', 'corner'].includes(type) ? taker : null;
   b.restartDoubleTouchBy = taker;
+  b.directThrowInGoalBlockedBy = type === 'throw-in' ? taker : null;
   b.vel.x = b.vel.y = b.vel.z = 0;
   attachBall(b, taker);
   taker.mustPass = true; taker.mustPassTimer = 0;
@@ -500,6 +503,7 @@ function startPenalty(state, teamIdx) {
   state.ball.offsidePlayers = [];
   state.ball.restartNoOffsideBy = null;
   state.ball.restartDoubleTouchBy = shooter;
+  state.ball.directThrowInGoalBlockedBy = null;
   state.ball.shotLive = false;
   shooter.mustPass = false;
   shooter.charge = 0;
@@ -695,6 +699,7 @@ function doTackle(state, p) {
       b.vel.x = p.face.x * 7; b.vel.z = p.face.z * 7; b.vel.y = 0.2;
       b.lastTouch = p; b.intended = null;
       b.restartDoubleTouchBy = null;
+      b.directThrowInGoalBlockedBy = null;
     }
     // Nobody to tackle: just a short lunge (cooldown only, no freeze).
     return;
@@ -731,6 +736,7 @@ function doTackle(state, p) {
     b.lastTouch = p;
     b.intended = null;
     b.restartDoubleTouchBy = null;
+    b.directThrowInGoalBlockedBy = null;
     b.offsidePlayers = [];
     b.restartNoOffsideBy = null;
     const kx = p.face.x * 0.7 + rand(-0.4, 0.4), kz = p.face.z * 0.7 + rand(-0.4, 0.4);
@@ -1099,6 +1105,7 @@ function updatePossession(state) {
     return;
   }
   if (b.restartDoubleTouchBy) b.restartDoubleTouchBy = null;
+  if (b.directThrowInGoalBlockedBy && b.directThrowInGoalBlockedBy !== best) b.directThrowInGoalBlockedBy = null;
 
   if (b.offsidePlayers.includes(best)) {
     const spot = { x: b.pos.x, z: b.pos.z };
@@ -1127,6 +1134,7 @@ function updatePossession(state) {
       b.lastTouch = best;
       b.shotLive = false;
       b.restartDoubleTouchBy = null;
+      b.directThrowInGoalBlockedBy = null;
       best.kickCd = 0.3;
       state.events.push({ type: 'block', player: best.id });
       return;
@@ -1142,7 +1150,8 @@ function updatePossession(state) {
   b.intended = null;
   b.offsidePlayers = [];
   b.restartNoOffsideBy = null;
-    b.restartDoubleTouchBy = null;
+  b.restartDoubleTouchBy = null;
+  b.directThrowInGoalBlockedBy = null;
   b.shotLive = false;
   b.vel.y = 0;
   if (isGK) { best.holdTimer = 1.0; best.mustPass = true; best.mustPassTimer = 0; }
@@ -1157,6 +1166,21 @@ function checkOutOfPlay(state) {
   if (Math.abs(x) > HALF_L + BALL_R) {
     const endSign = Math.sign(x);
     if (Math.abs(z) < GOAL.width / 2 && b.pos.y < GOAL.height) {
+      const thrower = b.directThrowInGoalBlockedBy;
+      if (thrower) {
+        const ownGoalEnd = endSign !== state.teams[thrower.team].dir;
+        state.events.push({ type: 'throwInGoal', ownGoalEnd });
+        if (endSign === state.teams[thrower.team].dir) {
+          startRestart(state, 'goal kick', 1 - thrower.team, {
+            x: endSign * (HALF_L - 4), z: 0,
+          });
+        } else {
+          startRestart(state, 'corner', 1 - thrower.team, {
+            x: endSign * (HALF_L - 0.3), z: Math.sign(z || 1) * (HALF_W - 0.3),
+          });
+        }
+        return;
+      }
       const scorer = state.teams.find((t) => t.dir === endSign);
       scoreGoal(state, scorer.index);
       return;

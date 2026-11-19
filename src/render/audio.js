@@ -109,7 +109,8 @@ export class MatchAudio {
     if (event.type === 'kick') this.noise(0.055, 0.07, 420);
     else if (event.type === 'tackle') this.noise(0.08, 0.045, 220);
     else if (event.type === 'save') this.noise(0.12, 0.06, event.parry ? 300 : 520);
-    else if (event.type === 'foul' || event.type === 'offside' || event.type === 'doubleTouch') {
+    else if (event.type === 'foul' || event.type === 'offside'
+      || event.type === 'doubleTouch' || event.type === 'throwInGoal') {
       this.tone(1800, 0.24, 0.08, 'sine', 2350);
       this.tone(1650, 0.2, 0.06, 'sine', 2100);
     } else if (event.type === 'card') {
