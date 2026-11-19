@@ -4,7 +4,7 @@
 import {
   HALF_L, HALF_W, GOAL, BOX, BALL_R, GRAVITY, ROLL_DECEL, AIR_DRAG, BOUNCE,
   CONTROL_RADIUS, DRIBBLE_OFFSET, PLAYER_RADIUS, SHOT_CHARGE_TIME,
-  MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, KICKOFF_ATTACK, KICKOFF_DEFEND,
+  MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, FORMATIONS,
   PENALTY_SPOT,
 } from './constants.js';
 import { updateAI } from './ai.js';
@@ -68,6 +68,7 @@ export function createMatch(cfg) {
       substitutions: 0,
       pendingSubstitution: null,
       tactic: 'balanced',
+      formation: '4-3-3',
       // AI on a human's team plays at normal level; pure-AI teams use the
       // chosen difficulty.
       diff: DIFFICULTY[human ? 'normal' : cfg.difficulty || 'normal'],
@@ -159,6 +160,19 @@ export function setTeamTactic(state, teamIdx, tactic) {
   return true;
 }
 
+export function setTeamFormation(state, teamIdx, formation) {
+  const team = state.teams[teamIdx];
+  const slots = FORMATIONS[formation];
+  if (!team || !slots) return false;
+  if (team.formation === formation) return true;
+  team.formation = formation;
+  for (const player of teamPlayers(state, teamIdx)) {
+    if (player.onPitch && !player.sentOff) player.role = slots[player.idx].role;
+  }
+  state.events.push({ type: 'formation', team: teamIdx, formation });
+  return true;
+}
+
 /** Make the change now at a stoppage, or queue it for the next dead ball. */
 export function makeSubstitution(state, teamIdx, outgoingId, incomingId) {
   const team = state.teams[teamIdx];
@@ -166,7 +180,7 @@ export function makeSubstitution(state, teamIdx, outgoingId, incomingId) {
   const incoming = state.players[incomingId];
   if (!team || !outgoing || !incoming || outgoing.team !== teamIdx || incoming.team !== teamIdx) return false;
   if (!outgoing.onPitch || outgoing.sentOff || incoming.onPitch || incoming.sentOff || incoming.subbedOff) return false;
-  if (outgoing.role !== incoming.role || team.substitutions >= 3 || team.pendingSubstitution
+  if (team.substitutions >= 3 || team.pendingSubstitution
       || state.penalty?.active || state.penalty?.pending) return false;
   if (!['kickoff', 'restart', 'goal', 'halftime'].includes(state.phase)) {
     team.pendingSubstitution = { outgoing: outgoingId, incoming: incomingId };
@@ -186,7 +200,7 @@ export function cancelPendingSubstitution(state, teamIdx) {
 
 function applySubstitution(state, team, outgoing, incoming) {
   if (!outgoing.onPitch || outgoing.sentOff || incoming.onPitch || incoming.sentOff || incoming.subbedOff) return false;
-  if (outgoing.role !== incoming.role || team.substitutions >= 3) return false;
+  if (team.substitutions >= 3) return false;
   const slot = outgoing.idx;
   const position = { ...outgoing.pos };
   const wasControlled = team.controlled === outgoing;
@@ -258,24 +272,24 @@ function automateHalftimeSubstitutions(state) {
         && player.onPitch && !player.sentOff && !player.subbedOff
         && (player.injured || player.stamina <= 0.58)
         && state.players.some((reserve) => reserve.team === team.index && !reserve.onPitch
-          && !reserve.sentOff && !reserve.subbedOff && reserve.role === player.role));
+          && !reserve.sentOff && !reserve.subbedOff));
       const outgoing = replaceable.sort((a, b) =>
         Number(b.injured) - Number(a.injured) || a.stamina - b.stamina,
       )[0];
       if (!outgoing) break;
       const incoming = state.players
-        .filter((p) => p.team === team.index && !p.onPitch && !p.sentOff && !p.subbedOff && p.role === outgoing.role)
-        .sort((a, b) => ratingForRole(b) - ratingForRole(a))[0];
+        .filter((p) => p.team === team.index && !p.onPitch && !p.sentOff && !p.subbedOff)
+        .sort((a, b) => ratingForRole(b, outgoing.role) - ratingForRole(a, outgoing.role))[0];
       if (!incoming || !makeSubstitution(state, team.index, outgoing.id, incoming.id)) break;
     }
   }
 }
 
-function ratingForRole(player) {
+function ratingForRole(player, role = player.role) {
   const s = player.stats;
-  if (player.role === 'GK') return s.gk;
-  if (player.role === 'DEF') return s.tac * 0.55 + s.spd * 0.2 + s.pas * 0.15 + s.dri * 0.1;
-  if (player.role === 'MID') return s.pas * 0.35 + s.dri * 0.25 + s.spd * 0.2 + s.tac * 0.2;
+  if (role === 'GK') return s.gk;
+  if (role === 'DEF') return s.tac * 0.55 + s.spd * 0.2 + s.pas * 0.15 + s.dri * 0.1;
+  if (role === 'MID') return s.pas * 0.35 + s.dri * 0.25 + s.spd * 0.2 + s.tac * 0.2;
   return s.sho * 0.4 + s.spd * 0.25 + s.dri * 0.25 + s.pas * 0.1;
 }
 
@@ -331,7 +345,7 @@ export function setupKickoff(state, teamIdx) {
   applyPendingSubstitutions(state);
   const b = state.ball;
   for (const team of state.teams) {
-    const layout = team.index === teamIdx ? KICKOFF_ATTACK : KICKOFF_DEFEND;
+    const slots = FORMATIONS[team.formation] || FORMATION;
     teamPlayers(state, team.index).forEach((p) => {
       if (!p.onPitch) return;
       if (p.sentOff) {
@@ -341,7 +355,11 @@ export function setupKickoff(state, teamIdx) {
         p.intent.mx = p.intent.mz = 0;
         return;
       }
-      placePlayer(p, toWorld(team, layout[p.idx].x, layout[p.idx].z), team.dir);
+      const slot = slots[p.idx];
+      const localX = team.index === teamIdx
+        ? (p.idx === 4 ? -0.02 : slot.x)
+        : Math.min(slot.x, -0.2);
+      placePlayer(p, toWorld(team, localX, team.index === teamIdx && p.idx === 4 ? 0 : slot.z), team.dir);
     });
   }
   const taker = teamPlayers(state, teamIdx).find((p) => p.idx === 4 && !p.sentOff)

@@ -1,6 +1,6 @@
 import './style.css';
 import { TEAMS, getTeam } from './data/teams.js';
-import { createMatch, stepMatch, displayMinute, makeSubstitution, cancelPendingSubstitution, setTeamTactic } from './game/match.js';
+import { createMatch, stepMatch, displayMinute, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation } from './game/match.js';
 import { FIXED_DT } from './game/constants.js';
 import { Input } from './game/input.js';
 import { createRenderer } from './render/scene.js';
@@ -67,6 +67,7 @@ function refreshSubstitutionMenu() {
     return;
   }
   $('tacticSelect').value = team.tactic;
+  $('formationSelect').value = team.formation;
 
   const active = match.players.filter((p) => p.team === team.index && p.onPitch && !p.sentOff);
   $('subsOut').replaceChildren(...active.map((player) => {
@@ -83,11 +84,11 @@ function refreshBenchOptions() {
   const teamIdx = Number($('subsTeam').value);
   const outgoingId = $('subsOut').value;
   const outgoing = outgoingId === '' ? null : match.players[Number(outgoingId)];
-  const reserves = match.players.filter((p) => p.team === teamIdx && !p.onPitch && !p.sentOff && !p.subbedOff && outgoing && p.role === outgoing.role);
+  const reserves = match.players.filter((p) => p.team === teamIdx && !p.onPitch && !p.sentOff && !p.subbedOff && outgoing);
   $('subsIn').replaceChildren(...reserves.map((player) => {
     const option = document.createElement('option');
     option.value = String(player.id);
-    option.textContent = `${player.number} · ${player.name} (${player.role})`;
+    option.textContent = `${player.number} · ${player.name} (${player.role} reserve)`;
     return option;
   }));
   refreshSubstitutionStatus();
@@ -99,7 +100,7 @@ function refreshSubstitutionStatus() {
   const outgoingId = $('subsOut').value, incomingId = $('subsIn').value;
   const outgoing = outgoingId === '' ? null : match.players[Number(outgoingId)];
   const incoming = incomingId === '' ? null : match.players[Number(incomingId)];
-  const hasOption = !!outgoing && !!incoming && outgoing.role === incoming.role;
+  const hasOption = !!outgoing && !!incoming;
   $('subsStatus').textContent = team?.pendingSubstitution
     ? `${team.substitutions}/3 used. Change queued for the next stoppage.`
     : team
@@ -162,6 +163,9 @@ function buildMenu() {
   $('subsTeam').addEventListener('change', refreshSubstitutionMenu);
   $('tacticSelect').addEventListener('change', () => {
     if (setTeamTactic(match, Number($('subsTeam').value), $('tacticSelect').value)) handleEvents();
+  });
+  $('formationSelect').addEventListener('change', () => {
+    if (setTeamFormation(match, Number($('subsTeam').value), $('formationSelect').value)) handleEvents();
   });
   $('subsOut').addEventListener('change', refreshBenchOptions);
   $('subsIn').addEventListener('change', refreshSubstitutionStatus);
@@ -776,6 +780,8 @@ function handleEvents() {
       showSub(`${match.players[e.player].name} is injured`, 2.2);
     } else if (e.type === 'tactic') {
       showSub(`${match.teams[e.team].data.name}: ${e.tactic} tactics`, 1.8);
+    } else if (e.type === 'formation') {
+      showSub(`${match.teams[e.team].data.name}: ${e.formation}`, 1.8);
     } else if (e.type === 'fulltime') {
       showFullTime();
     }

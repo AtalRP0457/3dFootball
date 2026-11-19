@@ -215,10 +215,10 @@
             <li><b>Kick-off, throw-in:</b> the taker can't run. Choose a direction and press Pass. Shooting a throw-in just throws it.</li>
             <li><b>Corner:</b> press Pass for a pass, or Shoot to whip it towards goal.</li>
             <li><b>Goal kick:</b> your keeper takes it automatically.</li>
-            <li>11-a-side in a 4-3-3. Offside is called when a player beyond both the ball and second-last defender receives a pass.</li>
+            <li>Choose 4-3-3, 4-4-2 or 3-5-2 in Team Management. Offside is called when a player beyond both the ball and second-last defender receives a pass.</li>
             <li>Late tackles can be called as fouls; fouls in the penalty area award a penalty kick.</li>
             <li>Hard fouls can injure a player. Injured players lose pace and accuracy; use Team Management to replace them.</li>
-            <li>Pause to open Team Management. Each side has four reserves and can make up to three substitutions; a change queued during play takes effect at the next stoppage.</li>
+            <li>Pause to open Team Management. Set the support tactic and make up to three substitutions; a change queued during play takes effect at the next stoppage.</li>
             <li>The teams change ends at halftime. Sound can be toggled from the match HUD.</li>
             <li><kbd>Esc</kbd> or <kbd>P</kbd> pauses &middot; <kbd>C</kbd> changes the camera &middot; <kbd>R</kbd> skips a goal replay.</li>
           </ul>
@@ -245,6 +245,13 @@
         <button id="subsBtn">Team management</button>
         <div id="subsPanel" class="subs-manager hidden">
           <label>Team <select id="subsTeam"></select></label>
+          <label>Formation
+            <select id="formationSelect">
+              <option value="4-3-3">4-3-3</option>
+              <option value="4-4-2">4-4-2</option>
+              <option value="3-5-2">3-5-2</option>
+            </select>
+          </label>
           <label>Team tactic
             <select id="tacticSelect">
               <option value="balanced">Balanced</option>
@@ -254,6 +261,7 @@
           </label>
           <label>Player off <select id="subsOut"></select></label>
           <label>Player on <select id="subsIn"></select></label>
+          <p>Any reserve can fill the selected player’s position.</p>
           <p id="subsStatus" aria-live="polite"></p>
           <button id="subsConfirm" class="big">Make substitution</button>
           <button id="subsCancel">Cancel queued change</button>

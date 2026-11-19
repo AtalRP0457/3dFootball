@@ -48,6 +48,36 @@ export const FORMATION = [
   { role: 'FWD', x: 0.32, z: 0.4 },
 ];
 
+export const FORMATIONS = {
+  '4-3-3': FORMATION,
+  '4-4-2': [
+    { role: 'GK', x: -0.94, z: 0 },
+    { role: 'DEF', x: -0.62, z: -0.25 },
+    { role: 'DEF', x: -0.62, z: 0.25 },
+    { role: 'MID', x: -0.12, z: 0 },
+    { role: 'FWD', x: 0.2, z: -0.18 },
+    { role: 'DEF', x: -0.5, z: -0.72 },
+    { role: 'DEF', x: -0.5, z: 0.72 },
+    { role: 'MID', x: -0.08, z: -0.56 },
+    { role: 'MID', x: -0.08, z: 0.56 },
+    { role: 'FWD', x: 0.2, z: 0.18 },
+    { role: 'MID', x: -0.12, z: 0.22 },
+  ],
+  '3-5-2': [
+    { role: 'GK', x: -0.94, z: 0 },
+    { role: 'DEF', x: -0.58, z: -0.34 },
+    { role: 'DEF', x: -0.58, z: 0.34 },
+    { role: 'MID', x: -0.1, z: 0 },
+    { role: 'FWD', x: 0.24, z: -0.18 },
+    { role: 'DEF', x: -0.68, z: 0 },
+    { role: 'MID', x: -0.08, z: -0.72 },
+    { role: 'MID', x: 0.02, z: -0.32 },
+    { role: 'MID', x: 0.02, z: 0.32 },
+    { role: 'FWD', x: 0.24, z: 0.18 },
+    { role: 'MID', x: -0.08, z: 0.72 },
+  ],
+};
+
 export const KICKOFF_ATTACK = [
   { x: -0.94, z: 0 },
   { x: -0.62, z: -0.24 },

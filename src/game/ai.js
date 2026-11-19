@@ -5,7 +5,7 @@
 // the opponent's goal and az is mirrored the same way, so the same rules
 // work for both teams.
 
-import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION } from './constants.js';
+import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION, FORMATIONS } from './constants.js';
 
 const len = (x, z) => Math.hypot(x, z);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -168,7 +168,7 @@ function offBallAI(state, p, team, c, dt) {
   }
 
   // Shape: work out a target spot in attack coordinates.
-  const slot = FORMATION[p.idx];
+  const slot = (FORMATIONS[team.formation] || FORMATION)[p.idx];
   const bax = b.pos.x * dir, baz = b.pos.z * dir;
   const hx = slot.x * HALF_L, hz = slot.z * HALF_W;
   let ax, az, sprint = false;
@@ -245,6 +245,20 @@ function withBallAI(state, p, team, dt) {
 
   if (p.mustPass) {
     if (p.mustPassTimer < 0.5 + team.diff.reaction) return;
+    const dGoal = len(goalX - p.pos.x, p.pos.z);
+    if (!p.throwIn && p.role !== 'GK' && dGoal < 38) {
+      const shotChance = dGoal < 13 ? 0.68 : dGoal < 22 ? 0.34 : 0.14;
+      if (Math.random() < shotChance) {
+        const gk = state.players.find((o) => o.team !== p.team && o.onPitch && !o.sentOff && o.role === 'GK');
+        const away = gk && gk.pos.z > 0 ? -1 : 1;
+        it.action = {
+          type: 'shoot',
+          power: clamp(0.55 + (38 - dGoal) / 70 + rand(0, 0.15), 0.45, 0.9),
+          aim: away * rand(0.35, 0.9),
+        };
+        return;
+      }
+    }
     const bp = bestPass(state, p, false) || bestPass(state, p, true);
     if (bp) it.action = { type: 'pass', target: bp.target };
     return;
@@ -252,7 +266,8 @@ function withBallAI(state, p, team, dt) {
 
   const dGoal = len(goalX - p.pos.x, p.pos.z);
   if (dGoal < 22 && Math.abs(p.pos.z) < 15) {
-    const prob = dGoal < 11 ? 0.85 : dGoal < 16 ? 0.45 : 0.15;
+    const tacticBias = team.tactic === 'attacking' ? 0.12 : team.tactic === 'defensive' ? -0.08 : 0;
+    const prob = clamp((dGoal < 11 ? 0.85 : dGoal < 16 ? 0.45 : 0.15) + tacticBias, 0.05, 0.95);
     if (Math.random() < prob) {
       const gk = state.players.find((o) => o.team !== p.team && o.onPitch && !o.sentOff && o.role === 'GK');
       const away = gk && gk.pos.z > 0 ? -1 : 1;
