@@ -213,6 +213,12 @@ function buildMenu() {
   $('audioToggle').addEventListener('click', () => {
     $('audioToggle').textContent = audio.toggle() ? 'Sound: On' : 'Sound: Off';
   });
+  $('touchPause').addEventListener('click', () => {
+    if (match && match.phase !== 'fulltime') setPaused(!paused);
+  });
+  $('touchCamera').addEventListener('click', () => {
+    if (match) showSub(`Camera: ${renderer.cycleCamera()}`);
+  });
   $('replaySkip').addEventListener('click', finishReplay);
   setupTutorial();
   setupTouchControls();

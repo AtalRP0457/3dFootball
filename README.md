@@ -38,7 +38,7 @@ the code ownership split, local setup, and GitHub branch/review workflow.
 | Pass, or switch player (without the ball) | F or Space | `.` | A / Cross |
 | Shoot (hold for power), or tackle (without the ball) | G | `/` | B / Circle |
 | Sprint | Left Shift | Right Shift | RT / RB |
-| Touch screen | Virtual stick + action buttons | | |
+| Touch screen | Virtual stick + action buttons, Pause, Camera | | |
 | Pause | Esc or P | | Start |
 | Change camera | C | | |
 
