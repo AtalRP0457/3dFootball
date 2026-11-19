@@ -1,0 +1,99 @@
+// Keyboard and gamepad input. Produces one input object per human player
+// each fixed step: { mx, mz, sprint, passPressed, shootHeld, shootPressed }.
+// mx: -1 left .. +1 right on screen. mz: -1 up (far touchline) .. +1 down.
+
+export const BINDINGS = {
+  p1: {
+    up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
+    pass: ['KeyF', 'Space'], shoot: ['KeyG'], sprint: ['ShiftLeft'],
+  },
+  p2: {
+    up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
+    pass: ['Period', 'Numpad1'], shoot: ['Slash', 'Numpad2'], sprint: ['ShiftRight', 'Numpad0'],
+  },
+};
+
+const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b).flat()));
+
+export class Input {
+  constructor() {
+    this.down = new Set();
+    this.pressed = new Set();
+    this.padPrev = {};
+    this.padPressed = {};
+    this.enabled = false;
+    this.onKeyDown = (e) => {
+      if (this.enabled && GAME_KEYS.has(e.code)) e.preventDefault();
+      if (!this.down.has(e.code)) this.pressed.add(e.code);
+      this.down.add(e.code);
+    };
+    this.onKeyUp = (e) => this.down.delete(e.code);
+    this.onBlur = () => this.down.clear();
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+    window.addEventListener('blur', this.onBlur);
+  }
+
+  anyDown(codes) { return codes.some((c) => this.down.has(c)); }
+  anyPressed(codes) { return codes.some((c) => this.pressed.has(c)); }
+
+  pollPads() {
+    const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    this.pads = [];
+    for (const pad of pads) {
+      if (!pad || !pad.connected) continue;
+      const i = this.pads.length;
+      const btn = pad.buttons.map((b) => b.pressed);
+      const prev = this.padPrev[i] || [];
+      // Keep presses until a game step consumes them (endStep).
+      const kept = this.padPressed[i] || [];
+      this.padPressed[i] = btn.map((v, k) => (v && !prev[k]) || !!kept[k]);
+      this.padPrev[i] = btn;
+      this.pads.push(pad);
+    }
+  }
+
+  /** Read one player. `ids` lists which key sets apply (1P mode uses both). */
+  sample(ids, padIndexes) {
+    let mx = 0, mz = 0, sprint = false, passPressed = false, shootHeld = false, shootPressed = false;
+    for (const id of ids) {
+      const b = BINDINGS[id];
+      mx += (this.anyDown(b.right) ? 1 : 0) - (this.anyDown(b.left) ? 1 : 0);
+      mz += (this.anyDown(b.down) ? 1 : 0) - (this.anyDown(b.up) ? 1 : 0);
+      sprint = sprint || this.anyDown(b.sprint);
+      passPressed = passPressed || this.anyPressed(b.pass);
+      shootHeld = shootHeld || this.anyDown(b.shoot);
+      shootPressed = shootPressed || this.anyPressed(b.shoot);
+    }
+    for (const i of padIndexes) {
+      const pad = this.pads && this.pads[i];
+      if (!pad) continue;
+      const ax = pad.axes[0] || 0, az = pad.axes[1] || 0;
+      if (Math.hypot(ax, az) > 0.2) { mx += ax; mz += az; }
+      const btn = (k) => pad.buttons[k] && pad.buttons[k].pressed;
+      // D-pad
+      if (btn(12)) mz -= 1;
+      if (btn(13)) mz += 1;
+      if (btn(14)) mx -= 1;
+      if (btn(15)) mx += 1;
+      const pr = this.padPressed[i] || [];
+      passPressed = passPressed || !!pr[0];
+      shootHeld = shootHeld || btn(1);
+      shootPressed = shootPressed || !!pr[1];
+      sprint = sprint || btn(7) || btn(5);
+    }
+    const l = Math.hypot(mx, mz);
+    if (l > 1) { mx /= l; mz /= l; }
+    return { mx, mz, sprint, passPressed, shootHeld, shootPressed };
+  }
+
+  /** Gamepad Start/Options button, used for pause. */
+  padStartPressed() {
+    return Object.values(this.padPressed).some((b) => b && b[9]);
+  }
+
+  endStep() {
+    this.pressed.clear();
+    for (const k of Object.keys(this.padPressed)) this.padPressed[k] = [];
+  }
+}

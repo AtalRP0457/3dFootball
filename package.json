@@ -1,0 +1,19 @@
+{
+  "name": "legends",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Legends: a 3D arcade soccer game with decade teams, built with three.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node tests/sim.test.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
