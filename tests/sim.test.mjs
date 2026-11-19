@@ -223,5 +223,19 @@ console.log('Indoor soccer');
   check(s.ball.offsidePlayers.length === 0, 'indoor passes do not create offside calls');
 }
 
+// 8) Knockout-style matches play extra time before the caller decides a tie.
+console.log('Extra time');
+{
+  const s = createMatch({ home: TEAMS[0], away: TEAMS[1], controllers: ['ai', 'ai'], duration: 1, extraTime: true, extraTimeDuration: 1 });
+  let extraTime = false;
+  for (let i = 0; i < 600 && s.phase !== 'fulltime'; i++) {
+    stepMatch(s, {}, FIXED_DT);
+    extraTime ||= s.events.some((event) => event.type === 'extraTime');
+    s.events.length = 0;
+  }
+  check(extraTime, 'tied knockout match starts extra time');
+  check(s.phase === 'fulltime', 'match finishes after extra time');
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

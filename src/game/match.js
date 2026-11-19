@@ -143,6 +143,10 @@ export function createMatch(cfg) {
     },
     clock: 0,
     duration: cfg.duration || 240,
+    regulationDuration: cfg.duration || 240,
+    extraTimeAllowed: !!cfg.extraTime,
+    extraTimeDuration: cfg.extraTimeDuration || 60,
+    extraTimeStarted: false,
     practice: !!cfg.practice,
     indoor: !!cfg.indoor,
     penalty: null,
@@ -1447,6 +1451,14 @@ export function stepMatch(state, inputs, dt) {
 }
 
 function endMatch(state) {
+  if (state.extraTimeAllowed && !state.extraTimeStarted && state.teams[0].score === state.teams[1].score) {
+    state.extraTimeStarted = true;
+    state.duration += state.extraTimeDuration;
+    setupKickoff(state, 1 - state.kickoffNext);
+    setBanner(state, 'EXTRA TIME', 2.4);
+    state.events.push({ type: 'extraTime' });
+    return;
+  }
   state.phase = 'fulltime';
   state.ball.owner = null;
   setBanner(state, 'FULL TIME', 99);

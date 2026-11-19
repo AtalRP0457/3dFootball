@@ -870,6 +870,7 @@ function startMatch() {
     home, away, controllers: controllers(),
     difficulty: settings.mode === 'practice' ? 'easy' : settings.difficulty,
     duration: settings.duration, practice: settings.mode === 'practice', indoor: settings.mode === 'indoor',
+    extraTime: settings.mode === 'cup', extraTimeDuration: Math.max(30, Math.round(settings.duration / 4)),
   });
   goals = [];
   acc = 0;
@@ -1066,6 +1067,8 @@ function handleEvents() {
       showSub(`${match.teams[e.team].data.name}: ${e.tactic} tactics`, 1.8);
     } else if (e.type === 'formation') {
       showSub(`${match.teams[e.team].data.name}: ${e.formation}`, 1.8);
+    } else if (e.type === 'extraTime') {
+      showSub('Extra time — golden chance to settle the tie', 2.4);
     } else if (e.type === 'fulltime') {
       if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
       else showFullTime();
