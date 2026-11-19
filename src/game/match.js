@@ -409,6 +409,28 @@ function startRestart(state, type, teamIdx, spot) {
     p.vel.x = p.vel.z = 0;
     p.charge = 0;
   }
+  if (type === 'free kick') {
+    const goalX = HALF_L * team.dir;
+    const toGoalX = goalX - spot.x, toGoalZ = -spot.z;
+    const goalDistance = len(toGoalX, toGoalZ);
+    if (goalDistance < 42) {
+      const gx = toGoalX / (goalDistance || 1), gz = toGoalZ / (goalDistance || 1);
+      const wallSize = goalDistance < 28 ? 4 : goalDistance < 36 ? 3 : 2;
+      const wall = teamPlayers(state, 1 - teamIdx)
+        .filter((p) => p.onPitch && !p.sentOff && p.role !== 'GK')
+        .sort((a, b) => dist(a.pos, spot) - dist(b.pos, spot))
+        .slice(0, wallSize);
+      const centerX = spot.x + gx * minDistance;
+      const centerZ = spot.z + gz * minDistance;
+      wall.forEach((p, i) => {
+        const offset = (i - (wall.length - 1) / 2) * 1.15;
+        p.pos.x = clamp(centerX - gz * offset, -HALF_L + 0.5, HALF_L - 0.5);
+        p.pos.z = clamp(centerZ + gx * offset, -HALF_W + 0.5, HALF_W - 0.5);
+        p.vel.x = p.vel.z = 0;
+        p.face.x = -gx; p.face.z = -gz;
+      });
+    }
+  }
   // The taker faces into the pitch.
   const fx = type === 'corner' ? -Math.sign(spot.x) : type === 'goal kick' || type === 'free kick' ? team.dir : 0;
   const fz = type === 'throw-in' ? -Math.sign(spot.z) : type === 'corner' ? -Math.sign(spot.z) * 0.6 : 0;
