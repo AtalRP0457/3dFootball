@@ -9,7 +9,7 @@ import { MatchAudio } from './render/audio.js';
 const $ = (id) => document.getElementById(id);
 
 // ---------- settings chosen in the menu ----------
-const settings = {
+const DEFAULT_SETTINGS = {
   mode: '1p',
   home: '1960',
   away: '1990',
@@ -17,6 +17,30 @@ const settings = {
   duration: 240,
   era: 'on',
 };
+const SETTINGS_KEY = 'legends-settings';
+const settings = loadSettings();
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    const teamIds = new Set(TEAMS.map((team) => team.id));
+    return {
+      ...DEFAULT_SETTINGS,
+      ...(saved && ['1p', '2p', 'cpu', 'cup', 'career'].includes(saved.mode) ? { mode: saved.mode } : {}),
+      ...(saved && teamIds.has(saved.home) ? { home: saved.home } : {}),
+      ...(saved && teamIds.has(saved.away) ? { away: saved.away } : {}),
+      ...(saved && ['easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
+      ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
+      ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function persistSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+}
 
 const renderer = createRenderer($('game'));
 const input = new Input();
@@ -123,6 +147,7 @@ function teamCard(team, side) {
     settings[side] = team.id;
     if (settings.mode === 'cup') clearCup();
     if (settings.mode === 'career') clearLeague();
+    persistSettings();
     refreshMenu();
   });
   return el;
@@ -202,6 +227,7 @@ function buildMenu() {
       settings[key] = cast(b.dataset.v);
       if (key === 'mode' && settings.mode !== 'cup') clearCup();
       if (key === 'mode' && settings.mode !== 'career') clearLeague();
+      persistSettings();
       refreshMenu();
     }));
   };
