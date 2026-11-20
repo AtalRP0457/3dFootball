@@ -2,12 +2,24 @@
 // headless (tests) and be ported to Unity/Godot later.
 
 import {
-  HALF_L, HALF_W, GOAL, BOX, BALL_R, GRAVITY, ROLL_DECEL, AIR_DRAG, BOUNCE,
-  CONTROL_RADIUS, DRIBBLE_OFFSET, PLAYER_RADIUS, SHOT_CHARGE_TIME,
+  HALF_L, HALF_W, GOAL, BOX, BALL_R, CONTROL_RADIUS, DRIBBLE_OFFSET, PLAYER_RADIUS, SHOT_CHARGE_TIME,
   MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, FORMATIONS, INDOOR_FORMATION,
   PENALTY_SPOT, ASSIST, KEEP_RUN_TIME,
 } from './constants.js';
 import { updateAI, interceptPoint } from './ai.js';
+import { physicalProfile } from './physics/attributes.js';
+import { stepLocomotion, resolvePlayerContacts } from './physics/playerPhysics.js';
+import {
+  integrateBall, substepsFor, collideBallWithBody, setRollingSpin, setKickSpin,
+  stopBall, ensureSpin, computeBallPath,
+} from './physics/ballPhysics.js';
+import { updateDribble, canKick } from './mechanics/dribbling.js';
+import { planShot, shotTypeFromCharge } from './mechanics/shooting.js';
+import { planPass } from './mechanics/passing.js';
+
+// Player body used for ball contacts: an upright cylinder.
+const BODY_RADIUS = 0.3;
+const BODY_HEIGHT = 1.85;
 
 // ---------- small vector helpers ----------
 export const len = (x, z) => Math.hypot(x, z);
@@ -95,6 +107,7 @@ export function createMatch(cfg) {
         name: pd.name,
         number: pd.number,
         stats: pd.stats,
+        phys: physicalProfile(pd.stats, pd.attributes),
         yellowCards: 0,
         sentOff: false,
         subbedOff: false,
@@ -103,7 +116,10 @@ export function createMatch(cfg) {
           ? { x: 0, z: 0 }
           : { x: team.dir * (HALF_L - 1), z: team.dir * (HALF_W - 1) },
         vel: { x: 0, z: 0 },
+        acc: { x: 0, z: 0 },
         face: { x: team.dir, z: 0 },
+        prevPos: null,
+        stagger: 0,
         stamina: 1,
         intent: { mx: 0, mz: 0, sprint: false, action: null },
         human: null,
@@ -144,6 +160,8 @@ export function createMatch(cfg) {
     ball: {
       pos: { x: 0, y: BALL_R, z: 0 },
       vel: { x: 0, y: 0, z: 0 },
+      spin: { x: 0, y: 0, z: 0 },
+      prevPos: null,
       owner: null,
       lastTouch: null,
       intended: null, // player a pass is aimed at
@@ -344,7 +362,7 @@ function placePlayer(p, pos, faceDir) {
   p.pos.x = pos.x; p.pos.z = pos.z;
   p.vel.x = 0; p.vel.z = 0;
   p.face.x = faceDir; p.face.z = 0;
-  p.charge = 0; p.stun = 0; p.dive = 0;
+  p.charge = 0; p.stun = 0; p.dive = 0; p.stagger = 0;
   p.kickCd = 0; p.mustPass = false; p.throwIn = false; p.holding = false;
   p.keepRun = null;
 }
@@ -440,7 +458,7 @@ export function setupKickoff(state, teamIdx) {
     || nearestTo(state, teamIdx, { x: 0, z: 0 }, null, true);
   if (!taker) return;
   b.pos.x = 0; b.pos.y = BALL_R; b.pos.z = 0;
-  b.vel.x = b.vel.y = b.vel.z = 0;
+  stopBall(b);
   b.owner = taker; b.lastTouch = taker; b.intended = null; b.shotLive = false;
   b.offsidePlayers = [];
   b.restartNoOffsideBy = null;
@@ -528,7 +546,7 @@ function startRestart(state, type, teamIdx, spot) {
   b.freeKickGoalRestrictedBy = isFreeKick
     ? { player: taker, indirect: type === 'indirect free kick' }
     : null;
-  b.vel.x = b.vel.y = b.vel.z = 0;
+  stopBall(b);
   attachBall(b, taker);
   taker.mustPass = true; taker.mustPassTimer = 0;
   taker.throwIn = type === 'throw-in';
@@ -576,7 +594,7 @@ function startPenalty(state, teamIdx) {
   state.ball.pos.x = spot.x;
   state.ball.pos.y = BALL_R;
   state.ball.pos.z = 0;
-  state.ball.vel.x = state.ball.vel.y = state.ball.vel.z = 0;
+  stopBall(state.ball);
   state.ball.owner = shooter;
   state.ball.lastTouch = shooter;
   state.ball.intended = null;
@@ -648,7 +666,7 @@ function laneBlocked(state, from, to, team) {
 }
 
 /** Pick the best teammate in a direction (used by humans). */
-export function choosePassTarget(state, p, dx, dz) {
+export function choosePassTarget(state, p, dx, dz, through = false) {
   const l = len(dx, dz);
   if (l < 0.1) { dx = p.face.x; dz = p.face.z; } else { dx /= l; dz /= l; }
   let best = null, bestScore = Infinity;
@@ -669,14 +687,19 @@ export function choosePassTarget(state, p, dx, dz) {
       const sd = segDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, t.pos.x, t.pos.z);
       if (sd < 1.4 && dist(o.pos, p.pos) > 1.2) blocked += 1;
     }
-    const score = ang * 15 + d * 0.78 + (t.role === 'GK' ? 10 : 0) + (ang > 1.2 ? 40 : 0)
+    let score = ang * 15 + d * 0.78 + (t.role === 'GK' ? 10 : 0) + (ang > 1.2 ? 40 : 0)
       + blocked * 14 + Math.max(0, 3.5 - marked) * 4;
+    if (through) {
+      // Through balls: favour runners ahead of the ball going forward.
+      const dir = state.teams[p.team].dir;
+      score -= Math.max(0, (t.pos.x - p.pos.x) * dir) * 0.6 + Math.max(0, t.vel.x * dir) * 1.5;
+    }
     if (score < bestScore) { bestScore = score; best = t; }
   }
   return best;
 }
 
-export function doPass(state, p, target) {
+export function doPass(state, p, target, opts = {}) {
   const b = state.ball;
   const team = state.teams[p.team];
   if (!target) return;
@@ -704,39 +727,30 @@ export function doPass(state, p, target) {
     );
   }
   const byHuman = !!p.human;
-  const lead = Math.min(1.0, dist(p.pos, target.pos) / 16);
-  const tx = target.pos.x + target.vel.x * lead;
-  const tz = target.pos.z + target.vel.z * lead;
-  let dx = tx - b.pos.x, dz = tz - b.pos.z;
-  const d = len(dx, dz) || 1;
-  dx /= d; dz /= d;
-  const errMul = p.human ? 1 : team.diff.error;
-  const fatigue = (1 + (1 - p.stamina) * 0.25) * (p.injured ? 1.3 : 1);
-  const err = (1 - p.stats.pas / 100) * 0.22 * errMul * fatigue * rand();
-  const c = Math.cos(err), s = Math.sin(err);
-  const ex = dx * c - dz * s, ez = dx * s + dz * c;
-
   const assisted = byHuman && state.assistName !== 'off';
-  const chip = assisted && d > 9 && laneBlocked(state, b.pos, { x: tx, z: tz }, p.team);
-  if (chip) {
-    // Lane is blocked: lift it over the defender so it drops at the receiver.
-    const flight = 0.9 + d / 40;
-    const h = (d * 0.97) / flight;
-    b.vel.x = ex * h; b.vel.z = ez * h;
-    b.vel.y = (GRAVITY * flight) / 2;
-  } else if (d > 24) {
-    // Lofted long ball: lands around 80% of the distance then rolls.
-    const flight = 1.25 + d / 60;
-    const h = (d * (assisted ? 0.97 : 0.85)) / flight; // assisted: drops at his feet
-    b.vel.x = ex * h; b.vel.z = ez * h;
-    b.vel.y = (GRAVITY * flight) / 2;
-  } else {
-    // Match rolling speed to distance so a short pass stops near its target.
-    // (Pressers are kept off a fresh pass by passGrace in updatePossession.)
-    const speed = clamp(Math.sqrt(2 * ROLL_DECEL * d) + 0.5, 3.2, 22);
-    b.vel.x = ex * speed; b.vel.z = ez * speed;
-    b.vel.y = 0.4;
+  const d = dist(b.pos, target.pos);
+  let kind = opts.kind || 'ground';
+  if (!opts.kind) {
+    if (assisted && d > 9 && laneBlocked(state, b.pos, target.pos, p.team)) kind = 'chip';
+    else if (d > 28 || (p.throwIn && d > 14)) kind = 'lofted';
   }
+  // Pressure: an opponent within a couple of metres hurries the pass.
+  let nearestOpp = Infinity;
+  for (const o of state.players) {
+    if (o.team !== p.team && o.onPitch && !o.sentOff) nearestOpp = Math.min(nearestOpp, dist(o.pos, p.pos));
+  }
+  const plan = planPass({
+    p, target, ball: b, kind,
+    driven: !!opts.driven,
+    errMul: p.human ? 1 : team.diff.error,
+    pressure: clamp((2.5 - nearestOpp) / 2.5, 0, 1),
+    attackDir: team.dir,
+    assisted,
+  });
+  b.vel.x = plan.vel.x; b.vel.y = plan.vel.y; b.vel.z = plan.vel.z;
+  if (plan.top === null) setRollingSpin(b); else setKickSpin(b, plan.top, 0);
+  b.passKind = plan.kind;
+  b.passAim = plan.aim;
   b.intended = target;
   b.shotLive = false;
   // For a moment the ball is "past" anyone pressing the passer, so a pass
@@ -751,31 +765,29 @@ export function doPass(state, p, target) {
   // Control follows the pass: the receiver becomes the human's player and the
   // passer goes back to AI.
   if (team.human && p.human && target.role !== 'GK') setControlled(state, team, target);
-  state.events.push({ type: 'pass', from: p.id, to: target.id, human: byHuman });
+  p.kickType = plan.kind === 'ground' && d > 18 ? 'longPass' : plan.kind === 'ground' ? 'pass' : plan.kind;
+  state.events.push({ type: 'pass', from: p.id, to: target.id, human: byHuman, kind: plan.kind });
 }
 
-export function doShot(state, p, power, aimInput = 0) {
+export function doShot(state, p, power, aimInput = 0, type = 'normal') {
   const b = state.ball;
   const team = state.teams[p.team];
   const penaltyShot = state.penalty?.active && state.penalty.shooter === p;
   const goalX = HALF_L * team.dir;
   power = clamp(power, 0.2, 1);
   const half = GOAL.width / 2 - 0.45;
-  let aimZ = aimInput !== 0 ? clamp(aimInput, -1, 1) * half : rand(-0.6, 0.6) * half;
-  let dx = goalX - b.pos.x, dz = aimZ - b.pos.z;
-  const d = len(dx, dz) || 1;
-  dx /= d; dz /= d;
-  const errMul = p.human ? 1 : team.diff.error;
-  const skill = 1 - p.stats.sho / 100;
-  const fatigue = (1 + (1 - p.stamina) * 0.25) * (p.injured ? 1.3 : 1);
-  const err = (skill * 0.14 + (power > 0.85 ? 0.04 : 0) + d / 900) * errMul * fatigue * rand();
-  const c = Math.cos(err), s = Math.sin(err);
-  const h = 15 + 15 * power;
-  b.vel.x = (dx * c - dz * s) * h;
-  b.vel.z = (dx * s + dz * c) * h;
-  b.vel.y = penaltyShot
-    ? 0.35 + power * 0.9
-    : 1 + 4.2 * power * power + skill * Math.random() * 3 + d * 0.03;
+  const aimZ = aimInput !== 0 ? clamp(aimInput, -1, 1) * half : rand(-0.6, 0.6) * half;
+  const keeper = state.players.find((o) => o.team !== p.team && o.onPitch && !o.sentOff && o.role === 'GK');
+  const plan = planShot({
+    p, ball: b, goalX, aimZ, power,
+    type: penaltyShot ? 'normal' : type,
+    errMul: p.human ? 1 : team.diff.error,
+    keeper: keeper ? keeper.pos : null,
+    penalty: penaltyShot,
+  });
+  b.vel.x = plan.vel.x; b.vel.y = plan.vel.y; b.vel.z = plan.vel.z;
+  setKickSpin(b, plan.top, plan.side);
+  b.shotType = plan.type;
   b.intended = null;
   b.offsidePlayers = [];
   b.restartNoOffsideBy = null;
@@ -793,7 +805,8 @@ export function doShot(state, p, power, aimInput = 0) {
   team.shots += 1;
   release(state, p);
   p.kickCd = 0.45;
-  state.events.push({ type: 'shot', player: p.id, power, human: !!p.human });
+  p.kickType = 'shot';
+  state.events.push({ type: 'shot', player: p.id, power, human: !!p.human, shotType: plan.type });
 }
 
 function sendOff(state, p, secondYellow = false) {
@@ -859,6 +872,7 @@ function doTackle(state, p) {
       let px = p.face.x, pz = p.face.z;
       if (px * team.dir < 0.2) { px = team.dir * 0.6; pz = (pz >= 0 ? 1 : -1) * 0.8; } // not towards own goal
       b.vel.x = px * 7; b.vel.z = pz * 7; b.vel.y = 0.2;
+      setKickSpin(b, 8, rand(-6, 6));
       b.lastTouch = p; b.intended = null;
       clearRestartFlags();
       report('poke');
@@ -907,9 +921,12 @@ function doTackle(state, p) {
 
   // Lunge towards the attacker.
   const nx = (victim.pos.x - p.pos.x) / (d || 1), nz = (victim.pos.z - p.pos.z) / (d || 1);
-  p.face.x = nx; p.face.z = nz;
-  p.pos.x += nx * Math.max(0, d - 0.8) * 0.5;
-  p.pos.z += nz * Math.max(0, d - 0.8) * 0.5;
+  // Lunge: a burst of velocity towards the attacker (the locomotion and
+  // contact code then move him; no teleporting).
+  const lunge = Math.min(5.5, 2 + Math.max(0, d - 0.8) * 3);
+  const lungeSpeed = Math.max(lunge, p.vel.x * nx + p.vel.z * nz);
+  p.vel.x = nx * lungeSpeed;
+  p.vel.z = nz * lungeSpeed;
 
   // Chance: tackling vs dribbling matters, but a well-timed tackle should
   // usually work. Humans get a fairer base; assist adds a little more.
@@ -933,14 +950,18 @@ function doTackle(state, p) {
     b.offsidePlayers = [];
     b.restartNoOffsideBy = null;
     if (p.human && state.assistName !== 'off') {
-      // Assisted: you come away with the ball.
+      // Assisted: you come away with the ball - it is nicked back towards
+      // your feet and you play on from there.
       b.owner = p;
-      b.vel.x = b.vel.y = b.vel.z = 0;
-      attachBall(b, p);
+      p.touchCd = 0.25;
+      const fx = p.pos.x + nx * 0.6 - b.pos.x, fz = p.pos.z + nz * 0.6 - b.pos.z;
+      b.vel.x = fx * 2.2 + p.vel.x * 0.5; b.vel.z = fz * 2.2 + p.vel.z * 0.5; b.vel.y = 0;
+      setRollingSpin(b);
     } else {
       b.owner = null;
       const kx = nx * 0.7 + rand(-0.4, 0.4), kz = nz * 0.7 + rand(-0.4, 0.4);
       b.vel.x = kx * 5; b.vel.z = kz * 5; b.vel.y = 0.3;
+      setKickSpin(b, 5, rand(-8, 8));
     }
     report('won');
   } else {
@@ -1017,8 +1038,12 @@ function applyHumanInput(state, team, input, dt) {
     mz: Number(input && input.mz) || 0,
     sprint: !!(input && input.sprint),
     passPressed: !!(input && input.passPressed),
+    loftPressed: !!(input && input.loftPressed),
+    throughPressed: !!(input && input.throughPressed),
     shootHeld: !!(input && input.shootHeld),
     shootPressed: !!(input && input.shootPressed),
+    finesseHeld: !!(input && input.finesseHeld),
+    chipHeld: !!(input && input.chipHeld),
   };
   team.lastInput = { mx: input.mx || 0, mz: input.mz || 0 };
 
@@ -1079,16 +1104,35 @@ function applyHumanInput(state, team, input, dt) {
   }
 
   if (b.owner === p) {
-    if (input.passPressed) {
-      it.action = { type: 'pass', target: choosePassTarget(state, p, input.mx, input.mz) };
+    const anyPass = input.passPressed || input.loftPressed || input.throughPressed;
+    if (anyPass) {
+      const kind = input.throughPressed ? 'through' : input.loftPressed ? 'lofted' : undefined;
+      it.action = {
+        type: 'pass',
+        target: choosePassTarget(state, p, input.mx, input.mz, kind === 'through'),
+        kind,
+        driven: input.sprint && !kind,
+      };
     } else if (input.shootHeld) {
+      if (p.charge === 0) p.chargeType = null;
+      if (input.chipHeld) p.chargeType = 'chip';
+      else if (input.finesseHeld && p.chargeType !== 'chip') p.chargeType = 'finesse';
       p.charge = Math.min(1, p.charge + dt / SHOT_CHARGE_TIME);
     } else if (p.charge > 0) {
-      it.action = { type: 'shoot', power: Math.max(0.25, p.charge), aim: input.mz };
+      it.action = {
+        type: 'shoot',
+        power: Math.max(0.25, p.charge),
+        aim: input.mz,
+        shotType: shotTypeFromCharge(p.charge, p.chargeType),
+      };
+      // The release is the decision: if the ball is not in reach yet the
+      // shot is held for a moment (see queuedAction), not re-issued forever.
+      p.charge = 0;
+      p.chargeType = null;
     }
   } else {
     p.charge = 0;
-    if (input.passPressed) {
+    if (input.passPressed || input.loftPressed || input.throughPressed) {
       // Switch to the teammate nearest the ball.
       const next = nearestTo(state, team.index, b.pos, p);
       if (next) { setControlled(state, team, next); state.events.push({ type: 'manualSwitch', team: team.index }); }
@@ -1123,67 +1167,34 @@ function movePlayer(state, p, dt) {
     }
     return;
   }
-  let mx = it.mx, mz = it.mz;
-  const l = len(mx, mz);
-  if (l > 1) { mx /= l; mz /= l; }
+  const prof = p.phys;
   const canSprint = it.sprint && p.stamina > 0.05 && !p.injured;
-  let speed = 4.6 + (p.stats.spd / 100) * 2.6;
+  let speed = prof.runSpeed;
   // Fatigue has a gradual effect so tired players remain controllable but
   // cannot match a fresh player's pace for the whole match.
   speed *= 1 - (1 - p.stamina) * 0.18;
   if (p.injured) speed *= 0.78;
-  if (canSprint) speed *= 1.3;
-  if (b.owner === p) speed *= 0.86 + p.stats.dri / 1000;
+  if (canSprint) speed *= prof.sprintMul;
+  const dribbling = b.owner === p;
+  if (dribbling) speed *= 0.86 + p.stats.dri / 1000;
   if (p.stun > 0) speed *= 0.35;
+  if (p.stagger > 0) speed *= 0.6;
   if (!p.human) speed *= team.diff.speed;
-  if (p.dive > 0) speed *= 1.5;
+  let accelMul = dribbling ? 0.85 : 1;
+  let turnMul = p.stagger > 0 ? 0.6 : 1;
+  if (p.dive > 0) { speed *= 1.5; accelMul = 3; turnMul = 4; }
 
-  const tx = mx * speed, tz = mz * speed;
-  const accel = (b.owner === p ? 14 : 20) * dt;
-  let dvx = tx - p.vel.x, dvz = tz - p.vel.z;
-  const dl = len(dvx, dvz);
-  if (dl > accel) { dvx *= accel / dl; dvz *= accel / dl; }
-  p.vel.x += dvx; p.vel.z += dvz;
-  p.pos.x += p.vel.x * dt;
-  p.pos.z += p.vel.z * dt;
+  stepLocomotion(p, prof, { dx: it.mx, dz: it.mz, top: speed, accelMul, turnMul }, dt);
   clampPlayer(p);
 
   const sp = len(p.vel.x, p.vel.z);
-  if (sp > 0.3) {
-    // Turn smoothly towards the direction of travel.
-    const k = Math.min(1, dt * (b.owner === p ? 10 : 14));
-    p.face.x += (p.vel.x / sp - p.face.x) * k;
-    p.face.z += (p.vel.z / sp - p.face.z) * k;
-    const fl = len(p.face.x, p.face.z) || 1;
-    p.face.x /= fl; p.face.z /= fl;
-  }
-  if (canSprint && sp > 1) p.stamina = Math.max(0, p.stamina - dt * 0.11);
-  else p.stamina = Math.min(1, p.stamina + dt * 0.05);
+  if (canSprint && sp > 1) p.stamina = Math.max(0, p.stamina - dt * prof.staminaDrain);
+  else p.stamina = Math.min(1, p.stamina + dt * prof.staminaRecover);
 }
 
 function separatePlayers(state) {
-  const ps = state.players;
-  const min = PLAYER_RADIUS * 2;
-  for (let i = 0; i < ps.length; i++) {
-    for (let j = i + 1; j < ps.length; j++) {
-      const a = ps[i], c = ps[j];
-      if (!a.onPitch || !c.onPitch || a.sentOff || c.sentOff) continue;
-      const dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z;
-      const d = len(dx, dz);
-      if (d > 0 && d < min) {
-        const nx = dx / d, nz = dz / d;
-        // A keeper holding the ball can't be pushed: the other player moves
-        // the whole way instead.
-        const aFixed = isHolding(state, a), cFixed = isHolding(state, c);
-        const total = min - d;
-        const pa = aFixed ? 0 : cFixed ? total : total / 2;
-        const pc = cFixed ? 0 : aFixed ? total : total / 2;
-        a.pos.x -= nx * pa; a.pos.z -= nz * pa;
-        c.pos.x += nx * pc; c.pos.z += nz * pc;
-        clampPlayer(a); clampPlayer(c);
-      }
-    }
-  }
+  resolvePlayerContacts(state.players, PLAYER_RADIUS, (p) => isHolding(state, p));
+  for (const p of state.players) if (p.onPitch) clampPlayer(p);
 }
 
 // ---------- ball physics ----------
@@ -1201,6 +1212,7 @@ function collidePosts(b) {
         const vn = b.vel.x * nx + b.vel.z * nz;
         if (vn < 0) {
           b.vel.x -= 1.6 * vn * nx; b.vel.z -= 1.6 * vn * nz;
+          const w = ensureSpin(b); w.x *= 0.4; w.y *= -0.4; w.z *= 0.4;
           b.pos.x = gx + nx * r; b.pos.z = pz + nz * r;
           return 'post';
         }
@@ -1224,37 +1236,72 @@ function collidePosts(b) {
   return null;
 }
 
-function updateBall(state, dt) {
-  const b = state.ball;
-  if (b.owner) {
-    const p = b.owner;
-    attachBall(b, p);
-    b.vel.x = p.vel.x; b.vel.z = p.vel.z; b.vel.y = 0;
-    return;
-  }
-  b.vel.y -= GRAVITY * dt;
-  b.pos.x += b.vel.x * dt;
-  b.pos.y += b.vel.y * dt;
-  b.pos.z += b.vel.z * dt;
-  if (b.pos.y <= BALL_R) {
-    b.pos.y = BALL_R;
-    if (b.vel.y < -1.2) {
-      b.vel.y = -b.vel.y * BOUNCE;
-      b.vel.x *= 0.85; b.vel.z *= 0.85;
-    } else {
-      b.vel.y = 0;
+/**
+ * The ball cannot pass through players. Anyone who could take the ball this
+ * step is left to updatePossession (control / block / save); everyone else -
+ * the ball above their reach, or a player who just kicked, was stunned or is
+ * on cooldown - is a solid body the ball deflects off.
+ */
+/** Close control keeps the ball inside the field (and out of your own net). */
+function ownerBounds(state, p) {
+  if (Math.abs(p.pos.x) > HALF_L - 0.2 || Math.abs(p.pos.z) > HALF_W - 0.2) return null;
+  return { x: HALF_L - 0.45, z: HALF_W - 0.35 };
+}
+
+function collideBodies(state, b) {
+  for (const p of state.players) {
+    if (!p.onPitch || p.sentOff || p === b.owner) continue;
+    if (Math.abs(p.pos.x - b.pos.x) > 1 || Math.abs(p.pos.z - b.pos.z) > 1) continue;
+    const isGK = p.role === 'GK' && inOwnBox(state, p);
+    const reach = isGK ? 2.5 : 1.1;
+    const canPlay = p.kickCd <= 0 && p.stun <= 0 && b.pos.y <= reach;
+    if (canPlay) continue;
+    // The ball is leaving the foot of the player who just played it.
+    if (b.lastTouch === p && p.kickCd > 0) continue;
+    const touched = collideBallWithBody(b, {
+      x: p.pos.x, z: p.pos.z, vx: p.vel.x, vz: p.vel.z, radius: BODY_RADIUS, height: BODY_HEIGHT,
+    });
+    if (touched && b.lastTouch !== p) {
+      b.lastTouch = p;
+      b.restartDoubleTouchBy = null;
+      b.directThrowInGoalBlockedBy = null;
+      b.directRestartOwnGoalBlockedBy = null;
+      b.freeKickGoalRestrictedBy = null;
+      state.events.push({ type: 'deflect', player: p.id });
     }
   }
-  const h = len(b.vel.x, b.vel.z);
-  if (b.pos.y <= BALL_R + 0.01 && b.vel.y === 0) {
-    const nh = Math.max(0, h - ROLL_DECEL * dt - h * 0.15 * dt);
-    if (h > 0) { b.vel.x *= nh / h; b.vel.z *= nh / h; }
-  } else {
-    const k = 1 - AIR_DRAG * dt;
-    b.vel.x *= k; b.vel.z *= k;
+}
+
+function updateBall(state, dt) {
+  const b = state.ball;
+  const owner = b.owner;
+  const penaltyTaker = state.penalty?.active && state.penalty.shooter === owner;
+  if (owner && (owner.mustPass || owner.holding || penaltyTaker || state.phase !== 'play')) {
+    // Set pieces and the keeper's hands: the ball is held, not dribbled.
+    attachBall(b, owner);
+    b.vel.x = owner.vel.x; b.vel.z = owner.vel.z; b.vel.y = 0;
+    setRollingSpin(b);
+    return;
   }
-  const hit = collidePosts(b);
-  if (hit) state.events.push({ type: 'woodwork', what: hit });
+  const n = substepsFor(b, dt);
+  const h = dt / n;
+  const live = state.phase === 'play';
+  for (let i = 0; i < n; i++) {
+    integrateBall(b, h);
+    const hit = collidePosts(b);
+    if (hit) state.events.push({ type: 'woodwork', what: hit });
+    if (live) collideBodies(state, b);
+  }
+  if (owner) {
+    const res = updateDribble(owner, b, dt, ownerBounds(state, owner));
+    if (res === 'lost') {
+      b.owner = null;
+      b.lastTouch = owner;
+      state.events.push({ type: 'lostBall', player: owner.id });
+    } else if (res === 'touch') {
+      state.events.push({ type: 'touch', player: owner.id });
+    }
+  }
 
   // Net: keep a scored ball inside the goal.
   if (state.phase === 'goal' && Math.abs(b.pos.x) > HALF_L) {
@@ -1291,7 +1338,7 @@ function checkOffsideChallenge(state) {
     b.offsidePlayers = [];
     b.restartNoOffsideBy = null;
     b.shotLive = false;
-    b.vel.x = b.vel.y = b.vel.z = 0;
+    stopBall(b);
     state.events.push({ type: 'offside', team: attacker.team, player: attacker.id, interference: true });
     startRestart(state, 'indirect free kick', defendingTeam.index, spot);
     return true;
@@ -1342,15 +1389,54 @@ function keeperSave(state, gk) {
   return true;
 }
 
+/** Chance that a player fails to control the ball as it arrives. */
+function firstTouchFails(state, p, b, speed) {
+  const rel = Math.hypot(b.vel.x - p.vel.x, b.vel.z - p.vel.z);
+  const height = b.pos.y - BALL_R;
+  const control = p.phys.control;
+  let difficulty = Math.max(0, rel - 7) / 16 + Math.max(0, height - 0.35) * 0.45
+    + (p.stagger > 0 ? 0.25 : 0);
+  if (b.intended === p) difficulty *= 0.6;
+  if (p.human && state.assistName !== 'off') difficulty *= 0.75;
+  const chance = clamp(difficulty * (1.2 - control), 0, 0.45);
+  return chance > 0 && Math.random() < chance;
+}
+
+/**
+ * A good first touch takes the pace off the ball and sets it a little in
+ * front of the receiver, keeping part of its momentum. No teleporting: the
+ * ball keeps its position and only its velocity changes.
+ */
+function cushionBall(p, b) {
+  const it = p.intent;
+  const il = len(it.mx, it.mz);
+  const s = len(p.vel.x, p.vel.z);
+  let dx, dz;
+  if (il > 0.2) { dx = it.mx / il; dz = it.mz / il; }
+  else if (s > 0.6) { dx = p.vel.x / s; dz = p.vel.z / s; }
+  else { dx = p.face.x; dz = p.face.z; }
+  const keep = 0.12 * (1.2 - p.phys.control);
+  b.vel.x = p.vel.x + dx * 1.2 + (b.vel.x - p.vel.x) * keep;
+  b.vel.z = p.vel.z + dz * 1.2 + (b.vel.z - p.vel.z) * keep;
+  if (b.pos.y > BALL_R + 0.3) b.vel.y = Math.min(b.vel.y, -0.5); // chest/thigh it down
+  else b.vel.y = 0;
+  setRollingSpin(b);
+}
+
 function updatePossession(state, dt) {
   const b = state.ball;
   if (b.passGrace > 0) b.passGrace -= dt;
-  if (b.owner) return;
+  // While dribbling, the ball can be nicked by an opponent only when it is
+  // away from the owner's feet (between touches).
+  const contestedBy = b.owner && !b.owner.mustPass && !b.owner.holding
+    && dist(b.owner.pos, b.pos) > 1.05 ? b.owner : null;
+  if (b.owner && !contestedBy) return;
   const speed = len(b.vel.x, b.vel.z);
   let best = null, bd = Infinity;
   for (const p of state.players) {
     if (!p.onPitch || p.sentOff) continue;
     if (p.kickCd > 0 || p.stun > 0) continue;
+    if (contestedBy && p.team === contestedBy.team) continue;
     const isGK = p.role === 'GK' && inOwnBox(state, p);
     const reachH = isGK ? 2.5 : 1.1;
     if (b.pos.y > reachH) continue;
@@ -1379,7 +1465,7 @@ function updatePossession(state, dt) {
     b.restartNoOffsideBy = null;
     b.restartDoubleTouchBy = null;
     b.shotLive = false;
-    b.vel.x = b.vel.y = b.vel.z = 0;
+    stopBall(b);
     state.events.push({ type: 'doubleTouch', team: best.team, player: best.id });
     startRestart(state, 'indirect free kick', opposingTeam, spot);
     return;
@@ -1393,7 +1479,7 @@ function updatePossession(state, dt) {
     b.intended = null;
     b.offsidePlayers = [];
     b.restartNoOffsideBy = null;
-    b.vel.x = b.vel.y = b.vel.z = 0;
+    stopBall(b);
     state.events.push({ type: 'offside', team: best.team, player: best.id });
     startRestart(state, 'indirect free kick', defendingTeam, spot);
     return;
@@ -1426,11 +1512,31 @@ function updatePossession(state, dt) {
     }
   }
   const prevTouch = b.lastTouch;
-  // Turn to face the ball so taking control doesn't teleport it (for example
-  // over the touchline).
-  const fx = b.pos.x - best.pos.x, fz = b.pos.z - best.pos.z;
-  const fl = len(fx, fz);
-  if (fl > 0.05) { best.face.x = fx / fl; best.face.z = fz / fl; }
+  if (contestedBy) state.events.push({ type: 'steal', player: best.id, from: contestedBy.id });
+  // First touch: a hard or high ball, a poor first touch or a player off
+  // balance can spill it. Keepers use their hands (handled below).
+  if (!isGK && firstTouchFails(state, best, b, speed)) {
+    const k = rand(0.3, 0.5);
+    const rvx = (b.vel.x - best.vel.x) * k, rvz = (b.vel.z - best.vel.z) * k;
+    const a = rand(-0.8, 0.8), c = Math.cos(a), sn = Math.sin(a);
+    b.vel.x = best.vel.x + rvx * c - rvz * sn;
+    b.vel.z = best.vel.z + rvx * sn + rvz * c;
+    b.vel.y = Math.max(b.vel.y * -0.3, rand(0.5, 2));
+    setKickSpin(b, rand(-10, 10), rand(-10, 10));
+    b.owner = null;
+    b.lastTouch = best;
+    b.intended = null;
+    b.offsidePlayers = [];
+    b.restartNoOffsideBy = null;
+    b.restartDoubleTouchBy = null;
+    b.directThrowInGoalBlockedBy = null;
+    b.directRestartOwnGoalBlockedBy = null;
+    b.freeKickGoalRestrictedBy = null;
+    b.shotLive = false;
+    best.kickCd = 0.3;
+    state.events.push({ type: 'miscontrol', player: best.id });
+    return;
+  }
   b.owner = best;
   b.lastTouch = best;
   b.intended = null;
@@ -1441,7 +1547,9 @@ function updatePossession(state, dt) {
   b.directRestartOwnGoalBlockedBy = null;
   b.freeKickGoalRestrictedBy = null;
   b.shotLive = false;
-  b.vel.y = 0;
+  if (!isGK) cushionBall(best, b);
+  else b.vel.y = 0;
+  best.touchCd = 0.15;
   if (isGK) {
     // Back-pass rule: a ball played to the keeper by his own teammate stays at
     // his feet (and he can be tackled). Anything else he picks up in his hands.
@@ -1585,13 +1693,24 @@ export function stepMatch(state, inputs, dt) {
   const b = state.ball;
   if (state.banner) { state.banner.time -= dt; if (state.banner.time <= 0) state.banner = null; }
 
+  // Remember where everything was, so the renderer can interpolate between
+  // physics steps.
+  for (const p of state.players) {
+    if (!p.prevPos) p.prevPos = { x: p.pos.x, z: p.pos.z };
+    else { p.prevPos.x = p.pos.x; p.prevPos.z = p.pos.z; }
+  }
+  if (!b.prevPos) b.prevPos = { x: b.pos.x, y: b.pos.y, z: b.pos.z };
+  else { b.prevPos.x = b.pos.x; b.prevPos.y = b.pos.y; b.prevPos.z = b.pos.z; }
+
   // Timers
   for (const p of state.players) {
+    p.stagger = Math.max(0, (p.stagger || 0) - dt);
     p.kickCd = Math.max(0, p.kickCd - dt);
     p.tackleCd = Math.max(0, p.tackleCd - dt);
     p.stun = Math.max(0, p.stun - dt);
     p.dive = Math.max(0, p.dive - dt);
     p.kickAnim = Math.max(0, p.kickAnim - dt);
+    p.touchAnim = Math.max(0, (p.touchAnim || 0) - dt);
   }
 
   if (state.phase === 'goal') {
@@ -1650,6 +1769,9 @@ export function stepMatch(state, inputs, dt) {
   for (const team of state.teams) {
     if (team.human) applyHumanInput(state, team, inputs[team.human], dt);
   }
+  // One shared prediction of the free ball's flight for every AI decision
+  // and receiver this step (same integrator as the real ball).
+  b.path = b.owner ? null : computeBallPath(b);
   updateAI(state, dt);
   if (state.penalty?.active && state.penalty.elapsed > 8
       && !state.penalty.shooter.intent.action) {
@@ -1666,15 +1788,26 @@ export function stepMatch(state, inputs, dt) {
     }
   }
 
-  // Resolve actions
+  // Resolve actions. A pass or shot needs the ball within reach of the foot;
+  // otherwise it is held for a moment while the player gets to the ball.
   for (const p of state.players) {
-    const a = p.intent.action;
+    let a = p.intent.action;
+    if (!a && p.queuedAction) {
+      p.queuedAction.ttl -= dt;
+      if (p.queuedAction.ttl <= 0 || b.owner !== p) p.queuedAction = null;
+      else a = p.queuedAction.action;
+    }
     if (!a) continue;
-    if (a.type === 'pass' && b.owner === p) doPass(state, p, a.target);
+    if ((a.type === 'pass' || a.type === 'shoot') && b.owner === p && !canKick(p, b)) {
+      if (!p.queuedAction || p.queuedAction.action !== a) p.queuedAction = { action: a, ttl: 0.6 };
+      continue;
+    }
+    p.queuedAction = null;
+    if (a.type === 'pass' && b.owner === p) doPass(state, p, a.target, { kind: a.kind, driven: a.driven });
     else if (a.type === 'shoot' && b.owner === p && p.throwIn) {
       // You can't shoot from a throw-in: throw it to a teammate instead.
       doPass(state, p, choosePassTarget(state, p, p.face.x, p.face.z));
-    } else if (a.type === 'shoot' && b.owner === p) doShot(state, p, a.power, a.aim || 0);
+    } else if (a.type === 'shoot' && b.owner === p) doShot(state, p, a.power, a.aim || 0, a.shotType || 'normal');
     else if (a.type === 'tackle') doTackle(state, p);
     if (state.phase !== 'play') break;
   }
@@ -1702,7 +1835,7 @@ export function stepMatch(state, inputs, dt) {
     state.ball.intended = null;
     state.ball.offsidePlayers = [];
     state.ball.restartNoOffsideBy = null;
-    state.ball.vel.x = state.ball.vel.y = state.ball.vel.z = 0;
+    stopBall(state.ball);
     setBanner(state, 'HALF TIME', 3);
     state.events.push({ type: 'halftime' });
     applyPendingSubstitutions(state);

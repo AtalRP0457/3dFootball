@@ -138,7 +138,7 @@ export function buildTeam(teamId, kitType = 'home') {
   pool.sort((a, b) => b.overall - a.overall);
   const gkIdx = pool.findIndex((c) => c.position === 'GK');
   const bench = [...(gkIdx >= 0 ? pool.splice(gkIdx, 1) : []), ...pool].slice(0, 7);
-  const toEngine = (c, role) => ({ name: c.name, number: c.number, stats: c.stats, playerId: c.playerId, position: c.position, overall: c.overall, ...(role ? { role } : {}) });
+  const toEngine = (c, role) => ({ name: c.name, number: c.number, stats: c.stats, attributes: c.attributes, playerId: c.playerId, position: c.position, overall: c.overall, ...(role ? { role } : {}) });
   const custom = era === 'custom';
   const team = {
     id: teamId,
