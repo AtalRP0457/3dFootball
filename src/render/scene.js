@@ -293,9 +293,23 @@ function numberTexture(num, shirt, renderer) {
   return texture(c, renderer);
 }
 
-function jerseyTexture(shirt, trim, renderer) {
+function jerseyTexture(shirt, trim, renderer, kit = {}) {
   const [c, g] = canvas(128, 128);
   g.fillStyle = shirt; g.fillRect(0, 0, 128, 128);
+  // Club kit patterns from the kit database (stripes, hoops, halves, ...).
+  const sec = kit.secondary;
+  if (sec && kit.design) {
+    g.fillStyle = sec;
+    if (kit.design === 'stripes') for (let x = 8; x < 128; x += 32) g.fillRect(x, 0, 16, 128);
+    if (kit.design === 'pinstripes') for (let x = 4; x < 128; x += 12) g.fillRect(x, 0, 3, 128);
+    if (kit.design === 'hoops') for (let y = 12; y < 128; y += 30) g.fillRect(0, y, 128, 15);
+    if (kit.design === 'halves') g.fillRect(64, 0, 64, 128);
+    if (kit.design === 'quarters') { g.fillRect(64, 0, 64, 64); g.fillRect(0, 64, 64, 64); }
+    if (kit.design === 'band') g.fillRect(0, 50, 128, 26);
+    if (kit.design === 'side') { g.fillRect(0, 0, 14, 128); g.fillRect(114, 0, 14, 128); }
+    if (kit.design === 'sash') { g.beginPath(); g.moveTo(0, 20); g.lineTo(20, 0); g.lineTo(128, 108); g.lineTo(108, 128); g.closePath(); g.fill(); }
+    if (kit.design === 'chevron') { g.beginPath(); g.moveTo(0, 40); g.lineTo(64, 80); g.lineTo(128, 40); g.lineTo(128, 60); g.lineTo(64, 100); g.lineTo(0, 60); g.closePath(); g.fill(); }
+  }
   // Fine fabric weave and original diagonal paneling keep kits readable at
   // broadcast distance without relying on branded artwork.
   g.globalAlpha = 0.16;
@@ -319,7 +333,8 @@ function makePlayer(p, kit, renderer) {
   const hair = HAIR[(p.id * 3 + p.number) % HAIR.length];
   const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
   const kitTrim = luminance(shirt) > 0.55 ? '#17304d' : '#f2d36b';
-  const shirtM = new THREE.MeshLambertMaterial({ map: jerseyTexture(shirt, kitTrim, renderer) });
+  const shirtM = new THREE.MeshLambertMaterial({ map: jerseyTexture(shirt, kitTrim, renderer, isGK ? {} : kit) });
+  const sleeveM = !isGK && kit.design === 'sleeves' && kit.secondary ? mat(kit.secondary) : shirtM;
   const shortsM = mat(shorts), sockM = mat(socks), skinM = mat(skin);
   const bootM = mat('#111111');
 
@@ -408,7 +423,7 @@ function makePlayer(p, kit, renderer) {
   for (const sx of [-1, 1]) {
     const arm = limb(0.12, 0.58, isGK ? shirtM : skinM, 1.48);
     arm.position.x = sx * 0.32;
-    const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.14), shirtM);
+    const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.14), sleeveM);
     sleeve.position.y = -0.1;
     arm.add(sleeve);
     body.add(arm);

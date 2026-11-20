@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c2515107422r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c2515107422g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c2515107422c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c2515107422r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c2515107422c)">
+<rect width="200" height="230" fill="#0068a8"/>
+<rect x="0" y="0" width="7" height="230" fill="#000000"/><rect x="24" y="0" width="7" height="230" fill="#000000"/><rect x="48" y="0" width="7" height="230" fill="#000000"/><rect x="72" y="0" width="7" height="230" fill="#000000"/><rect x="96" y="0" width="7" height="230" fill="#000000"/><rect x="120" y="0" width="7" height="230" fill="#000000"/><rect x="144" y="0" width="7" height="230" fill="#000000"/><rect x="168" y="0" width="7" height="230" fill="#000000"/><rect x="192" y="0" width="7" height="230" fill="#000000"/>
+
+<rect width="200" height="230" fill="url(#c2515107422g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#002f4c" opacity=".9" stroke="url(#c2515107422r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><text x="50" y="68" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="50" letter-spacing="1" fill="#a29161" stroke="#413a27" stroke-width="1.2">IM</text></g>
+<path id="c2515107422arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="17" letter-spacing="2" fill="#ffffff"><textPath href="#c2515107422arc" startOffset="50%" text-anchor="middle">INTER</textPath></text>
+
+</g>
+</svg>

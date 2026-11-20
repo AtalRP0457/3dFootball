@@ -1,5 +1,7 @@
 import './style.css';
-import { TEAMS, getTeam } from './data/teams.js';
+import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.js';
+import { teamRecord, ERAS } from './db/index.js';
+import { migrate, ls } from './state/store.js';
 import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.js';
 import { FIXED_DT, FORMATIONS, INDOOR_FORMATION } from './game/constants.js';
 import { createFrontend } from './ui/frontend.js';
@@ -12,25 +14,49 @@ const $ = (id) => document.getElementById(id);
 // ---------- settings chosen in the menu ----------
 const DEFAULT_SETTINGS = {
   mode: '1p', // 1p | 2p | cpu | cup | career | penalties | indoor | practice | tutorial
-  home: '1960',
-  away: '1990',
+  pool: 'clubs', // clubs | nations | decades
+  roster: 'modern', // roster profile (see ERAS in src/db/index.js)
+  clubIdentity: 'authentic', // authentic | parody | mixed
+  playerIdentity: 'real', // real | parody
+  home: 'fcb',
+  away: 'rma',
+  homeKit: 'home',
+  awayKit: 'away',
   difficulty: 'normal',
   duration: 240,
-  era: 'on',
+  era: 'on', // era colour grading for the decade teams
   assist: 'assisted',
 };
 const SETTINGS_KEY = 'legends-settings';
+const dataMigration = migrate();
+const knownTeam = (id) => !!id && (id === 'custom' || !!teamRecord(id) || DECADE_TEAMS.some((t) => t.id === id));
+const getTeam = (id) => buildTeam(id);
 const settings = loadSettings();
+function applyDbPrefs() {
+  configureDb({
+    era: settings.roster, clubIdentity: settings.clubIdentity, playerIdentity: settings.playerIdentity,
+    edits: ls.get('fsl-edits', {}), custom: ls.get('fsl-custom', null), officialLogos: officialLogos || {},
+  });
+}
+let officialLogos = {};
+applyDbPrefs();
 
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
-    const teamIds = new Set(TEAMS.map((team) => team.id));
+    const pick = (key, allowed) => (saved && allowed.includes(saved[key]) ? { [key]: saved[key] } : {});
     return {
       ...DEFAULT_SETTINGS,
+      ...pick('pool', ['clubs', 'nations', 'decades']),
+      ...pick('roster', ERAS.map((e) => e.id)),
+      ...pick('clubIdentity', ['authentic', 'parody', 'mixed']),
+      ...pick('playerIdentity', ['real', 'parody']),
+      ...pick('homeKit', ['home', 'away', 'third']),
+      ...pick('awayKit', ['home', 'away', 'third']),
+      ...pick('assist', ['off', 'assisted', 'full']),
       ...(saved && ['1p', '2p', 'cpu', 'cup', 'career', 'penalties', 'practice', 'indoor'].includes(saved.mode) ? { mode: saved.mode } : {}),
-      ...(saved && teamIds.has(saved.home) ? { home: saved.home } : {}),
-      ...(saved && teamIds.has(saved.away) ? { away: saved.away } : {}),
+      ...(saved && knownTeam(saved.home) ? { home: saved.home } : {}),
+      ...(saved && knownTeam(saved.away) ? { away: saved.away } : {}),
       ...(saved && ['beginner', 'easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
       ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
       ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
@@ -295,11 +321,20 @@ function clearCup() {
   try { localStorage.removeItem('legends-decades-cup'); } catch {}
 }
 
+// A tournament keeps the roster profile and pool it started with.
+function restoreRosterFor(saved) {
+  const active = !(saved.championId || saved.complete);
+  if (!active) return;
+  if (saved.roster && saved.roster !== settings.roster) { settings.roster = saved.roster; applyDbPrefs(); }
+  if (saved.pool) settings.pool = saved.pool;
+}
+
 function loadCup() {
   try {
     const saved = JSON.parse(localStorage.getItem('legends-decades-cup') || 'null');
     if (!saved) return null;
-    const teamById = (id) => TEAMS.find((team) => team.id === id) || null;
+    restoreRosterFor(saved);
+    const teamById = (id) => (knownTeam(id) ? getTeam(id) : null);
     const restoreFixture = (fixture) => {
       const home = teamById(fixture.homeId), away = teamById(fixture.awayId);
       if (!home || !away) return null;
@@ -347,6 +382,8 @@ function persistCup() {
       history: cup.history.map(serializeFixture),
       championId: cup.champion?.id || null,
       eliminated: cup.eliminated,
+      roster: settings.roster,
+      pool: settings.pool,
     }));
   } catch {}
 }
@@ -360,7 +397,8 @@ function loadLeague() {
   try {
     const saved = JSON.parse(localStorage.getItem('legends-career-season') || 'null');
     if (!saved) return null;
-    const teamById = (id) => TEAMS.find((team) => team.id === id) || null;
+    restoreRosterFor(saved);
+    const teamById = (id) => (knownTeam(id) ? getTeam(id) : null);
     const restoreFixture = (fixture) => {
       const home = teamById(fixture.homeId), away = teamById(fixture.awayId);
       if (!home || !away) return null;
@@ -402,6 +440,8 @@ function persistLeague() {
       history: league.history.map(serializeFixture),
       complete: league.complete,
       championId: league.champion?.id || null,
+      roster: settings.roster,
+      pool: settings.pool,
     }));
   } catch {}
 }
@@ -654,18 +694,21 @@ function simulateAiMatch(fixture, duration = 30) {
   fixture.awayScore = cpuMatch.teams[1].score;
 }
 
+function poolByRating() {
+  return poolTeamIds(settings.pool).filter(isPlayable)
+    .sort((x, y) => (teamRating(y) ?? 0) - (teamRating(x) ?? 0));
+}
+function competitionTeams(size) {
+  const ids = poolByRating();
+  const user = ids.includes(settings.home) ? settings.home : ids[0];
+  const preferred = ids.includes(settings.away) && settings.away !== user ? settings.away : ids.find((id) => id !== user);
+  const rest = ids.filter((id) => id !== user && id !== preferred).slice(0, size - 2);
+  return { user: getTeam(user), preferred: getTeam(preferred), rest: rest.map(getTeam) };
+}
+
 function createLeague() {
-  const userTeam = getTeam(settings.home);
-  let preferred = getTeam(settings.away);
-  if (preferred.id === userTeam.id) {
-    const index = TEAMS.findIndex((team) => team.id === userTeam.id);
-    preferred = TEAMS[(index + 1) % TEAMS.length];
-  }
-  const rotation = [
-    userTeam,
-    ...TEAMS.filter((team) => team.id !== userTeam.id && team.id !== preferred.id),
-    preferred,
-  ];
+  const { user: userTeam, preferred, rest } = competitionTeams(10);
+  const rotation = [userTeam, ...rest, preferred];
   const firstHalf = [];
   for (let round = 0; round < rotation.length - 1; round++) {
     const fixtures = [];
@@ -685,17 +728,8 @@ function createLeague() {
 }
 
 function createCup() {
-  const home = getTeam(settings.home);
-  const away = getTeam(settings.away);
-  const participants = [home];
-  if (away.id !== home.id) participants.push(away);
-  let next = (TEAMS.findIndex((team) => team.id === away.id) + 1) % TEAMS.length;
-  while (participants.length < 8) {
-    const team = TEAMS[next];
-    if (!participants.some((entry) => entry.id === team.id)) participants.push(team);
-    next = (next + 1) % TEAMS.length;
-  }
-  if (participants[1].id === home.id) participants.splice(1, 1, TEAMS[next]);
+  const { user: home, preferred: away, rest } = competitionTeams(8);
+  const participants = [home, away, ...rest];
   const matches = [];
   for (let i = 0; i < participants.length; i += 2) {
     matches.push({ home: participants[i], away: participants[i + 1], winner: null });
@@ -853,7 +887,8 @@ function simulateCupFixture(fixture, round) {
 }
 
 function leagueStandings() {
-  const table = TEAMS.map((team) => ({ team, played: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, points: 0 }));
+  const leagueTeams = league.schedule[0].flatMap((f) => [f.home, f.away]);
+  const table = leagueTeams.map((team) => ({ team, played: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, points: 0 }));
   const byId = new Map(table.map((row) => [row.team.id, row]));
   for (const fixture of league.history) {
     const home = byId.get(fixture.home.id), away = byId.get(fixture.away.id);
@@ -972,6 +1007,11 @@ function startMatch() {
     home = getTeam(settings.home);
     away = getTeam(settings.away);
   }
+  // Kits chosen on the team select screen; a clash moves the away side to
+  // its next kit before kickoff (the preview shows the same result).
+  const kits = matchKits(home, away);
+  home = { ...home, kit: kits.home };
+  away = { ...away, kit: kits.away };
   // Line-ups, formations and tactics saved in Team Management.
   home = frontend.applySquad(home);
   away = frontend.applySquad(away);
@@ -1009,8 +1049,11 @@ function startMatch() {
 
   $('homeName').textContent = home.name;
   $('awayName').textContent = practice ? 'PRACTICE' : away.name;
-  $('homeChip').style.background = match.teams[0].kit.shirt;
-  $('awayChip').style.background = match.teams[1].kit.shirt;
+  for (const [chip, team, data] of [['homeChip', match.teams[0], home], ['awayChip', match.teams[1], away]]) {
+    $(chip).style.background = `${team.kit.shirt} url("${data.crest}") center / contain no-repeat`;
+    $(chip).classList.toggle('crest-chip', !!data.crest);
+  }
+  try { history.pushState({ screen: 'match' }, '', '#/match'); } catch { /* sandboxed frames */ }
   $('p1panel').style.display = match.teams.some((t) => t.human === 'p1') ? '' : 'none';
   $('p2panel').style.display = match.teams.some((t) => t.human === 'p2') ? '' : 'none';
   $('subsBtn').classList.toggle('hidden', !match.teams.some((t) => t.human));
@@ -1034,6 +1077,12 @@ function startMatch() {
     match.phase = 'fulltime';
     beginCupShootout();
   }
+}
+
+function matchKits(home, away) {
+  const homeType = home.id === settings.home ? settings.homeKit : 'home';
+  const awayType = away.id === settings.away ? settings.awayKit : 'away';
+  return resolveKitClash(home.id, homeType, away.id, awayType);
 }
 
 function toMenu() {
@@ -1099,6 +1148,11 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('resize', () => renderer.resize());
+window.addEventListener('popstate', () => {
+  if (!match) return; // the front end handles menu history itself
+  if (match.phase !== 'fulltime') setPaused(true);
+  try { history.pushState({ screen: 'match' }, '', '#/match'); } catch { /* ignore */ }
+});
 
 // ---------- HUD ----------
 let subTimer = 0;
@@ -1484,7 +1538,22 @@ function getProgress() {
   return out;
 }
 const frontend = createFrontend({
-  settings, teams: TEAMS, getTeam, persistSettings, clearCup, clearLeague,
+  settings, getTeam, persistSettings, clearCup, clearLeague,
+  poolTeamIds, isPlayable, teamRating, matchKits, eras: ERAS, dataMigration,
+  refreshDb() {
+    applyDbPrefs();
+    // Re-resolve tournament teams so identity changes show everywhere without
+    // touching progress (fixtures keep the same team IDs).
+    const fresh = (t) => (t ? getTeam(t.id) : t);
+    for (const comp of [cup, league]) {
+      if (!comp) continue;
+      comp.userTeam = fresh(comp.userTeam);
+      if (comp.champion) comp.champion = fresh(comp.champion);
+      for (const f of [...(comp.matches || []), ...(comp.history || []), ...(comp.schedule || []).flat()]) {
+        f.home = fresh(f.home); f.away = fresh(f.away); if (f.winner) f.winner = fresh(f.winner);
+      }
+    }
+  },
   formations: FORMATIONS, indoorFormation: INDOOR_FORMATION,
   resolveFixture, getProgress, startMatch,
   controllers() {
@@ -1498,5 +1567,12 @@ const frontend = createFrontend({
 });
 
 buildMenu();
-frontend.show('title');
+frontend.boot();
+// Licensed club logos (if the user has added any) replace the original art.
+fetch(`${import.meta.env.BASE_URL}assets/clubs/logos/official/manifest.json`)
+  .then((r) => (r.ok ? r.json() : {}))
+  .then((map) => {
+    if (map && typeof map === 'object' && Object.keys(map).length) { officialLogos = map; applyDbPrefs(); frontend.refresh(); }
+  })
+  .catch(() => {});
 requestAnimationFrame(frame);

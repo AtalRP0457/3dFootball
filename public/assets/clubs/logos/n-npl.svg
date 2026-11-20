@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="n3732086530r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="n3732086530g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+<clipPath id="n3732086530c"><path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z"/></clipPath>
+</defs>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="url(#n3732086530r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#n3732086530c)"><rect width="200" height="230" fill="#f4f6fb"/><path d="M40 10 L160 100 L80 100 L160 210 L40 210 Z" fill="#003893" /><path d="M48 24 L140 94 L66 94 L140 200 L48 200 Z" fill="#dc143c"/><circle cx="72" cy="72" r="12" fill="#fff"/><circle cx="72" cy="160" r="14" fill="#fff"/><rect width="200" height="230" fill="url(#n3732086530g)"/>
+<rect x="0" y="172" width="200" height="34" fill="#0b1224" opacity=".82"/></g>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="98" r="44" fill="#0b1224" opacity=".72" stroke="url(#n3732086530r)" stroke-width="4"/>
+<g transform="translate(66 64) scale(.68)"><g style="color:#ffffff" fill="#ffffff"><ellipse cx="50" cy="26" rx="16" ry="12" transform="rotate(90 50 26)" fill="currentColor"/><ellipse cx="69.02113032590307" cy="39.819660112501055" rx="16" ry="12" transform="rotate(162 69.02113032590307 39.819660112501055)" fill="currentColor"/><ellipse cx="61.75570504584947" cy="62.180339887498945" rx="16" ry="12" transform="rotate(234 61.75570504584947 62.180339887498945)" fill="currentColor"/><ellipse cx="38.24429495415054" cy="62.180339887498945" rx="16" ry="12" transform="rotate(306 38.24429495415054 62.180339887498945)" fill="currentColor"/><ellipse cx="30.978869674096927" cy="39.819660112501055" rx="16" ry="12" transform="rotate(378 30.978869674096927 39.819660112501055)" fill="currentColor"/><circle cx="50" cy="46" r="8" fill="#fff" opacity=".8"/><path d="M50 66 V94" stroke="currentColor" stroke-width="4"/></g></g>
+<text x="100" y="195" text-anchor="middle" font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="16" letter-spacing="1.5" fill="#f5d36b">NEPAL</text>
+
+</svg>

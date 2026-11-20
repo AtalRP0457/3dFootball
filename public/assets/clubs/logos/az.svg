@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c1428492898r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c1428492898g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c1428492898c"><path d="M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z" fill="url(#c1428492898r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c1428492898c)">
+<rect width="200" height="230" fill="#d0001c"/>
+
+
+<rect width="200" height="230" fill="url(#c1428492898g)"/>
+</g>
+<path d="M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="56" fill="#5e000d" opacity=".9" stroke="url(#c1428492898r)" stroke-width="5"/>
+<g transform="translate(56 68) scale(0.88)"><text x="50" y="68" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="50" letter-spacing="1" fill="#ffffff" stroke="#666666" stroke-width="1.2">AZ</text></g>
+
+
+</g>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c1347809407r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c1347809407g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c1347809407c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c1347809407r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c1347809407c)">
+<rect width="200" height="230" fill="#007a33"/>
+
+
+<rect width="200" height="230" fill="url(#c1347809407g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#003717" opacity=".9" stroke="url(#c1347809407r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><g style="color:#ffffff" fill="#ffffff"><circle cx="50" cy="30" r="17" fill="currentColor"/><circle cx="31" cy="54" r="17" fill="currentColor"/><circle cx="69" cy="54" r="17" fill="currentColor"/><path d="M50 56 C52 72 56 84 64 94" stroke="currentColor" stroke-width="6" fill="none"/></g></g>
+<path id="c1347809407arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="14" letter-spacing="2" fill="#ffffff"><textPath href="#c1347809407arc" startOffset="50%" text-anchor="middle">PANATHINAIKOS</textPath></text>
+
+</g>
+</svg>

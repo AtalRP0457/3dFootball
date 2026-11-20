@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="n3872811196r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="n3872811196g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+<clipPath id="n3872811196c"><path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z"/></clipPath>
+</defs>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="url(#n3872811196r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#n3872811196c)"><rect width="200" height="230" fill="#ffffff"/><path d="M100 70 A40 40 0 0 1 100 150 A20 20 0 0 1 100 110 A20 20 0 0 0 100 70 Z" fill="#c60c30"/><path d="M100 150 A40 40 0 0 1 100 70 A20 20 0 0 0 100 110 A20 20 0 0 1 100 150 Z" fill="#003478"/><rect width="200" height="230" fill="url(#n3872811196g)"/>
+<rect x="0" y="172" width="200" height="34" fill="#0b1224" opacity=".82"/></g>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="98" r="44" fill="#0b1224" opacity=".72" stroke="url(#n3872811196r)" stroke-width="4"/>
+<g transform="translate(66 64) scale(.68)"><g style="color:#ffffff" fill="#ffffff"><path d="M18 24 L34 32 L66 32 L82 24 L80 50 C80 74 66 90 50 90 C34 90 20 74 20 50 Z" fill="currentColor"/><path d="M50 32 V46 M30 48 L40 52 M70 48 L60 52 M26 62 L38 62 M74 62 L62 62" stroke="#000" stroke-width="4" opacity=".6"/></g></g>
+<text x="100" y="195" text-anchor="middle" font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="16" letter-spacing="1.5" fill="#f5d36b">SOUTH KOREA</text>
+
+</svg>

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="220" viewBox="0 0 200 220" role="img" aria-label="Hand of God crest">
+  <defs>
+    <linearGradient id="cr8g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#91c1eb"/><stop offset=".55" stop-color="#6cace4"/><stop offset="1" stop-color="#467094"/>
+    </linearGradient>
+    <linearGradient id="cr8rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff3c4"/><stop offset=".35" stop-color="#e2b33c"/><stop offset=".7" stop-color="#9a6b12"/><stop offset="1" stop-color="#f1cf6b"/>
+    </linearGradient>
+    <linearGradient id="cr8gl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="cr8c"><path d="M100 8 L182 30 C184 92 172 160 100 212 C28 160 16 92 18 30 Z"/></clipPath>
+  </defs>
+  <path d="M100 8 L182 30 C184 92 172 160 100 212 C28 160 16 92 18 30 Z" fill="url(#cr8rim)" transform="translate(100 110) scale(1.06) translate(-100 -110)"/>
+  <g clip-path="url(#cr8c)">
+    <rect width="200" height="230" fill="url(#cr8g)"/>
+    <path d="M20 70 L70 30 L190 170 L140 210 Z" fill="#0b1f4b" opacity=".92"/>
+    <rect x="0" y="22" width="200" height="40" fill="#0b1224" opacity=".88"/>
+    <rect width="200" height="120" fill="url(#cr8gl)"/>
+  </g>
+  <path d="M100 8 L182 30 C184 92 172 160 100 212 C28 160 16 92 18 30 Z" fill="none" stroke="#0b1224" stroke-opacity=".55" stroke-width="3"/>
+  <text x="100" y="51" text-anchor="middle" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="800" font-size="26" letter-spacing="3" fill="#f5d36b">1980</text>
+  <circle cx="100" cy="128" r="38" fill="#0b1224" opacity=".82" stroke="url(#cr8rim)" stroke-width="4"/>
+  <text x="100" y="140" text-anchor="middle" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="800" font-size="32" fill="#fff">HOG</text>
+  <path d="M100 186 l4 9 10 1 -8 6 3 10 -9 -6 -9 6 3 -10 -8 -6 10 -1z" fill="#f5d36b"/>
+</svg>

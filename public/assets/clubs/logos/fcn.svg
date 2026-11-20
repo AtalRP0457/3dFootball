@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c2835221152r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c2835221152g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c2835221152c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c2835221152r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c2835221152c)">
+<rect width="200" height="230" fill="#fcd405"/>
+
+
+<rect width="200" height="230" fill="url(#c2835221152g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#715f02" opacity=".9" stroke="url(#c2835221152r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><g style="color:#ffffff" fill="#ffffff"><path d="M14 62 L86 62 L74 82 L26 82 Z" fill="currentColor"/><path d="M48 14 L48 60 L20 58 Z" fill="currentColor"/><path d="M54 20 L54 60 L80 58 Z" fill="currentColor" opacity=".8"/><path d="M8 88 Q20 82 32 88 T56 88 T80 88 T96 88" stroke="currentColor" stroke-width="4" fill="none"/></g></g>
+<path id="c2835221152arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="17" letter-spacing="2" fill="#101828"><textPath href="#c2835221152arc" startOffset="50%" text-anchor="middle">NANTES</textPath></text>
+
+</g>
+</svg>

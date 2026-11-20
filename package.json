@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Legends: a 3D arcade soccer game with decade teams, built with three.js",
+  "description": "Futbol Super League: a 3D arcade football game with clubs, national teams and legends, built with three.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "prebuild": "node scripts/generate-assets.mjs",
     "preview": "vite preview",
-    "test": "node tests/sim.test.mjs"
+    "assets": "node scripts/generate-assets.mjs",
+    "db:validate": "node scripts/validate-db.mjs",
+    "test": "node tests/sim.test.mjs && node tests/db.test.mjs && node scripts/validate-db.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"

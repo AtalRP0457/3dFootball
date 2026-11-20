@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c3197056006r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c3197056006g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c3197056006c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c3197056006r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c3197056006c)">
+<rect width="200" height="230" fill="#f7b5cd"/>
+
+
+<rect width="200" height="230" fill="url(#c3197056006g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#6f515c" opacity=".9" stroke="url(#c3197056006r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><g style="color:#ffffff" fill="#ffffff"><path d="M56 92 L54 60 C40 58 30 46 32 34 C34 26 42 22 50 24 C56 14 66 10 74 12 L62 22 C70 32 70 46 62 56 L64 92" fill="currentColor"/><path d="M74 12 L92 8 L76 16 Z" fill="currentColor"/></g></g>
+<path id="c3197056006arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="17" letter-spacing="2" fill="#101828"><textPath href="#c3197056006arc" startOffset="50%" text-anchor="middle">INTER MIAMI</textPath></text>
+
+</g>
+</svg>

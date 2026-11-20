@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="n2087389222r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="n2087389222g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+<clipPath id="n2087389222c"><path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z"/></clipPath>
+</defs>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="url(#n2087389222r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#n2087389222c)"><rect width="66.66666666666667" height="230" fill="#f77f00"/><rect x="66.66666666666667" width="66.66666666666667" height="230" fill="#ffffff"/><rect x="133.33333333333334" width="66.66666666666667" height="230" fill="#009e60"/><rect width="200" height="230" fill="url(#n2087389222g)"/>
+<rect x="0" y="172" width="200" height="34" fill="#0b1224" opacity=".82"/></g>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="98" r="44" fill="#0b1224" opacity=".72" stroke="url(#n2087389222r)" stroke-width="4"/>
+<g transform="translate(66 64) scale(.68)"><g style="color:#ffffff" fill="#ffffff"><path d="M24 40 C24 24 38 16 52 16 C70 16 82 28 82 46 L82 72 L72 72 L72 60 L60 60 L60 72 L50 72 L50 60 C46 66 40 70 36 70 C34 80 30 88 22 90 C26 80 26 70 24 60 C14 58 8 48 12 38 Z" fill="currentColor"/><circle cx="40" cy="36" r="3" fill="#000"/></g></g>
+<text x="100" y="195" text-anchor="middle" font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="13" letter-spacing="1.5" fill="#f5d36b">CÔTE D&#39;IVOIRE</text>
+
+</svg>

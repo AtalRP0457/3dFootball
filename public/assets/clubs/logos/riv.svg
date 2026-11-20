@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c856850406r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c856850406g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c856850406c"><path d="M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z" fill="url(#c856850406r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c856850406c)">
+<rect width="200" height="230" fill="#ffffff"/>
+<path d="M-10 40 L40 -10 L220 170 L170 220 Z" fill="#eb192e"/>
+
+<rect width="200" height="230" fill="url(#c856850406g)"/>
+</g>
+<path d="M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="56" fill="#737373" opacity=".9" stroke="url(#c856850406r)" stroke-width="5"/>
+<g transform="translate(56 68) scale(0.88)"><text x="50" y="60.8" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="30" letter-spacing="1" fill="#101828" stroke="#060a10" stroke-width="1.2">CARP</text></g>
+
+
+</g>
+</svg>

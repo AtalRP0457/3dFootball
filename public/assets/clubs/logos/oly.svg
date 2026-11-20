@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c3123418909r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c3123418909g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c3123418909c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c3123418909r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c3123418909c)">
+<rect width="200" height="230" fill="#ed1c24"/>
+
+
+<rect width="200" height="230" fill="url(#c3123418909g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#6b0d10" opacity=".9" stroke="url(#c3123418909r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><g style="color:#c9a227" fill="#c9a227"><path d="M50 90 C20 80 10 50 20 20 M50 90 C80 80 90 50 80 20" stroke="currentColor" stroke-width="4" fill="none"/><ellipse cx="24" cy="30" rx="9" ry="4" transform="rotate(-40 24 30)" fill="currentColor"/><ellipse cx="76" cy="30" rx="9" ry="4" transform="rotate(40 76 30)" fill="currentColor"/><ellipse cx="23" cy="43" rx="9" ry="4" transform="rotate(-40 23 43)" fill="currentColor"/><ellipse cx="77" cy="43" rx="9" ry="4" transform="rotate(40 77 43)" fill="currentColor"/><ellipse cx="22" cy="56" rx="9" ry="4" transform="rotate(-40 22 56)" fill="currentColor"/><ellipse cx="78" cy="56" rx="9" ry="4" transform="rotate(40 78 56)" fill="currentColor"/><ellipse cx="21" cy="69" rx="9" ry="4" transform="rotate(-40 21 69)" fill="currentColor"/><ellipse cx="79" cy="69" rx="9" ry="4" transform="rotate(40 79 69)" fill="currentColor"/><ellipse cx="20" cy="82" rx="9" ry="4" transform="rotate(-40 20 82)" fill="currentColor"/><ellipse cx="80" cy="82" rx="9" ry="4" transform="rotate(40 80 82)" fill="currentColor"/><path d="M50 30 L56 46 L50 62 L44 46 Z" fill="currentColor"/></g></g>
+<path id="c3123418909arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="17" letter-spacing="2" fill="#ffffff"><textPath href="#c3123418909arc" startOffset="50%" text-anchor="middle">OLYMPIACOS</textPath></text>
+
+</g>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c2485516156r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c2485516156g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c2485516156c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c2485516156r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c2485516156c)">
+<rect width="200" height="230" fill="#ffffff"/>
+
+
+<rect width="200" height="230" fill="url(#c2485516156g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#737373" opacity=".9" stroke="url(#c2485516156r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><g style="color:#ee3524" fill="#ee3524"><path d="M50 34 C54 28 60 28 62 34 C74 22 90 24 96 36 C86 38 82 48 84 58 C76 52 68 54 64 62 C58 56 54 58 50 66 C46 58 42 56 36 62 C32 54 24 52 16 58 C18 48 14 38 4 36 C10 24 26 22 38 34 C40 28 46 28 50 34 Z" fill="currentColor"/></g></g>
+<path id="c2485516156arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="17" letter-spacing="2" fill="#101828"><textPath href="#c2485516156arc" startOffset="50%" text-anchor="middle">VALENCIA</textPath></text>
+
+</g>
+</svg>

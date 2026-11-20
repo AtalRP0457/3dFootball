@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="n2211115342r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="n2211115342g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+<clipPath id="n2211115342c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#n2211115342r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#n2211115342c)"><rect width="200" height="230" fill="#8a1538"/><path d="M0 0 H60 L80 13 L60 26 L80 38 L60 51 L80 64 L60 77 L80 90 L60 102 L80 115 L60 128 L80 141 L60 154 L80 166 L60 179 L80 192 L60 205 L80 218 L60 230 H0 Z" fill="#ffffff"/><rect width="200" height="230" fill="url(#n2211115342g)"/>
+<rect x="0" y="172" width="200" height="34" fill="#0b1224" opacity=".82"/></g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="98" r="44" fill="#0b1224" opacity=".72" stroke="url(#n2211115342r)" stroke-width="4"/>
+<g transform="translate(66 64) scale(.68)"><g style="color:#ffffff" fill="#ffffff"><path d="M50 20 C58 20 64 26 64 34 L74 38 L64 40 C66 50 62 60 56 64 L58 92 L50 84 L42 92 L44 64 C34 58 30 46 34 34 C36 26 42 20 50 20 Z" fill="currentColor"/><path d="M40 46 C24 40 12 46 6 58 C20 56 30 58 40 62 Z M60 46 C76 40 88 46 94 58 C80 56 70 58 60 62 Z" fill="currentColor"/></g></g>
+<text x="100" y="195" text-anchor="middle" font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="16" letter-spacing="1.5" fill="#f5d36b">QATARRIFIC</text>
+<g transform="translate(152 40) rotate(14)"><circle r="18" fill="#ffd400" stroke="#101828" stroke-width="3"/><text y="4" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="10" fill="#101828">LOL</text></g>
+</svg>

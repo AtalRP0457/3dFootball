@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="n3396521863r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="n3396521863g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+<clipPath id="n3396521863c"><path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z"/></clipPath>
+</defs>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="url(#n3396521863r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#n3396521863c)"><rect width="200" height="230" fill="#e30a17"/><circle cx="92" cy="110" r="40" fill="#ffffff"/><circle cx="104" cy="110" r="32" fill="#e30a17"/><rect width="200" height="230" fill="url(#n3396521863g)"/>
+<rect x="0" y="172" width="200" height="34" fill="#0b1224" opacity=".82"/></g>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="98" r="44" fill="#0b1224" opacity=".72" stroke="url(#n3396521863r)" stroke-width="4"/>
+<g transform="translate(66 64) scale(.68)"><g style="color:#ffffff" fill="#ffffff"><path d="M60 12 C36 14 20 32 20 52 C20 74 38 90 60 90 C46 82 38 68 38 52 C38 34 46 20 60 12 Z" fill="currentColor"/><path d="M70 40 L73 49 L82 49 L75 55 L78 64 L70 58 L62 64 L65 55 L58 49 L67 49 Z" fill="currentColor"/></g></g>
+<text x="100" y="195" text-anchor="middle" font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="16" letter-spacing="1.5" fill="#f5d36b">TÜRKIYE</text>
+
+</svg>

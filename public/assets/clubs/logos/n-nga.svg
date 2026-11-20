@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="n3275692318r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="n3275692318g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+<clipPath id="n3275692318c"><path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z"/></clipPath>
+</defs>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="url(#n3275692318r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#n3275692318c)"><rect width="66.66666666666667" height="230" fill="#008751"/><rect x="66.66666666666667" width="66.66666666666667" height="230" fill="#ffffff"/><rect x="133.33333333333334" width="66.66666666666667" height="230" fill="#008751"/><rect width="200" height="230" fill="url(#n3275692318g)"/>
+<rect x="0" y="172" width="200" height="34" fill="#0b1224" opacity=".82"/></g>
+<path d="M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="98" r="44" fill="#0b1224" opacity=".72" stroke="url(#n3275692318r)" stroke-width="4"/>
+<g transform="translate(66 64) scale(.68)"><g style="color:#ffffff" fill="#ffffff"><path d="M50 30 C56 22 64 22 66 28 L74 30 L66 34 C68 44 62 54 54 58 L60 86 L50 78 L40 86 L46 58 C38 54 32 44 34 34 Z" fill="currentColor"/><path d="M40 44 C26 30 12 30 4 36 C14 42 22 52 34 56 Z M60 44 C74 30 88 30 96 36 C86 42 78 52 66 56 Z" fill="currentColor"/></g></g>
+<text x="100" y="195" text-anchor="middle" font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="16" letter-spacing="1.5" fill="#f5d36b">NIGERIA</text>
+
+</svg>

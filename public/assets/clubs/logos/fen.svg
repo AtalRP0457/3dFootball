@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+<defs>
+<linearGradient id="c3372399150r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d0"/><stop offset=".4" stop-color="#d9ab3a"/><stop offset=".75" stop-color="#8f6312"/><stop offset="1" stop-color="#f0cf6a"/></linearGradient>
+<linearGradient id="c3372399150g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+<clipPath id="c3372399150c"><path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z"/></clipPath>
+</defs>
+<g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="url(#c3372399150r)" transform="translate(100 110) scale(1.07) translate(-100 -110)"/>
+<g clip-path="url(#c3372399150c)">
+<rect width="200" height="230" fill="#163962"/>
+<rect x="-8" y="0" width="22" height="230" fill="#ffed00"/><rect x="36" y="0" width="22" height="230" fill="#ffed00"/><rect x="80" y="0" width="22" height="230" fill="#ffed00"/><rect x="124" y="0" width="22" height="230" fill="#ffed00"/><rect x="168" y="0" width="22" height="230" fill="#ffed00"/>
+
+<rect width="200" height="230" fill="url(#c3372399150g)"/>
+</g>
+<path d="M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z" fill="none" stroke="#0b1224" stroke-opacity=".6" stroke-width="3"/>
+<circle cx="100" cy="112" r="60" fill="#0a1a2c" opacity=".9" stroke="url(#c3372399150r)" stroke-width="5"/>
+<g transform="translate(54 66) scale(0.92)"><g style="color:#ffffff" fill="#ffffff"><path d="M50 8 C62 14 66 24 62 32 C74 32 78 44 70 52 C80 58 76 72 64 72 L56 72 L56 92 L44 92 L44 72 L36 72 C24 72 20 58 30 52 C22 44 26 32 38 32 C34 24 38 14 50 8 Z" fill="currentColor"/></g></g>
+<path id="c3372399150arc" d="M38 112 A62 62 0 0 1 162 112" fill="none"/><text font-family="Arial Narrow, Arial, sans-serif" font-weight="800" font-size="17" letter-spacing="2" fill="#ffffff"><textPath href="#c3372399150arc" startOffset="50%" text-anchor="middle">FENERBAHÇE</textPath></text>
+
+</g>
+</svg>

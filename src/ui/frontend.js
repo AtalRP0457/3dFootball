@@ -1,23 +1,25 @@
-// FUTBOL SUPER LEAGUE front end: title screen, hub, team select, match
-// preview, team management and the pre-match VS intro. It only talks to the
-// game through the `api` object passed in from main.js, so the match engine
-// is untouched.
+// FUTBOL SUPER LEAGUE front end: title, hub (home / play / clubs / players /
+// settings), team select, match preview, team management and the VS intro.
+//
+// It is a single-page app: screens swap in place, every control is a
+// type="button" (never a form submit or link), navigation uses the History
+// API (#/hub, #/select, ...) so browser Back/Forward move between screens,
+// and selections live in persisted settings so nothing is lost on a reload.
 import './frontend.css';
-import { crestSVG, playerSVG, trophySVG, ballSVG, esc, shade } from './art.js';
+import { playerSVG, trophySVG, ballSVG, esc, shade } from './art.js';
+import { DB, IDX, ATTRIBUTE_KEYS, POSITIONS, eraLabel, ERAS } from '../db/index.js';
+import { playerCard, kitUrl, kitTypes, kitFor, crestUrl, teamDisplayName } from '../db/teams.js';
+import { kitSVG } from '../db/crests.js';
+import { validateDatabase } from '../db/validate.js';
+import { ls, exportUserData, importUserData } from '../state/store.js';
 
-// ---------- small helpers ----------
-const LS = {
-  get(key, fallback) {
-    try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v ?? fallback; } catch { return fallback; }
-  },
-  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage blocked */ } },
-};
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
 // ---------- ratings and positions (display only) ----------
 export function playerRating(pd, role) {
+  if (pd.overall) return pd.overall;
   const s = pd.stats;
   if (role === 'GK') return Math.round(s.gk * 0.85 + s.spd * 0.05 + s.pas * 0.1);
   if (role === 'DEF') return Math.round(s.tac * 0.55 + s.spd * 0.2 + s.pas * 0.15 + s.dri * 0.1);
@@ -38,33 +40,45 @@ function slotLabel(slot) {
   return Math.abs(z) < 0.05 ? 'ST' : `${side}S`;
 }
 const ROLE_CLASS = { GK: 'gk', DEF: 'def', MID: 'mid', FWD: 'fwd' };
+const GROUP_OF = (pos) => POSITIONS[pos]?.group || 'MID';
 
-const MODES = {
-  '1p': { title: 'Kick Off', sub: 'Quick match against the computer', comp: 'Exhibition Match', sides: ['Home · P1', 'Away · CPU'] },
-  '2p': { title: 'Head to Head', sub: 'Two players on one keyboard or two pads', comp: 'Exhibition Match', sides: ['Player 1', 'Player 2'] },
-  cpu: { title: 'Watch Live', sub: 'Sit back while the AI plays both sides', comp: 'Exhibition Match', sides: ['Home · CPU', 'Away · CPU'] },
-  cup: { title: 'Legends Cup', sub: '8-team knockout · extra time and penalties', comp: 'Legends Cup', sides: ['Your club · P1', 'Draw opponent'], single: true, trophy: 'cup' },
-  career: { title: 'Super League', sub: '10 clubs · 18 matchdays · one champion', comp: 'Super League', sides: ['Your club · P1', 'Matchday opponent'], single: true, trophy: 'league' },
-  indoor: { title: 'Indoor Fives', sub: 'Five-a-side, rebound boards, no offside', comp: 'Indoor Fives', sides: ['Home · P1', 'Away · CPU'] },
-  penalties: { title: 'Penalty Shootout', sub: 'Pick your spot, read the keeper', comp: 'Penalty Shootout', sides: ['Shooters · P1', 'Keeper · CPU'] },
-  practice: { title: 'Training Ground', sub: 'Your XI against their goalkeeper, no clock', comp: 'Training Session', sides: ['Your squad · P1', 'Goalkeeper only'], single: true },
-  tutorial: { title: 'Skill School', sub: 'Guided lesson: move, pass, shoot, score', comp: 'Skill School', sides: ['Your squad · P1', 'Goalkeeper only'], single: true },
-};
+const POOL_NAMES = { clubs: 'Clubs', nations: 'National Teams', decades: 'Decade Legends' };
+const CUP_NAMES = { clubs: 'Super Cup', nations: 'Internationals Cup', decades: 'Legends Cup' };
+const LEAGUE_NAMES = { clubs: 'Super League', nations: 'Nations League', decades: 'Legends League' };
+function modeInfo(mode, pool) {
+  const base = {
+    '1p': { title: 'Kick Off', sub: 'Quick match against the computer', comp: 'Exhibition Match', sides: ['Home · P1', 'Away · CPU'] },
+    '2p': { title: 'Head to Head', sub: 'Two players on one keyboard or two pads', comp: 'Exhibition Match', sides: ['Player 1', 'Player 2'] },
+    cpu: { title: 'Watch Live', sub: 'Sit back while the AI plays both sides', comp: 'Exhibition Match', sides: ['Home · CPU', 'Away · CPU'] },
+    cup: { title: CUP_NAMES[pool], sub: '8-team knockout · extra time and penalties', comp: CUP_NAMES[pool], sides: ['Your team · P1', 'Opening opponent'], trophy: 'cup' },
+    career: { title: LEAGUE_NAMES[pool], sub: '10 teams · 18 matchdays · one champion', comp: LEAGUE_NAMES[pool], sides: ['Your club · P1', 'Matchday opponent'], single: true, trophy: 'league' },
+    indoor: { title: 'Indoor Fives', sub: 'Five-a-side, rebound boards, no offside', comp: 'Indoor Fives', sides: ['Home · P1', 'Away · CPU'] },
+    penalties: { title: 'Penalty Shootout', sub: 'Pick your spot, read the keeper', comp: 'Penalty Shootout', sides: ['Shooters · P1', 'Keeper · CPU'] },
+    practice: { title: 'Training Ground', sub: 'Your XI against their goalkeeper, no clock', comp: 'Training Session', sides: ['Your squad · P1', 'Goalkeeper only'], single: true },
+    tutorial: { title: 'Skill School', sub: 'Guided lesson: move, pass, shoot, score', comp: 'Skill School', sides: ['Your squad · P1', 'Goalkeeper only'], single: true },
+  };
+  return base[mode] || base['1p'];
+}
+// Hub cards: [mode, fixed pool or null]
+const PLAY_CARDS = [['1p', null], ['2p', null], ['cpu', null], ['career', 'clubs'], ['cup', 'nations'], ['cup', 'clubs'], ['indoor', null], ['penalties', null], ['practice', null], ['tutorial', null]];
 
-const STADIUMS = {
+const DECADE_STADIUMS = {
   1910: 'Victoria Grounds', 1920: 'Estadio Centenario Park', 1930: 'Hohe Warte Arena', 1940: 'Maracanã Velha',
-  1950: 'Népstadion Bowl', 1960: 'Estádio do Sol', 1970: 'De Meer Arena', 1980: 'Azteca Heights',
-  1990: 'San Siro Lights', 2000: 'Galaxy Bernabéu Park',
+  1950: 'Népstadion Bowl', 1960: 'Estádio do Sol', 1970: 'De Meer Arena', 1980: 'Azteca Heights', 1990: 'San Siro Lights', 2000: 'Galaxy Bernabéu Park',
 };
-const stadiumFor = (team) => STADIUMS[team.id] || `${team.nickname} Arena`;
+const stadiumFor = (team) => team.stadium || DECADE_STADIUMS[team.id] || 'Legends Arena';
 
 const OPTIONS = {
+  roster: { label: 'Roster profile', values: ERAS.map((e) => [e.id, e.label]) },
+  clubIdentity: { label: 'Club identity', values: [['authentic', 'Authentic names'], ['parody', 'Parody universe'], ['mixed', 'Mixed universe']] },
+  playerIdentity: { label: 'Player names', values: [['real', 'Real players'], ['parody', 'Parody players']] },
   difficulty: { label: 'Difficulty', values: [['beginner', 'Amateur'], ['easy', 'Semi-Pro'], ['normal', 'Professional'], ['hard', 'World Class']] },
   duration: { label: 'Match length', values: [[120, '2 minutes'], [240, '4 minutes'], [360, '6 minutes']] },
   assist: { label: 'Control assist', values: [['off', 'Manual'], ['assisted', 'Assisted'], ['full', 'Full assist']] },
   era: { label: 'Era colour grading', values: [['on', 'On'], ['off', 'Off']] },
 };
 const optionText = (key, v) => (OPTIONS[key].values.find(([x]) => String(x) === String(v)) || OPTIONS[key].values[0])[1];
+const DB_OPTIONS = new Set(['roster', 'clubIdentity', 'playerIdentity']);
 
 // ---------- menu sound effects (tiny synth, no audio files) ----------
 class UiSound {
@@ -102,19 +116,31 @@ class UiSound {
   impact() { this.tone(90, 0.5, 'sine', 0.18, 0.5); this.whoosh(); }
 }
 
+const SCREENS = ['title', 'hub', 'select', 'preview', 'manage'];
+const HUB_TABS = [['home', 'Home'], ['play', 'Play'], ['clubs', 'Club Database'], ['players', 'Player Database'], ['settings', 'Settings']];
+
 // =====================================================================
 export function createFrontend(api) {
-  const { settings, teams } = api;
-  const uiPrefs = { sounds: true, ...LS.get('fsl-ui', {}) };
+  const { settings } = api;
+  const uiPrefs = { sounds: true, hubTab: 'home', browse: {}, ...ls.get('fsl-ui', {}) };
+  const browse = { pool: settings.pool, league: 'all', q: '', sort: 'rating', fav: false, ...uiPrefs.browse };
+  const saveUi = () => { uiPrefs.browse = { ...browse, q: '' }; ls.set('fsl-ui', uiPrefs); };
   const sfx = new UiSound(uiPrefs);
-  let squadPrefs = LS.get('fsl-squads', {});
+  let squadPrefs = ls.get('fsl-squads', {});
+  let favorites = new Set(ls.get('fsl-favorites', []));
   let screen = null;
-  let hubTab = 'home';
+  let hubTab = HUB_TABS.some(([k]) => k === uiPrefs.hubTab) ? uiPrefs.hubTab : 'home';
+  let selSide = 0;
   let manageSide = 0;
   let manageSel = null;
   let manageCursor = 0;
+  let manageOnlyId = null;
+  let manageReturn = 'preview';
   let previewTab = 'preview';
-  let squadsTeam = settings.home;
+  let clubsTeam = settings.home;
+  let dbQuery = '';
+  let dbPlayer = null;
+  let dbMember = null;
   let busy = false;
   let introTimer = null;
   let introDone = null;
@@ -123,26 +149,19 @@ export function createFrontend(api) {
   const root = h(`<div id="frontend" class="fe">
     <div class="fe-bg"><div class="fe-rays"></div><div class="fe-vignette"></div><div class="fe-grain"></div></div>
     <div class="fe-stage">
-      <section class="fe-screen" data-screen="title"></section>
-      <section class="fe-screen" data-screen="hub"></section>
-      <section class="fe-screen" data-screen="select"></section>
-      <section class="fe-screen" data-screen="preview"></section>
-      <section class="fe-screen" data-screen="manage"></section>
+      ${SCREENS.map((s) => `<section class="fe-screen" data-screen="${s}"></section>`).join('')}
       <div class="fe-modal hidden" id="feModal"><div class="fe-modal-card"></div></div>
     </div>
-    <section class="fe-intro hidden" id="feIntro"></section>
     <div class="fe-wipe"><i></i><i></i><i></i></div>
   </div>`);
   document.body.appendChild(root);
-  // The VS intro lives outside the menu so it can fade over the live match.
-  document.body.appendChild(root.querySelector('#feIntro'));
+  const intro = h('<section class="fe-intro hidden" id="feIntro"></section>');
+  document.body.appendChild(intro); // outside the menu so it can fade over the match
   const stage = root.querySelector('.fe-stage');
   const screenEl = (name) => root.querySelector(`[data-screen="${name}"]`);
   const modal = root.querySelector('#feModal');
-  const intro = document.getElementById('feIntro');
   const wipe = root.querySelector('.fe-wipe');
 
-  // Keep the 1600x900 stage fitted to the window (16:9 like a console UI).
   function fit() {
     const s = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
     stage.style.setProperty('--s', String(s));
@@ -150,21 +169,35 @@ export function createFrontend(api) {
   window.addEventListener('resize', fit);
   fit();
 
+  // Every button we render is type="button" so nothing can submit a form or
+  // navigate the page, even if the menu is later embedded in a <form>.
+  new MutationObserver((list) => {
+    for (const m of list) for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.tagName === 'BUTTON' && !n.hasAttribute('type')) n.type = 'button';
+      n.querySelectorAll?.('button:not([type])').forEach((b) => { b.type = 'button'; });
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
   // ---------- data helpers ----------
-  const teamIndex = (id) => Math.max(0, teams.findIndex((t) => t.id === id));
-  const crest = (team) => crestSVG(team, teamIndex(team.id));
-  const formationOf = (team) => (squadPrefs[team.id]?.formation) || '4-3-3';
-  const tacticOf = (team) => (squadPrefs[team.id]?.tactic) || 'balanced';
-  function orderOf(team) {
-    const n = team.players.length + (team.bench || []).length;
-    const o = squadPrefs[team.id]?.order;
+  const team = (id) => api.getTeam(id);
+  const crest = (t, cls = '') => `<img class="crest ${cls}" src="${esc(t.crest || crestUrl(t.id))}" alt="${esc(t.display || t.name)} crest" width="200" height="220" decoding="async">`;
+  const crestLazy = (t) => `<img class="crest" src="${esc(t.crest || crestUrl(t.id))}" alt="" width="200" height="220" loading="lazy" decoding="async">`;
+  const display = (t) => t.display || t.nickname || t.name;
+  const sub = (t) => t.sub || `${t.name}s legends`;
+  const squadKey = (t) => (t.kind === 'decade' ? `decades:${t.id}` : `${t.era || settings.roster}:${t.id}`);
+  const formationOf = (t) => squadPrefs[squadKey(t)]?.formation || '4-3-3';
+  const tacticOf = (t) => squadPrefs[squadKey(t)]?.tactic || 'balanced';
+  function orderOf(t) {
+    const n = t.players.length + (t.bench || []).length;
+    const o = squadPrefs[squadKey(t)]?.order;
     if (Array.isArray(o) && o.length === n && new Set(o).size === n && o.every((i) => i >= 0 && i < n)) return o;
     return [...Array(n).keys()];
   }
-  function squadOf(team) {
-    const all = [...team.players, ...(team.bench || [])];
-    const order = orderOf(team);
-    const slots = api.formations[formationOf(team)] || api.formations['4-3-3'];
+  function squadOf(t) {
+    const all = [...t.players, ...(t.bench || [])];
+    const order = orderOf(t);
+    const slots = api.formations[formationOf(t)] || api.formations['4-3-3'];
     return order.map((i, k) => {
       const pd = all[i];
       const slot = k < 11 ? slots[k] : null;
@@ -172,16 +205,15 @@ export function createFrontend(api) {
       return { pd, src: i, k, slot, role, pos: slot ? slotLabel(slot) : 'SUB', rating: playerRating(pd, role) };
     });
   }
-  function teamRatings(team) {
-    const xi = squadOf(team).slice(0, 11);
+  function teamRatings(t) {
+    const xi = squadOf(t).slice(0, 11);
     const by = (r) => xi.filter((p) => p.role === r).map((p) => p.rating);
-    const att = Math.round(avg(by('FWD')));
-    const mid = Math.round(avg(by('MID')));
+    const att = Math.round(avg(by('FWD'))), mid = Math.round(avg(by('MID')));
     const def = Math.round(avg([...by('DEF'), ...by('GK')]));
     const ovr = Math.round(avg(xi.map((p) => p.rating)));
     return { att, mid, def, ovr, stars: clamp(Math.round(((ovr - 62) / 5) * 2) / 2, 0.5, 5) };
   }
-  const starPlayer = (team) => squadOf(team).slice(0, 11).filter((p) => p.role !== 'GK').sort((a, b) => b.rating - a.rating)[0];
+  const starPlayer = (t) => squadOf(t).slice(0, 11).filter((p) => p.role !== 'GK').sort((a, b) => b.rating - a.rating)[0];
   function starsHTML(n) {
     let out = '';
     for (let i = 1; i <= 5; i++) out += `<i class="${n >= i ? 'full' : n >= i - 0.5 ? 'half' : ''}">★</i>`;
@@ -189,25 +221,100 @@ export function createFrontend(api) {
   }
   const ratingBar = (label, v) => `<div class="fe-rbar"><b>${v || '–'}</b><span><i style="width:${clamp(((v - 50) / 49) * 100, 4, 100)}%"></i></span><em>${label}</em></div>`;
   const keyCap = (k) => `<kbd class="fe-key">${k}</kbd>`;
+  const kitImg = (teamId, type, cls = '') => (kitTypes(teamId).length > 1
+    ? `<img class="kit-img ${cls}" src="${esc(kitUrl(teamId, type))}" alt="${type} kit" width="200" height="260" loading="lazy">`
+    : `<span class="kit-img ${cls}">${kitSVG({ design: 'plain', ...kitFor(teamId, type) })}</span>`);
 
-  function saveSquad(team, patch) {
-    squadPrefs = { ...squadPrefs, [team.id]: { formation: formationOf(team), tactic: tacticOf(team), order: orderOf(team), ...patch } };
-    LS.set('fsl-squads', squadPrefs);
+  function saveSquad(t, patch) {
+    squadPrefs = { ...squadPrefs, [squadKey(t)]: { formation: formationOf(t), tactic: tacticOf(t), order: orderOf(t), ...patch } };
+    ls.set('fsl-squads', squadPrefs);
   }
   function getH2H(a, b) {
-    const rec = LS.get('fsl-h2h', {})[[a, b].sort().join('|')] || { wins: {}, draws: 0 };
+    const rec = ls.get('fsl-h2h', {})[[a, b].sort().join('|')] || { wins: {}, draws: 0 };
     return { a: rec.wins[a] || 0, b: rec.wins[b] || 0, draws: rec.draws || 0 };
   }
-  const profile = () => ({ played: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, ...LS.get('fsl-profile', {}) });
+  const profile = () => ({ played: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, ...ls.get('fsl-profile', {}) });
+  const toggleFav = (id) => { if (favorites.has(id)) favorites.delete(id); else favorites.add(id); ls.set('fsl-favorites', [...favorites]); };
 
-  // ---------- transitions ----------
+  // ---------- team browsing (shared by team select and the club database) ----------
+  function browseIds() {
+    const pool = browse.pool;
+    let ids = api.poolTeamIds(pool);
+    const q = browse.q.trim().toLowerCase();
+    const rows = ids.map((id) => {
+      const rec = IDX.clubs.get(id) || IDX.nations.get(id);
+      const t = rec ? null : team(id);
+      return {
+        id, rec, name: rec ? teamDisplayName(id) : display(t), real: rec ? rec.name : display(t),
+        league: rec ? rec.league : 'decades', leagueName: rec ? rec.league_name : 'Decade Legends',
+        country: rec ? rec.country : '', playable: api.isPlayable(id), rating: rec ? (api.teamRating(id) ?? 0) : teamRatings(t).ovr,
+      };
+    });
+    let out = rows.filter((r) => (browse.league === 'all' || r.league === browse.league)
+      && (!browse.fav || favorites.has(r.id))
+      && (!q || r.name.toLowerCase().includes(q) || r.real.toLowerCase().includes(q) || r.country.toLowerCase() === q));
+    out.sort((a, b) => (b.playable - a.playable) || (browse.sort === 'az' ? a.name.localeCompare(b.name) : b.rating - a.rating || a.name.localeCompare(b.name)));
+    return out;
+  }
+  function leagueOptions() {
+    if (browse.pool === 'decades') return [];
+    const rows = browse.pool === 'nations' ? DB.national_teams : DB.clubs;
+    const seen = new Map();
+    for (const r of rows) seen.set(r.league, r.league_name);
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }
+  function browseToolbar(fixedPool) {
+    return `<div class="br-tools">
+      <div class="br-pools">${['clubs', 'nations', 'decades'].map((p) => `<button class="${browse.pool === p ? 'on' : ''}" data-act="pool" data-v="${p}" ${fixedPool && fixedPool !== p ? 'disabled' : ''}>${POOL_NAMES[p]}</button>`).join('')}</div>
+      <div class="br-row">
+        <input class="br-search" type="search" placeholder="Search ${browse.pool === 'nations' ? 'nations' : 'clubs'} or country code…" value="${esc(browse.q)}" data-input="search" aria-label="Search teams">
+      </div>
+      <div class="br-row">
+        <select data-change="league" aria-label="Filter by league">${browse.pool === 'decades' ? '<option value="all">All decades</option>' : `<option value="all">All ${browse.pool === 'nations' ? 'confederations' : 'leagues'}</option>${leagueOptions().map(([id, name]) => `<option value="${esc(id)}" ${browse.league === id ? 'selected' : ''}>${esc(name)}</option>`).join('')}`}</select>
+        <button class="br-chip ${browse.sort === 'rating' ? 'on' : ''}" data-act="sort" data-v="rating">Rating</button>
+        <button class="br-chip ${browse.sort === 'az' ? 'on' : ''}" data-act="sort" data-v="az">A–Z</button>
+        <button class="br-chip ${browse.fav ? 'on' : ''}" data-act="favOnly" title="Show favourites only">★</button>
+      </div>
+    </div>`;
+  }
+  function browseListHTML(selectedId, act) {
+    const ids = browseIds();
+    if (!ids.length) return '<div class="br-empty">No teams match these filters.</div>';
+    return ids.map((r) => {
+      const t = r.playable || !r.rec ? null : null;
+      void t;
+      return `<div class="br-item ${r.id === selectedId ? 'on' : ''} ${r.playable ? '' : 'na'}">
+        <button class="br-main" data-nav data-act="${act}" data-v="${r.id}" ${r.playable ? '' : 'aria-disabled="true"'}>
+          <span class="br-crest">${crestLazy({ id: r.id, crest: crestUrl(r.id) })}</span>
+          <span class="br-name"><b>${esc(r.name)}</b><small>${r.playable ? esc(r.leagueName) : `No ${esc(eraLabel(settings.roster))} squad`}</small></span>
+          <span class="br-ovr">${r.playable ? r.rating : '—'}</span>
+        </button>
+        <button class="br-fav ${favorites.has(r.id) ? 'on' : ''}" data-act="fav" data-v="${r.id}" aria-label="Favourite">★</button>
+      </div>`;
+    }).join('');
+  }
+  function refreshBrowseList(scope, selectedId, act) {
+    const list = scope.querySelector('.br-list');
+    if (list) list.innerHTML = browseListHTML(selectedId, act);
+  }
+
+  // ---------- transitions + routing ----------
   function sweep(swap, { sound = true } = {}) {
     if (busy) return;
     busy = true;
     if (sound) sfx.whoosh();
     wipe.classList.remove('run'); void wipe.offsetWidth; wipe.classList.add('run');
-    setTimeout(() => { swap(); }, 330);
+    setTimeout(swap, 330);
     setTimeout(() => { wipe.classList.remove('run'); busy = false; }, 760);
+  }
+  const routeFor = (name) => (name === 'hub' ? `#/hub/${hubTab}` : `#/${name}`);
+  function pushRoute(name, replace = false) {
+    try {
+      const url = routeFor(name);
+      if (location.hash === url) return;
+      if (replace) history.replaceState({ screen: name, tab: hubTab }, '', url);
+      else history.pushState({ screen: name, tab: hubTab }, '', url);
+    } catch { /* sandboxed */ }
   }
   function activate(name) {
     screen = name;
@@ -217,22 +324,43 @@ export function createFrontend(api) {
     el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter');
     focusFirst();
   }
-  function go(name, opts) {
-    if (screen === null || opts?.instant) { activate(name); return; }
+  function go(name, opts = {}) {
+    if (!opts.fromHistory) pushRoute(name, opts.replace);
+    if (screen === null || opts.instant) { activate(name); return; }
     sweep(() => activate(name), opts);
+  }
+  window.addEventListener('popstate', () => {
+    if (!root.classList.contains('show')) return; // match running: main.js handles it
+    const r = parseRoute();
+    if (r.tab) { hubTab = r.tab; uiPrefs.hubTab = r.tab; saveUi(); }
+    if (!modal.classList.contains('hidden')) modal.classList.add('hidden');
+    go(r.screen, { fromHistory: true });
+  });
+  function parseRoute() {
+    const m = /^#\/(\w+)(?:\/(\w+))?/.exec(location.hash || '');
+    const name = m && SCREENS.includes(m[1]) ? m[1] : null;
+    return { screen: name || 'title', tab: name === 'hub' && HUB_TABS.some(([k]) => k === m[2]) ? m[2] : null };
   }
   function focusFirst() {
     const el = screenEl(screen)?.querySelector('[data-autofocus]') || screenEl(screen)?.querySelector('[data-nav]');
     el?.focus({ preventScroll: true });
   }
 
-  // ---------- screen renderers ----------
+  // ---------- rendering with an error boundary ----------
   function render() {
-    if (screen === 'title') renderTitle();
-    if (screen === 'hub') renderHub();
-    if (screen === 'select') renderSelect();
-    if (screen === 'preview') renderPreview();
-    if (screen === 'manage') renderManage();
+    try {
+      if (screen === 'title') renderTitle();
+      if (screen === 'hub') renderHub();
+      if (screen === 'select') renderSelect();
+      if (screen === 'preview') renderPreview();
+      if (screen === 'manage') renderManage();
+    } catch (err) {
+      console.error('[front end]', err);
+      screenEl(screen).innerHTML = `<div class="fe-error">
+        <h2>Something went wrong on this screen</h2><p>${esc(err.message || String(err))}</p>
+        <p>Your settings and saved progress are safe.</p>
+        <button class="fe-btn primary" data-act="recover">Back to the hub</button></div>`;
+    }
   }
 
   function renderTitle() {
@@ -245,14 +373,14 @@ export function createFrontend(api) {
         <p class="title-tag a-in" style="--i:4">The beautiful game. The ultimate competition.</p>
         <button class="title-press a-in" style="--i:6" data-nav data-autofocus data-act="start">Press any key</button>
       </div>
-      <div class="title-foot">v0.2 · Legends edition · ten eras of football</div>`;
+      <div class="title-foot">v0.3 · ${DB.clubs.length} clubs · ${DB.national_teams.length} national teams · ${DB.players.length} players</div>`;
   }
 
   // ----- hub -----
-  const HUB_TABS = [['home', 'Home'], ['play', 'Play'], ['squads', 'Squads'], ['settings', 'Settings']];
   function renderHub() {
     const pr = profile();
     const progress = api.getProgress();
+    const me = team(settings.home);
     screenEl('hub').innerHTML = `
       <header class="hub-top a-in" style="--i:0">
         <div class="hub-brand"><span class="mini-ball">${ballSVG()}</span><b>FUTBOL</b><em>SUPER LEAGUE</em></div>
@@ -260,133 +388,257 @@ export function createFrontend(api) {
           ${HUB_TABS.map(([k, label]) => `<button class="hub-tab ${hubTab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${label}</button>`).join('')}
           ${keyCap('E')}</nav>
         <div class="hub-profile">
-          <div class="avatar">${crest(api.getTeam(settings.home))}</div>
-          <div><b>Manager</b><span>${pr.played} played · ${pr.w}W ${pr.d}D ${pr.l}L</span></div>
+          <div class="avatar">${crest(me)}</div>
+          <div><b>Manager</b><span>${pr.played} played · ${pr.w}W ${pr.d}D ${pr.l}L</span><small>${esc(eraLabel(settings.roster))}</small></div>
         </div>
       </header>
-      <div class="hub-body">${hubTab === 'home' ? hubHome(progress) : hubTab === 'play' ? hubPlay() : hubTab === 'squads' ? hubSquads() : hubSettings()}</div>
+      <div class="hub-body">${{ home: hubHome, play: hubPlay, clubs: hubClubs, players: hubPlayers, settings: hubSettings }[hubTab](progress)}</div>
       <footer class="fe-foot">${keyCap('↑↓←→')} Navigate ${keyCap('Enter')} Select ${keyCap('Q/E')} Switch tab ${keyCap('Esc')} Title screen</footer>`;
   }
-  function tile(mode, cls, extra = '', i = 0) {
-    const m = MODES[mode];
-    return `<button class="tile ${cls} a-in" style="--i:${i}" data-nav data-act="mode" data-v="${mode}">
+  function tile(mode, pool, cls, extra = '', i = 0) {
+    const m = modeInfo(mode, pool || settings.pool);
+    return `<button class="tile ${cls} a-in" style="--i:${i}" data-nav data-act="mode" data-v="${mode}" data-pool="${pool || ''}">
       <span class="tile-shine"></span>${extra}
-      <span class="tile-text"><b>${m.title}</b><small>${m.sub}</small></span></button>`;
+      <span class="tile-text"><b>${esc(m.title)}</b><small>${esc(m.sub)}</small></span></button>`;
   }
   function hubHome(progress) {
-    const home = api.getTeam(settings.home);
-    const star = starPlayer(home);
-    const r = teamRatings(home);
+    const home = team(settings.home);
+    const playable = api.isPlayable(home.id);
+    const star = playable ? starPlayer(home) : null;
+    const r = playable ? teamRatings(home) : { stars: 0 };
     return `<div class="hub-grid">
-      ${tile('1p', 'tile-kick', `<span class="tile-player">${playerSVG(star.pd, home.kit)}</span>
-        <span class="tile-team">${crest(home)}<span><em>Your club</em><b>${esc(home.nickname)}</b>${starsHTML(r.stars)}</span></span>`, 1)}
-      ${tile('career', 'tile-league', `<span class="tile-trophy">${trophySVG('league')}</span>
+      ${tile('1p', null, 'tile-kick', `${star ? `<span class="tile-player">${playerSVG(star.pd, home.kit)}</span>` : ''}
+        <span class="tile-team">${crest(home)}<span><em>Your team</em><b>${esc(display(home))}</b>${starsHTML(r.stars)}</span></span>`, 1)}
+      ${tile('career', 'clubs', 'tile-league', `<span class="tile-trophy">${trophySVG('league')}</span>
         <span class="tile-status ${progress.league ? 'live' : ''}">${esc(progress.league || 'New season')}</span>`, 2)}
-      ${tile('cup', 'tile-cup', `<span class="tile-trophy">${trophySVG('cup')}</span>
+      ${tile('cup', 'nations', 'tile-cup', `<span class="tile-trophy">${trophySVG('cup')}</span>
         <span class="tile-status ${progress.cup ? 'live' : ''}">${esc(progress.cup || 'New tournament')}</span>`, 3)}
-      ${tile('practice', 'tile-sm tile-train', '<span class="tile-ico">◎</span>', 4)}
-      ${tile('tutorial', 'tile-sm tile-school', '<span class="tile-ico">✦</span>', 5)}
-      ${tile('indoor', 'tile-sm tile-indoor', '<span class="tile-ico">▣</span>', 6)}
-      ${tile('penalties', 'tile-sm tile-pens', '<span class="tile-ico">◉</span>', 7)}
+      ${tile('practice', null, 'tile-sm tile-train', '<span class="tile-ico">◎</span>', 4)}
+      ${tile('tutorial', null, 'tile-sm tile-school', '<span class="tile-ico">✦</span>', 5)}
+      ${tile('indoor', null, 'tile-sm tile-indoor', '<span class="tile-ico">▣</span>', 6)}
+      ${tile('penalties', null, 'tile-sm tile-pens', '<span class="tile-ico">◉</span>', 7)}
     </div>`;
   }
   function hubPlay() {
-    const order = ['1p', '2p', 'cpu', 'career', 'cup', 'indoor', 'penalties', 'practice', 'tutorial'];
-    return `<div class="play-grid">${order.map((m, i) => `
-      <button class="mode-card a-in" style="--i:${i}" data-nav data-act="mode" data-v="${m}">
-        <span class="tile-shine"></span>
-        <span class="mc-num">${String(i + 1).padStart(2, '0')}</span>
-        <b>${MODES[m].title}</b><small>${MODES[m].sub}</small>
-        <span class="mc-comp">${MODES[m].comp}</span>
-      </button>`).join('')}</div>`;
+    return `<div class="play-grid">${PLAY_CARDS.map(([m, pool], i) => {
+      const info = modeInfo(m, pool || settings.pool);
+      return `<button class="mode-card a-in" style="--i:${i}" data-nav data-act="mode" data-v="${m}" data-pool="${pool || ''}">
+        <span class="tile-shine"></span><span class="mc-num">${String(i + 1).padStart(2, '0')}</span>
+        <b>${esc(info.title)}</b><small>${esc(info.sub)}</small><span class="mc-comp">${esc(pool ? POOL_NAMES[pool] : info.comp)}</span>
+      </button>`;
+    }).join('')}</div>`;
   }
-  function hubSquads() {
-    const team = api.getTeam(squadsTeam);
-    const r = teamRatings(team);
-    const sq = squadOf(team);
+  function teamDetailHTML(t, withActions) {
+    if (!api.isPlayable(t.id)) {
+      return `<div class="sd-empty">${crest(t)}<h2>${esc(display(t))}</h2><p>No squad for ${esc(eraLabel(settings.roster))} yet. Choose another roster profile in Settings, or another team.</p></div>`;
+    }
+    const r = teamRatings(t);
+    const sq = squadOf(t);
+    return `<div class="sd-head">${crest(t)}<div><h2>${esc(display(t))}</h2><p>${esc(stadiumFor(t))} · ${formationOf(t)} · ${tacticOf(t)}</p>${starsHTML(r.stars)}</div>
+        <div class="sd-bars">${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}${ratingBar('OVR', r.ovr)}</div></div>
+      <div class="sd-xi">${sq.slice(0, 11).map((p) => `<div class="sd-p"><span class="pos ${ROLE_CLASS[p.role]}">${p.pos}</span><b>${esc(p.pd.name)}</b><em>${p.rating}</em></div>`).join('')}</div>
+      <div class="sd-bench"><span>Bench</span>${sq.slice(11).map((p) => `${esc(p.pd.name)} <em>${p.rating}</em>`).join(' · ')}</div>
+      <div class="sd-kits">${kitTypes(t.id).map((k) => `<figure>${kitImg(t.id, k)}<figcaption>${k}</figcaption></figure>`).join('')}</div>
+      ${withActions ? `<button class="fe-btn primary" data-nav data-act="manageSquad" data-v="${t.id}">Manage squad</button>` : ''}`;
+  }
+  function hubClubs() {
+    const t = team(clubsTeam);
     return `<div class="squads">
-      <div class="squad-list a-in" style="--i:1">${teams.map((t) => {
-        const tr = teamRatings(t);
-        return `<button class="squad-row ${t.id === team.id ? 'on' : ''}" data-nav data-act="squadTeam" data-v="${t.id}">
-          <span class="sr-crest">${crest(t)}</span><span class="sr-name"><b>${esc(t.nickname)}</b><small>${esc(t.name)}s legends</small></span><span class="sr-ovr">${tr.ovr}</span></button>`;
-      }).join('')}</div>
-      <div class="squad-detail a-in" style="--i:2">
-        <div class="sd-head">${crest(team)}<div><h2>${esc(team.nickname)}</h2><p>${esc(stadiumFor(team))} · ${formationOf(team)} · ${tacticOf(team)}</p>${starsHTML(r.stars)}</div>
-          <div class="sd-bars">${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}</div></div>
-        <div class="sd-xi">${sq.slice(0, 11).map((p) => `<div class="sd-p"><span class="pos ${ROLE_CLASS[p.role]}">${p.pos}</span><b>${esc(p.pd.name)}</b><em>${p.rating}</em></div>`).join('')}</div>
-        <div class="sd-bench"><span>Bench</span>${sq.slice(11).map((p) => `${esc(p.pd.name)} <em>${p.rating}</em>`).join(' · ')}</div>
-        <button class="fe-btn primary" data-nav data-act="manageSquad" data-v="${team.id}">Manage squad</button>
-      </div>
+      <div class="browse a-in" style="--i:1">${browseToolbar(null)}<div class="br-list">${browseListHTML(clubsTeam, 'clubsTeam')}</div></div>
+      <div class="squad-detail a-in" style="--i:2">${teamDetailHTML(t, true)}</div>
     </div>`;
   }
-  function settingsRows() {
-    return Object.keys(OPTIONS).map((key) => `
+  function settingsRows(keys = Object.keys(OPTIONS)) {
+    return keys.map((key) => `
       <div class="set-row" data-nav tabindex="0" data-act="cycle" data-v="${key}">
         <span>${OPTIONS[key].label}</span>
-        <span class="set-val"><button tabindex="-1" data-act="cycle" data-v="${key}" data-d="-1">◀</button><b>${optionText(key, settings[key])}</b><button tabindex="-1" data-act="cycle" data-v="${key}" data-d="1">▶</button></span>
-      </div>`).join('') + `
-      <div class="set-row" data-nav tabindex="0" data-act="sounds">
+        <span class="set-val"><button tabindex="-1" data-act="cycle" data-v="${key}" data-d="-1">◀</button><b>${esc(optionText(key, settings[key]))}</b><button tabindex="-1" data-act="cycle" data-v="${key}" data-d="1">▶</button></span>
+      </div>`).join('') + (keys.includes('difficulty') ? `
+      <div class="set-row" data-nav tabindex="0" data-act="sounds" data-v="sounds">
         <span>Menu sounds</span><span class="set-val"><button tabindex="-1" data-act="sounds">◀</button><b>${uiPrefs.sounds ? 'On' : 'Off'}</b><button tabindex="-1" data-act="sounds">▶</button></span>
-      </div>`;
+      </div>` : '');
   }
   function hubSettings() {
+    const locked = api.getProgress().cup || api.getProgress().league;
     return `<div class="settings-pane">
-      <div class="set-col a-in" style="--i:1"><h3>Match settings</h3>${settingsRows()}</div>
-      <div class="set-col a-in" style="--i:2"><h3>Help & tools</h3>
-        <button class="set-link" data-nav data-act="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>
-        <button class="set-link" data-nav data-act="howto"><b>How to play</b><small>Moving, passing, shooting, defending, rules</small></button>
-        <button class="set-link" data-nav data-act="dev"><b>Developer options</b><small>Game speed, debug overlay, drills</small></button>
-        <button class="set-link" data-nav data-act="resetSquads"><b>Reset squads</b><small>Restore default line-ups and formations</small></button>
+      <div class="set-col a-in" style="--i:1">
+        <h3>Football universe</h3>${settingsRows(['roster', 'clubIdentity', 'playerIdentity'])}
+        ${locked ? '<p class="set-note">A tournament in progress keeps the roster profile it started with. Names and crests follow your identity choice everywhere.</p>' : ''}
+        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'era'])}
+      </div>
+      <div class="set-col a-in" style="--i:2"><h3>Help, tools & data</h3>
+        <button class="set-link" data-nav data-act="controls" data-v="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>
+        <button class="set-link" data-nav data-act="howto" data-v="howto"><b>How to play</b><small>Moving, passing, shooting, defending, rules</small></button>
+        <button class="set-link" data-nav data-act="dev" data-v="dev"><b>Developer options</b><small>Game speed, debug overlay, drills</small></button>
+        <button class="set-link" data-nav data-act="validate" data-v="validate"><b>Database check</b><small>Run the validation report (IDs, rosters, logos, kits)</small></button>
+        <button class="set-link" data-nav data-act="export" data-v="export"><b>Export saved data</b><small>Settings, squads, rating edits, tournaments → JSON file</small></button>
+        <button class="set-link" data-nav data-act="import" data-v="import"><b>Import saved data</b><small>Restore from an exported JSON file</small></button>
+        <input type="file" accept="application/json,.json" class="hidden" data-change="importFile">
+        <button class="set-link" data-nav data-act="resetSquads" data-v="resetSquads"><b>Reset squads</b><small>Restore default line-ups and formations</small></button>
       </div>
     </div>`;
   }
 
-  // ----- team select -----
-  function sideTeam(side) { return api.getTeam(side === 0 ? settings.home : settings.away); }
-  function renderSelect() {
-    const m = MODES[settings.mode];
-    const fixture = api.resolveFixture();
-    const panel = (side) => {
-      const fixed = m.single && side === 1;
-      const team = fixed ? fixture.away : sideTeam(side);
-      const keeperOnly = fixed && (settings.mode === 'practice' || settings.mode === 'tutorial');
-      const r = teamRatings(team);
-      const star = starPlayer(team);
-      return `<div class="sel-panel side${side} a-in" style="--i:${side + 1};--kit:${team.kit.shirt};--kit2:${shade(team.kit.shirt, -0.6)}">
-        <div class="sel-label">${esc(m.sides[side])}</div>
-        ${keeperOnly ? `<div class="sel-keeper">${playerSVG(team.players[0], team.kit, { keeper: true, flip: true })}<b>Goalkeeper only</b><small>Their keeper defends one goal. No clock, no whistle.</small></div>` : `
-        <div class="sel-crest-row">
-          ${fixed ? '' : `<button class="sel-arrow" data-act="cycleTeam" data-side="${side}" data-d="-1" aria-label="Previous team">◀</button>`}
-          <div class="sel-crest" data-key="${team.id}">${crest(team)}</div>
-          ${fixed ? '' : `<button class="sel-arrow" data-act="cycleTeam" data-side="${side}" data-d="1" aria-label="Next team">▶</button>`}
+  // ----- player database -----
+  function dbResults() {
+    const q = dbQuery.trim().toLowerCase();
+    const rows = [];
+    for (const m of DB.roster_members) {
+      const [era, teamId] = m.roster_id.split(':');
+      if (era !== settings.roster && settings.roster !== 'custom') continue;
+      const p = IDX.players.get(m.player_id);
+      const alias = IDX.aliasesByPlayer.get(m.player_id)?.name || '';
+      if (q && !p.name.toLowerCase().includes(q) && !alias.toLowerCase().includes(q) && !teamDisplayName(teamId).toLowerCase().includes(q)) continue;
+      rows.push({ m, p, teamId });
+    }
+    const edits = ls.get('fsl-edits', {});
+    rows.sort((a, b) => (edits[b.m.id]?.overall ?? b.m.overall) - (edits[a.m.id]?.overall ?? a.m.overall) || a.p.name.localeCompare(b.p.name));
+    return rows;
+  }
+  function hubPlayers() {
+    const rows = dbResults();
+    const shown = rows.slice(0, 80);
+    if (!dbMember && shown[0]) { dbMember = shown[0].m.id; dbPlayer = shown[0].m.player_id; }
+    return `<div class="pdb">
+      <div class="pdb-left a-in" style="--i:1">
+        <input class="br-search" type="search" placeholder="Search players, parody names or teams…" value="${esc(dbQuery)}" data-input="dbsearch" aria-label="Search players">
+        <div class="pdb-count">${rows.length} players in ${esc(eraLabel(settings.roster === 'custom' ? 'modern' : settings.roster))}${rows.length > shown.length ? ` · showing top ${shown.length}` : ''}</div>
+        <div class="pdb-list">${pdbListHTML(shown)}</div>
+      </div>
+      <div class="pdb-right a-in" style="--i:2">${playerEditorHTML()}</div>
+    </div>`;
+  }
+  function pdbListHTML(shown) {
+    const edits = ls.get('fsl-edits', {});
+    return shown.map(({ m, p, teamId }) => {
+      const card = playerCard(m);
+      return `<button class="pdb-row ${m.id === dbMember ? 'on' : ''}" data-nav data-act="dbPick" data-v="${m.id}">
+        <span class="pos ${ROLE_CLASS[GROUP_OF(card.position)]}">${card.position}</span>
+        <span class="pdb-name"><b>${esc(card.name)}</b><small>${esc(teamDisplayName(teamId))}${edits[m.id] ? ' · edited' : ''}</small></span>
+        <span class="pdb-ovr">${card.overall}</span></button>`;
+    }).join('') || '<div class="br-empty">No players found.</div>';
+  }
+  function playerEditorHTML() {
+    const m = DB.roster_members.find((r) => r.id === dbMember);
+    if (!m) return '<div class="br-empty">Select a player.</div>';
+    const card = playerCard(m);
+    const alias = IDX.aliasesByPlayer.get(m.player_id);
+    const memberships = (IDX.membersByPlayer.get(m.player_id) || []).map((r) => {
+      const [era, tid] = r.roster_id.split(':');
+      return `${eraLabel(era)} · ${teamDisplayName(tid)} #${r.shirt_number}`;
+    });
+    const custom = ls.get('fsl-custom', { name: 'Ultimate XI', players: [] });
+    const inCustom = custom.players.includes(m.player_id);
+    const attrLabel = (k) => k.replace(/^gk/, 'GK ').replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+    const shownAttrs = ATTRIBUTE_KEYS.filter((k) => card.position === 'GK' || !k.startsWith('gk'));
+    return `<div class="pe-head">
+        <div class="pe-fig">${playerSVG({ name: card.realName, number: card.number }, kitFor(m.roster_id.split(':')[1], 'home'), { keeper: card.position === 'GK' })}</div>
+        <div><h2>${esc(card.name)}</h2>
+          <p>${esc(card.roleName || '')} · ${esc(card.nationality)} · ${card.foot} foot · Weak foot ${card.weakFoot}★ · Skills ${card.skillMoves}★</p>
+          <p class="pe-alias">Real: <b>${esc(card.realName)}</b> · Parody: <b>${esc(alias?.name || '—')}</b></p>
+          <p class="pe-bio">${esc(alias?.bio || '')}</p>
+          <p class="pe-mem">${memberships.map(esc).join('<br>')}</p>
         </div>
-        <h2 class="sel-name">${esc(team.nickname)}</h2>
-        <div class="sel-sub">${esc(team.name)}s legends · ${esc(stadiumFor(team))}</div>
-        ${starsHTML(r.stars)}
-        <div class="sel-bars">${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}${ratingBar('OVR', r.ovr)}</div>
-        <div class="sel-star">Star player <b>${esc(star.pd.name)}</b> <em>${star.rating}</em></div>
-        ${fixed ? `<div class="sel-fixed">${esc(fixture.stage || 'Decided by the fixture list')}</div>` : `<div class="sel-keys">${side === 0 ? `${keyCap('A')} ${keyCap('D')}` : `${keyCap('←')} ${keyCap('→')}`} change team</div>`}`}
-      </div>`;
-    };
-    const strip = (side) => teams.map((t) => `<button class="strip-crest ${t.id === sideTeam(side).id ? 'on' : ''}" data-act="pickTeam" data-side="${side}" data-v="${t.id}" title="${esc(t.nickname)}">${crest(t)}</button>`).join('');
+        <div class="pe-ovr"><input type="number" min="1" max="99" value="${card.overall}" data-edit="overall" aria-label="Overall"><small>OVR</small>
+          <select data-edit="position" aria-label="Position">${Object.keys(POSITIONS).map((p) => `<option ${p === card.position ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+      </div>
+      <div class="pe-attrs">${shownAttrs.map((k) => `<label><span>${attrLabel(k)}</span><input type="number" min="1" max="99" value="${card.attributes[k]}" data-edit-attr="${k}"></label>`).join('')}</div>
+      <div class="pe-actions">
+        <button class="fe-btn primary" data-act="saveEdit">Save ratings</button>
+        <button class="fe-btn" data-act="resetEdit">Reset to database values</button>
+        <button class="fe-btn" data-act="toggleCustom">${inCustom ? 'Remove from' : 'Add to'} Ultimate Team (${custom.players.length}/18)</button>
+      </div>
+      <p class="set-note">Edits apply to this player's ${esc(eraLabel(m.roster_id.split(':')[0]))} card only and are saved in this browser. The Custom Ultimate Teams roster profile plays your picked players.</p>`;
+  }
+
+  // ----- team select (FIFA style) -----
+  function selectFixedPool() {
+    if (settings.mode === 'career') return 'clubs';
+    return null;
+  }
+  function renderSelect() {
+    const m = modeInfo(settings.mode, settings.pool);
+    if (browse.pool !== settings.pool) { browse.pool = settings.pool; browse.league = 'all'; }
+    const singleSide = m.single;
+    if (singleSide) selSide = 0;
+    const fx = api.resolveFixture();
+    const editing = team(selSide === 0 ? settings.home : settings.away);
     screenEl('select').innerHTML = `
-      <header class="scr-head a-in" style="--i:0"><span class="scr-kicker">${esc(m.comp)}</span><h1>Select teams</h1></header>
-      <div class="sel-wrap">${panel(0)}<div class="sel-vs a-in" style="--i:2">VS</div>${panel(1)}</div>
-      <div class="sel-strip a-in" style="--i:3"><div>${strip(0)}</div>${m.single ? '' : `<div>${strip(1)}</div>`}</div>
+      <header class="scr-head a-in" style="--i:0"><span class="scr-kicker">${esc(m.comp)} · ${esc(eraLabel(settings.roster))}</span><h1>Select teams</h1></header>
+      <div class="ts-shell">
+        <div class="browse a-in" style="--i:1">${browseToolbar(m.trophy ? (settings.mode === 'career' ? 'clubs' : settings.pool) : selectFixedPool())}<div class="br-list">${browseListHTML(editing.id, 'pickTeam')}</div></div>
+        <div class="ts-center a-in" style="--i:2">${selectCenterHTML(editing)}</div>
+        <div class="ts-right a-in" style="--i:3">${selectRightHTML(fx, m)}</div>
+      </div>
       <footer class="fe-foot">
+        <span>${keyCap('↑↓')} Browse ${keyCap('Q/E')} Home / away</span>
         <button class="fe-btn ghost" data-act="back">${keyCap('Esc')} Back</button>
-        <button class="fe-btn primary" data-nav data-autofocus data-act="toPreview">${keyCap('Enter')} Continue</button>
+        <button class="fe-btn primary" data-act="toPreview" ${canContinue() ? '' : 'disabled'}>${keyCap('Enter')} Continue</button>
       </footer>`;
+  }
+  function canContinue() {
+    const { home, away } = api.resolveFixture();
+    const keeperOnly = settings.mode === 'practice' || settings.mode === 'tutorial';
+    return api.isPlayable(home.id) && (keeperOnly || api.isPlayable(away.id));
+  }
+  function selectCenterHTML(t) {
+    if (!api.isPlayable(t.id)) return `<div class="ts-crest">${crest(t)}</div><h2 class="ts-name">${esc(display(t))}</h2><p class="ts-sub">No ${esc(eraLabel(settings.roster))} squad — pick another team or roster profile.</p>`;
+    const r = teamRatings(t);
+    const featured = squadOf(t).slice().sort((a, b) => b.rating - a.rating).slice(0, 3);
+    return `<div class="ts-side-tag ${selSide ? 'away' : 'home'}">${selSide ? 'Away team' : 'Home team'}</div>
+      <div class="ts-crest" data-key="${t.id}">${crest(t)}</div>
+      <h2 class="ts-name">${esc(display(t))}</h2>
+      <p class="ts-sub">${esc(sub(t))}</p>
+      ${starsHTML(r.stars)}
+      <div class="ts-bars">${ratingBar('OVR', r.ovr)}${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}</div>
+      <div class="ts-featured">${featured.map((p) => `<div class="tf-card" style="--kit:${t.kit.shirt}">
+        <div class="tf-fig">${playerSVG(p.pd, t.kit, { keeper: p.role === 'GK' })}</div>
+        <b>${esc(p.pd.name)}</b><span>${esc(p.pd.position || p.pos)} · ${p.rating}</span></div>`).join('')}</div>`;
+  }
+  function selectRightHTML(fx, m) {
+    const keeperOnly = settings.mode === 'practice' || settings.mode === 'tutorial';
+    const homeT = fx.home, awayT = fx.away;
+    const kits = api.matchKits(homeT, awayT);
+    const sideCard = (t, side, label) => {
+      const fixed = side === 1 && (m.single || keeperOnly);
+      return `<button class="ts-sidecard ${selSide === side ? 'on' : ''} ${side ? 'away' : 'home'}" data-act="side" data-v="${side}" ${fixed ? 'disabled' : ''}>
+        <span class="ts-sc-label">${esc(label)}</span>${crest(t)}<b>${esc(keeperOnly && side ? 'Goalkeeper only' : display(t))}</b>
+        <span>${api.isPlayable(t.id) ? `${teamRatings(t).ovr} OVR` : 'No squad'}</span></button>`;
+    };
+    const editingId = selSide === 0 ? homeT.id : awayT.id;
+    const kitKey = selSide === 0 ? 'homeKit' : 'awayKit';
+    const types = kitTypes(editingId);
+    const editT = selSide === 0 ? homeT : awayT;
+    return `<div class="ts-compare">${sideCard(homeT, 0, m.sides[0])}<span class="ts-vs">VS</span>${sideCard(awayT, 1, m.sides[1])}</div>
+      ${fx.stage ? `<div class="ts-stage">${esc(fx.stage)}</div>` : ''}
+      <div class="ts-block"><h4>Stadium</h4><p><b>${esc(stadiumFor(homeT))}</b>${IDX.stadiums.get(IDX.clubs.get(homeT.id)?.stadium_id)?.capacity ? ` · ${IDX.stadiums.get(IDX.clubs.get(homeT.id).stadium_id).capacity.toLocaleString()} seats` : ''}${IDX.clubs.get(homeT.id)?.city ? ` · ${esc(IDX.clubs.get(homeT.id).city)}` : ''}</p></div>
+      <div class="ts-block"><h4>${selSide ? 'Away' : 'Home'} kit · ${esc(display(editT))}</h4>
+        <div class="ts-kits">${types.map((k) => `<button class="ts-kit ${settings[kitKey] === k || (types.length === 1) ? 'on' : ''}" data-act="kit" data-v="${k}">${kitImg(editingId, k)}<span>${k}</span></button>`).join('')}</div>
+        ${kits.switched && !keeperOnly ? `<p class="ts-warn">Kit clash: away side will wear its ${esc(kits.switched)} kit.</p>` : ''}
+      </div>
+      <div class="ts-block"><h4>Formation</h4><p><b>${formationOf(editT)}</b> · ${esc(tacticOf(editT))} <button class="ts-link" data-act="manageFromSelect">Team management ›</button></p></div>`;
+  }
+  function refreshSelectParts() {
+    const el = screenEl('select');
+    const m = modeInfo(settings.mode, settings.pool);
+    const editing = team(selSide === 0 ? settings.home : settings.away);
+    el.querySelector('.ts-center').innerHTML = selectCenterHTML(editing);
+    el.querySelector('.ts-right').innerHTML = selectRightHTML(api.resolveFixture(), m);
+    refreshBrowseList(el, editing.id, 'pickTeam');
+    const cont = el.querySelector('[data-act="toPreview"]');
+    if (cont) cont.disabled = !canContinue();
   }
 
   // ----- match preview -----
   function renderPreview() {
-    const m = MODES[settings.mode];
+    const m = modeInfo(settings.mode, settings.pool);
     const fx = api.resolveFixture();
-    const { home, away } = fx;
     const keeperOnly = settings.mode === 'practice' || settings.mode === 'tutorial';
+    const kits = api.matchKits(fx.home, fx.away);
+    const home = { ...fx.home, kit: kits.home }, away = { ...fx.away, kit: kits.away };
     const rh = teamRatings(home), ra = teamRatings(away);
-    const sh = starPlayer(home), sa = keeperOnly ? { pd: away.players[0], rating: playerRating(away.players[0], 'GK') } : starPlayer(away);
+    const sh = starPlayer(home);
+    const sa = keeperOnly ? { pd: away.players[0], rating: playerRating(away.players[0], 'GK'), pos: 'GK' } : starPlayer(away);
     const h2h = getH2H(home.id, away.id);
     const ctrl = api.controllers();
     const who = (c) => (c === 'ai' ? 'CPU' : c.toUpperCase());
@@ -395,21 +647,17 @@ export function createFrontend(api) {
     if (previewTab === 'preview') {
       const total = h2h.a + h2h.b + h2h.draws;
       center = `
-        <div class="pv-meta">
-          <span>${esc(stadiumFor(home))}</span><span>${esc(fx.stage || m.comp)}</span><span>${minutes}</span>
-        </div>
+        <div class="pv-meta"><span>${esc(stadiumFor(home))}</span><span>${esc(fx.stage || m.comp)}</span><span>${minutes}</span></div>
         <div class="pv-h2h-title">Overall head to head</div>
-        <div class="pv-h2h">
-          <div><b class="hc">${h2h.a}</b> Wins</div><div><b>${h2h.draws}</b> Draws</div><div>Wins <b class="ac">${h2h.b}</b></div>
-        </div>
+        <div class="pv-h2h"><div><b class="hc">${h2h.a}</b> Wins</div><div><b>${h2h.draws}</b> Draws</div><div>Wins <b class="ac">${h2h.b}</b></div></div>
         <div class="pv-h2h-bar"><i class="hc" style="flex:${h2h.a || (total ? 0 : 1)}"></i><i style="flex:${h2h.draws || (total ? 0 : 1)}"></i><i class="ac" style="flex:${h2h.b || (total ? 0 : 1)}"></i></div>
-        <div class="pv-vs-row">
-          <div class="pv-ctrl ${ctrl[0]}">${who(ctrl[0])}</div><div class="pv-vs">VS</div><div class="pv-ctrl ${ctrl[1]}">${who(ctrl[1])}</div>
-        </div>
+        <div class="pv-vs-row"><div class="pv-ctrl ${ctrl[0]}">${who(ctrl[0])}</div>
+          <div class="pv-kits">${kitImg(home.id, kits.home.type || 'home')}<span>VS</span>${kitImg(away.id, kits.away.type || 'away')}</div>
+          <div class="pv-ctrl ${ctrl[1]}">${who(ctrl[1])}</div></div>
         <div class="pv-conditions">
           <span><em>Difficulty</em>${optionText('difficulty', settings.difficulty)}</span>
-          <span><em>Assist</em>${optionText('assist', settings.assist)}</span>
-          <span><em>Conditions</em>Clear · Day</span>
+          <span><em>Roster</em>${esc(eraLabel(settings.roster))}</span>
+          <span><em>Kits</em>${esc(kits.home.type || 'home')} v ${esc(kits.away.type || 'away')}</span>
           <span><em>Formation</em>${formationOf(home)} v ${keeperOnly ? '—' : formationOf(away)}</span>
         </div>
         <div class="pv-welcome">${fx.continuing ? `Continue your ${esc(m.comp)} run` : `Welcome to ${esc(m.title)}`}</div>`;
@@ -417,18 +665,16 @@ export function createFrontend(api) {
       const row = (label, a, b) => `<div class="pv-stat"><b>${a}</b><span><i class="hc" style="width:${(a / (a + b || 1)) * 100}%"></i><i class="ac" style="width:${(b / (a + b || 1)) * 100}%"></i></span><em>${label}</em><b>${b}</b></div>`;
       center = `<div class="pv-stats">${row('Overall', rh.ovr, keeperOnly ? 0 : ra.ovr)}${row('Attack', rh.att, keeperOnly ? 0 : ra.att)}${row('Midfield', rh.mid, keeperOnly ? 0 : ra.mid)}${row('Defence', rh.def, keeperOnly ? 0 : ra.def)}${row('Star rating', sh.rating, sa.rating)}</div>`;
     } else {
-      const list = (team) => squadOf(team).slice(0, keeperOnly && team === away ? 1 : 11).map((p) => `<li><span class="pos ${ROLE_CLASS[p.role]}">${p.pos}</span>${esc(p.pd.name)}<em>${p.rating}</em></li>`).join('');
+      const list = (t) => squadOf(t).slice(0, keeperOnly && t === away ? 1 : 11).map((p) => `<li><span class="pos ${ROLE_CLASS[p.role]}">${p.pos}</span>${esc(p.pd.name)}<em>${p.rating}</em></li>`).join('');
       center = `<div class="pv-lineups"><ol>${list(home)}</ol><ol>${list(away)}</ol></div>`;
     }
     screenEl('preview').innerHTML = `
       <div class="pv-tunnel"></div>
-      <div class="pv-fig left a-in" style="--i:1">${playerSVG(sh.pd, home.kit)}<div class="pv-figname"><b>${esc(sh.pd.name)}</b><span>${sh.rating} · ${esc(sh.pos || '')}</span></div></div>
-      <div class="pv-fig right a-in" style="--i:2">${playerSVG(sa.pd, away.kit, { flip: true, keeper: keeperOnly })}<div class="pv-figname"><b>${esc(sa.pd.name)}</b><span>${sa.rating}${sa.pos ? ` · ${esc(sa.pos)}` : ' · GK'}</span></div></div>
+      <div class="pv-fig left a-in" style="--i:1">${playerSVG(sh.pd, home.kit)}<div class="pv-figname"><b>${esc(sh.pd.name)}</b><span>${sh.rating} · ${esc(sh.pd.position || sh.pos || '')}</span></div></div>
+      <div class="pv-fig right a-in" style="--i:2">${playerSVG(sa.pd, away.kit, { flip: true, keeper: keeperOnly })}<div class="pv-figname"><b>${esc(sa.pd.name)}</b><span>${sa.rating} · ${esc(sa.pd.position || sa.pos || 'GK')}</span></div></div>
       <div class="pv-center a-in" style="--i:0">
-        <nav class="pv-tabs">
-          ${[['preview', 'Match preview'], ['stats', 'Team stats'], ['lineups', 'Line-ups']].map(([k, l]) => `<button class="${previewTab === k ? 'on' : ''}" data-act="pvTab" data-v="${k}">${l}</button>`).join('')}
-        </nav>
-        <div class="pv-crests"><div class="pv-crest">${crest(home)}<b>${esc(home.nickname)}</b></div><div class="pv-crest">${crest(away)}<b>${esc(keeperOnly ? 'Goalkeeper' : away.nickname)}</b></div></div>
+        <nav class="pv-tabs">${[['preview', 'Match preview'], ['stats', 'Team stats'], ['lineups', 'Line-ups']].map(([k, l]) => `<button class="${previewTab === k ? 'on' : ''}" data-act="pvTab" data-v="${k}">${l}</button>`).join('')}</nav>
+        <div class="pv-crests"><div class="pv-crest">${crest(home)}<b>${esc(display(home))}</b></div><div class="pv-crest">${crest(away)}<b>${esc(keeperOnly ? 'Goalkeeper' : display(away))}</b></div></div>
         <div class="pv-body">${center}</div>
       </div>
       <nav class="pv-menu a-in" style="--i:3">
@@ -436,15 +682,14 @@ export function createFrontend(api) {
         <button class="pv-item" data-nav data-act="manage"><b>Team management</b><span class="pv-ico ico-pitch"></span></button>
         <button class="pv-item" data-nav data-act="settingsModal"><b>Game settings</b><span class="pv-ico ico-gear">⚙</span></button>
         <button class="pv-item" data-nav data-act="controls"><b>Controller settings</b><span class="pv-ico ico-pad">✜</span></button>
-        ${fx.continuing ? `<button class="pv-item" data-nav data-act="abandon"><b>New ${esc(m.comp)}</b><span class="pv-ico">↺</span></button>` : `<button class="pv-item" data-nav data-act="pvStats"><b>Detailed stats</b><span class="pv-ico">▮▮</span></button>`}
+        ${fx.continuing ? `<button class="pv-item" data-nav data-act="abandon"><b>New ${esc(m.comp)}</b><span class="pv-ico">↺</span></button>` : '<button class="pv-item" data-nav data-act="pvStats"><b>Detailed stats</b><span class="pv-ico">▮▮</span></button>'}
       </nav>
       <footer class="fe-foot">${keyCap('Enter')} Advance ${keyCap('Esc')} Back ${keyCap('Q/E')} Switch tab</footer>`;
   }
 
   // ----- team management (FIFA 07 style) -----
-  let manageOnlyId = null; // set when managing a club from the Squads tab
   function manageTeams() {
-    if (manageOnlyId) return [api.getTeam(manageOnlyId)];
+    if (manageOnlyId) return [team(manageOnlyId)];
     const { home, away } = api.resolveFixture();
     const keeperOnly = settings.mode === 'practice' || settings.mode === 'tutorial';
     return keeperOnly ? [home] : [home, away];
@@ -452,11 +697,12 @@ export function createFrontend(api) {
   function renderManage() {
     const list = manageTeams();
     manageSide = Math.min(manageSide, list.length - 1);
-    const team = list[manageSide];
-    const sq = squadOf(team);
-    const r = teamRatings(team);
+    const t = list[manageSide];
+    if (!api.isPlayable(t.id)) { screenEl('manage').innerHTML = `<div class="fe-error"><h2>No squad for ${esc(display(t))}</h2><p>This team has no ${esc(eraLabel(settings.roster))} roster.</p><button class="fe-btn primary" data-act="back">Back</button></div>`; return; }
+    const sq = squadOf(t);
+    const r = teamRatings(t);
     const indoor = settings.mode === 'indoor' && !manageOnlyId;
-    const formation = formationOf(team);
+    const formation = formationOf(t);
     const slots = indoor ? api.indoorFormation : (api.formations[formation] || api.formations['4-3-3']);
     manageCursor = clamp(manageCursor, 0, sq.length - 1);
     const rows = sq.map((p, i) => `
@@ -467,40 +713,38 @@ export function createFrontend(api) {
       </button>`).join('');
     const dots = slots.map((slot, i) => {
       const p = sq[i];
-      // Vertical pitch: attack is up. x in [-1,1] along length, z across.
       const top = 50 - slot.x * 44, left = 50 + slot.z * 42;
-      return `<button class="mg-dot ${ROLE_CLASS[slot.role]} ${manageSel === i ? 'sel' : ''} ${manageCursor === i ? 'cur' : ''}" style="top:${top}%;left:${left}%;--kit:${slot.role === 'GK' ? team.kit.gk : team.kit.shirt}" data-act="mgRow" data-v="${i}">
+      return `<button class="mg-dot ${ROLE_CLASS[slot.role]} ${manageSel === i ? 'sel' : ''} ${manageCursor === i ? 'cur' : ''}" style="top:${top}%;left:${left}%;--kit:${slot.role === 'GK' ? t.kit.gk : t.kit.shirt}" data-act="mgRow" data-v="${i}">
         <i>${p.pd.number}</i><span>${esc(p.pd.name.split(' ').slice(-1)[0])}</span></button>`;
     }).join('');
     const cur = sq[manageCursor];
     screenEl('manage').innerHTML = `
       <div class="mg-shell">
         <div class="mg-left a-in" style="--i:1">
-          <div class="mg-tabs">${list.length > 1 ? keyCap('Q') : ''}${list.map((t, i) => `<button class="${i === manageSide ? 'on' : ''}" data-act="mgSide" data-v="${i}">${esc(t.nickname)}</button>`).join('')}${list.length > 1 ? keyCap('E') : ''}<span>Starting XI</span></div>
+          <div class="mg-tabs">${list.length > 1 ? keyCap('Q') : ''}${list.map((x, i) => `<button class="${i === manageSide ? 'on' : ''}" data-act="mgSide" data-v="${i}">${esc(x.short || display(x))}</button>`).join('')}${list.length > 1 ? keyCap('E') : ''}<span>Starting XI</span></div>
           <button class="mg-done" data-act="back" data-nav data-autofocus>Done</button>
-          <div class="mg-list" style="--team:${team.kit.shirt}">${rows}</div>
+          <div class="mg-list" style="--team:${t.kit.shirt}">${rows}</div>
         </div>
         <div class="mg-mid a-in" style="--i:2">
-          <div class="mg-crest">${crest(team)}</div>
-          <h2>${esc(team.nickname)}</h2>
+          <div class="mg-crest">${crest(t)}</div>
+          <h2>${esc(display(t))}</h2>
           ${starsHTML(r.stars)}
           <div class="mg-rates">${ratingBar('OFF', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}</div>
-          <div class="mg-opt">
-            <span>Formation</span>
+          <div class="mg-opt"><span>Formation</span>
             ${indoor ? '<b class="mg-fixed">Indoor 1-2-1 (fixed)</b>' : `<div class="set-val"><button data-act="formation" data-d="-1">◀</button><b>${formation}</b><button data-act="formation" data-d="1">▶</button></div>`}
           </div>
-          <div class="mg-opt"><span>Tactics</span><div class="set-val"><button data-act="tactic" data-d="-1">◀</button><b>${tacticOf(team)}</b><button data-act="tactic" data-d="1">▶</button></div></div>
+          <div class="mg-opt"><span>Tactics</span><div class="set-val"><button data-act="tactic" data-d="-1">◀</button><b>${tacticOf(t)}</b><button data-act="tactic" data-d="1">▶</button></div></div>
           <div class="mg-help">${manageSel === null ? 'Select a player, then select another to swap them.' : `Swap <b>${esc(sq[manageSel].pd.name)}</b> with…`}</div>
         </div>
         <div class="mg-right a-in" style="--i:3">
-          <div class="mg-title"><b>Team management</b><span>${esc(team.nickname)} · ${indoor ? 'Indoor' : formation}</span></div>
+          <div class="mg-title"><b>Team management</b><span>${esc(display(t))} · ${indoor ? 'Indoor' : formation}</span></div>
           <div class="mg-pitch"><div class="pitch-lines"><i class="box top"></i><i class="box bottom"></i><i class="half"></i><i class="circle"></i></div>${dots}</div>
         </div>
       </div>
-      <aside class="mg-bio" style="--kit:${team.kit.shirt}">
-        <div class="bio-fig">${playerSVG(cur.pd, team.kit, { keeper: cur.role === 'GK' })}</div>
+      <aside class="mg-bio" style="--kit:${t.kit.shirt}">
+        <div class="bio-fig">${playerSVG(cur.pd, t.kit, { keeper: cur.role === 'GK' })}</div>
         <div class="bio-info"><span class="bio-num">${cur.pd.number}</span><h3>${esc(cur.pd.name)}</h3>
-          <p>${cur.pos === 'SUB' ? `Substitute · ${cur.role}` : cur.pos} · ${esc(team.nickname)}</p><div class="bio-ovr">${cur.rating}<small>OVR</small></div>
+          <p>${cur.pos === 'SUB' ? `Substitute · ${esc(cur.pd.position || cur.role)}` : `${cur.pos}${cur.pd.position ? ` (${esc(cur.pd.position)})` : ''}`}</p>
           ${[['Pace', 'spd'], ['Passing', 'pas'], ['Shooting', 'sho'], ['Tackling', 'tac'], ['Dribbling', 'dri'], ['Goalkeeping', 'gk']].map(([l, k]) => ratingBar(l, cur.pd.stats[k])).join('')}
         </div>
       </aside>
@@ -508,37 +752,23 @@ export function createFrontend(api) {
   }
 
   // ----- modals -----
-  function openModal(kind) {
+  function openModal(kind, html) {
     sfx.select();
     const card = modal.querySelector('.fe-modal-card');
     if (kind === 'controls') {
       const pad = (k) => `<kbd>${k}</kbd>`;
       card.innerHTML = `<h2>Controller settings</h2>
         <div class="ctl-grid">
-          <div class="ctl-col"><h4>Player 1 · keyboard</h4>
-            <p><span>Move</span>${pad('W')}${pad('A')}${pad('S')}${pad('D')}</p>
-            <p><span>Pass / switch</span>${pad('F')} or ${pad('Space')}</p>
-            <p><span>Shoot (hold) / tackle</span>${pad('G')}</p>
-            <p><span>Sprint</span>${pad('Left Shift')}</p></div>
-          <div class="ctl-col"><h4>Player 2 · keyboard</h4>
-            <p><span>Move</span>${pad('↑')}${pad('←')}${pad('↓')}${pad('→')}</p>
-            <p><span>Pass / switch</span>${pad('.')}</p>
-            <p><span>Shoot (hold) / tackle</span>${pad('/')}</p>
-            <p><span>Sprint</span>${pad('Right Shift')}</p></div>
-          <div class="ctl-col"><h4>Gamepad</h4>
-            <p><span>Move</span>${pad('Left stick')}</p>
-            <p><span>Pass / switch</span>${pad('A')} / ${pad('✕')}</p>
-            <p><span>Shoot / tackle</span>${pad('B')} / ${pad('○')}</p>
-            <p><span>Sprint</span>${pad('RT')} ${pad('RB')}</p></div>
-          <div class="ctl-col"><h4>In match</h4>
-            <p><span>Pause</span>${pad('Esc')} ${pad('P')}</p>
-            <p><span>Camera</span>${pad('C')}</p>
-            <p><span>Skip replay</span>${pad('R')}</p>
-            <p><span>Touch screen</span>Stick + Pass / Shoot / Sprint</p></div>
+          <div class="ctl-col"><h4>Player 1 · keyboard</h4><p><span>Move</span>${pad('W')}${pad('A')}${pad('S')}${pad('D')}</p><p><span>Pass / switch</span>${pad('F')} or ${pad('Space')}</p><p><span>Shoot (hold) / tackle</span>${pad('G')}</p><p><span>Sprint</span>${pad('Left Shift')}</p></div>
+          <div class="ctl-col"><h4>Player 2 · keyboard</h4><p><span>Move</span>${pad('↑')}${pad('←')}${pad('↓')}${pad('→')}</p><p><span>Pass / switch</span>${pad('.')}</p><p><span>Shoot (hold) / tackle</span>${pad('/')}</p><p><span>Sprint</span>${pad('Right Shift')}</p></div>
+          <div class="ctl-col"><h4>Gamepad</h4><p><span>Move</span>${pad('Left stick')}</p><p><span>Pass / switch</span>${pad('A')} / ${pad('✕')}</p><p><span>Shoot / tackle</span>${pad('B')} / ${pad('○')}</p><p><span>Sprint</span>${pad('RT')} ${pad('RB')}</p></div>
+          <div class="ctl-col"><h4>In match</h4><p><span>Pause</span>${pad('Esc')} ${pad('P')}</p><p><span>Camera</span>${pad('C')}</p><p><span>Skip replay</span>${pad('R')}</p><p><span>Touch screen</span>Stick + Pass / Shoot / Sprint</p></div>
         </div>
         <button class="fe-btn primary" data-act="closeModal" data-autofocus>Done</button>`;
-    } else {
+    } else if (kind === 'settings') {
       card.innerHTML = `<h2>Game settings</h2><div class="set-col">${settingsRows()}</div><button class="fe-btn primary" data-act="closeModal" data-autofocus>Done</button>`;
+    } else {
+      card.innerHTML = `${html}<button class="fe-btn primary" data-act="closeModal" data-autofocus>Done</button>`;
     }
     modal.dataset.kind = kind;
     modal.classList.remove('hidden');
@@ -550,21 +780,42 @@ export function createFrontend(api) {
     render();
     focusFirst();
   }
+  async function runValidation() {
+    openModal('report', '<h2>Database check</h2><p>Running…</p>');
+    const report = validateDatabase();
+    // Broken image references: ask the server for every crest and kit file.
+    const urls = [...new Set([...DB.clubs, ...DB.national_teams].flatMap((t) => [crestUrlFor(t.id, false), crestUrlFor(t.id, true), ...['home', 'away', 'third'].map((k) => kitUrl(t.id, k))]))];
+    let missing = 0;
+    await Promise.all(urls.map((u) => fetch(u, { method: 'HEAD' }).then((r) => { if (!r.ok) { missing++; report.errors.push(`Missing asset: ${u}`); } }).catch(() => { missing++; report.errors.push(`Missing asset: ${u}`); })));
+    report.stats['Asset files checked'] = urls.length;
+    report.stats['Missing asset files'] = missing;
+    const card = modal.querySelector('.fe-modal-card');
+    card.innerHTML = `<h2>Database check</h2>
+      <p class="${report.errors.length ? 'rep-bad' : 'rep-ok'}">${report.errors.length ? `${report.errors.length} error(s)` : 'No errors: no missing references, duplicate IDs or broken images.'} · ${report.warnings.length} warning(s)</p>
+      <table class="rep">${Object.entries(report.stats).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>
+      ${report.errors.length ? `<h4>Errors</h4><ul class="rep-list">${report.errors.slice(0, 50).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+      ${report.warnings.length ? `<h4>Warnings</h4><ul class="rep-list">${report.warnings.slice(0, 40).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+      <button class="fe-btn primary" data-act="closeModal" data-autofocus>Done</button>`;
+    card.querySelector('[data-autofocus]')?.focus();
+  }
+  const crestUrlFor = (id, parody) => `${(import.meta.env && import.meta.env.BASE_URL) || '/'}assets/clubs/logos/${id}${parody ? '-parody' : ''}.svg`;
 
   // ---------- VS intro ----------
   function playIntro(done) {
-    const { home, away } = api.resolveFixture();
-    const m = MODES[settings.mode];
+    const fx = api.resolveFixture();
+    const kits = api.matchKits(fx.home, fx.away);
+    const { home, away } = fx;
+    const m = modeInfo(settings.mode, settings.pool);
     const keeperOnly = settings.mode === 'practice' || settings.mode === 'tutorial';
-    intro.style.setProperty('--hk', home.kit.shirt);
-    intro.style.setProperty('--ak', keeperOnly ? away.kit.gk : away.kit.shirt);
+    intro.style.setProperty('--hk', kits.home.shirt);
+    intro.style.setProperty('--ak', keeperOnly ? kits.away.gk : kits.away.shirt);
     intro.innerHTML = `
-      <div class="in-half in-home"><div class="in-crest">${crest(home)}</div><b>${esc(home.nickname)}</b><span>${esc(home.name)}s</span></div>
-      <div class="in-half in-away"><div class="in-crest">${crest(away)}</div><b>${esc(keeperOnly ? 'Goalkeeper' : away.nickname)}</b><span>${esc(away.name)}s</span></div>
+      <div class="in-half in-home"><div class="in-crest">${crest(home)}</div><b>${esc(display(home))}</b><span>${esc(sub(home))}</span></div>
+      <div class="in-half in-away"><div class="in-crest">${crest(away)}</div><b>${esc(keeperOnly ? 'Goalkeeper' : display(away))}</b><span>${esc(sub(away))}</span></div>
       <div class="in-vs">VS</div>
-      <div class="in-bar"><span>${esc(m.comp)}</span><i></i><span>${esc(stadiumFor(home))}</span></div>
+      <div class="in-bar"><span>${esc(fx.stage || m.comp)}</span><i></i><span>${esc(stadiumFor(home))}</span></div>
       <div class="in-flash"></div>`;
-    intro.classList.remove('hidden', 'run'); void intro.offsetWidth; intro.classList.add('run');
+    intro.classList.remove('hidden', 'run', 'out'); void intro.offsetWidth; intro.classList.add('run');
     sfx.whoosh();
     setTimeout(() => sfx.impact(), 650);
     introDone = () => {
@@ -578,30 +829,43 @@ export function createFrontend(api) {
   }
 
   // ---------- actions ----------
-  function setMode(mode) {
-    settings.mode = mode;
-    if (mode !== 'cup') api.clearCup();
-    if (mode !== 'career') api.clearLeague();
-    api.persistSettings();
-  }
-  function chooseMode(mode) {
+  function chooseMode(mode, pool) {
     sfx.select();
-    const continuing = (mode === 'cup' && api.getProgress().cup) || (mode === 'career' && api.getProgress().league);
+    if (pool) settings.pool = pool;
+    if (mode === 'career' && settings.pool === 'nations') settings.pool = 'clubs';
+    const prog = api.getProgress();
+    const continuing = (mode === 'cup' && prog.cup) || (mode === 'career' && prog.league);
     settings.mode = mode;
-    if (!continuing) setMode(mode);
-    else api.persistSettings();
+    if (!continuing) { if (mode !== 'cup') api.clearCup(); if (mode !== 'career') api.clearLeague(); }
+    ensureSelectionsInPool();
+    api.persistSettings();
     if (mode === 'tutorial') { kickOff(); return; }
     go(continuing ? 'preview' : 'select');
   }
+  /** Keep home/away valid for the current pool (e.g. after switching to nations). */
+  function ensureSelectionsInPool() {
+    const ids = api.poolTeamIds(settings.pool).filter(api.isPlayable);
+    if (!ids.length) return;
+    const ranked = ids.slice().sort((a, b) => (api.teamRating(b) ?? 0) - (api.teamRating(a) ?? 0));
+    if (!ids.includes(settings.home)) settings.home = ranked[0];
+    if (!ids.includes(settings.away) || settings.away === settings.home) settings.away = ranked.find((id) => id !== settings.home) || ranked[0];
+  }
   function kickOff() {
+    if (!canContinue()) return;
     sfx.select();
     playIntro(() => api.startMatch());
   }
+  function applyDbChange() {
+    api.refreshDb();
+    ensureSelectionsInPool();
+    api.persistSettings();
+  }
   function cycleOption(key, d = 1) {
+    if (key === 'roster' && (api.getProgress().cup || api.getProgress().league)) { sfx.back(); return; }
     const vals = OPTIONS[key].values.map(([v]) => v);
     const i = vals.findIndex((v) => String(v) === String(settings[key]));
     settings[key] = vals[(i + d + vals.length) % vals.length];
-    api.persistSettings();
+    if (DB_OPTIONS.has(key)) applyDbChange(); else api.persistSettings();
     sfx.move();
     rerenderKeepFocus();
   }
@@ -618,47 +882,64 @@ export function createFrontend(api) {
     render();
     if (sig) screenEl(screen)?.querySelector(`[data-nav][data-act="${sig.split('|')[0]}"][data-v="${sig.split('|')[1]}"]`)?.focus();
   }
-  function cycleTeam(side, d) {
+  function pickTeam(id, side = selSide) {
+    if (!api.isPlayable(id)) { sfx.back(); return; }
     const key = side === 0 ? 'home' : 'away';
-    let i = teamIndex(settings[key]);
-    i = (i + d + teams.length) % teams.length;
-    settings[key] = teams[i].id;
+    if (settings[key] === id) return;
+    settings[key] = id;
+    settings[side === 0 ? 'homeKit' : 'awayKit'] = side === 0 ? 'home' : 'away';
     if (settings.mode === 'cup') api.clearCup();
     if (settings.mode === 'career') api.clearLeague();
     api.persistSettings();
     sfx.move();
-    render();
-    const crestEl = screenEl('select').querySelector(`.side${side} .sel-crest`);
-    crestEl?.classList.add(d > 0 ? 'spin-r' : 'spin-l');
+    refreshSelectParts();
+    screenEl('select').querySelector('.ts-crest')?.classList.add('spin-r');
   }
-  function swapPlayers(team, a, b) {
-    const order = [...orderOf(team)];
+  function stepTeam(d) {
+    const rows = browseIds().filter((r) => r.playable);
+    if (!rows.length) return;
+    const cur = selSide === 0 ? settings.home : settings.away;
+    const i = rows.findIndex((r) => r.id === cur);
+    const next = rows[(i + d + rows.length) % rows.length];
+    pickTeam(next.id);
+    screenEl('select').querySelector(`.br-main[data-v="${next.id}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+  function swapPlayers(t, a, b) {
+    const order = [...orderOf(t)];
     [order[a], order[b]] = [order[b], order[a]];
-    saveSquad(team, { order });
+    saveSquad(t, { order });
   }
-  function currentManageTeam() { return manageTeams()[manageSide]; }
+  const currentManageTeam = () => manageTeams()[manageSide];
   function mgSelect(i) {
-    const team = currentManageTeam();
+    const t = currentManageTeam();
     manageCursor = i;
     if (manageSel === null) { manageSel = i; sfx.select(); } else if (manageSel === i) { manageSel = null; sfx.back(); } else {
-      swapPlayers(team, manageSel, i); manageSel = null; sfx.select();
+      swapPlayers(t, manageSel, i); manageSel = null; sfx.select();
     }
     render();
   }
   function cycleFormation(d) {
     if (settings.mode === 'indoor' && !manageOnlyId) return;
-    const team = currentManageTeam();
+    const t = currentManageTeam();
     const keys = Object.keys(api.formations);
-    const i = keys.indexOf(formationOf(team));
-    saveSquad(team, { formation: keys[(i + d + keys.length) % keys.length] });
+    const i = keys.indexOf(formationOf(t));
+    saveSquad(t, { formation: keys[(i + d + keys.length) % keys.length] });
     sfx.move(); render();
   }
   function cycleTactic(d) {
-    const team = currentManageTeam();
+    const t = currentManageTeam();
     const keys = ['defensive', 'balanced', 'attacking'];
-    const i = keys.indexOf(tacticOf(team));
-    saveSquad(team, { tactic: keys[(i + d + keys.length) % keys.length] });
+    const i = keys.indexOf(tacticOf(t));
+    saveSquad(t, { tactic: keys[(i + d + keys.length) % keys.length] });
     sfx.move(); render();
+  }
+  function readEditor() {
+    const card = screenEl('hub').querySelector('.pdb-right');
+    const overall = clamp(Number(card.querySelector('[data-edit="overall"]').value) || 1, 1, 99);
+    const position = card.querySelector('[data-edit="position"]').value;
+    const attributes = {};
+    card.querySelectorAll('[data-edit-attr]').forEach((inp) => { attributes[inp.dataset.editAttr] = clamp(Number(inp.value) || 1, 1, 99); });
+    return { overall, position, attributes };
   }
 
   function back() {
@@ -667,44 +948,51 @@ export function createFrontend(api) {
     if (screen === 'hub') go('title');
     else if (screen === 'select') go('hub');
     else if (screen === 'preview') {
-      const progress = api.getProgress();
-      const continuing = (settings.mode === 'cup' && progress.cup) || (settings.mode === 'career' && progress.league);
+      const prog = api.getProgress();
+      const continuing = (settings.mode === 'cup' && prog.cup) || (settings.mode === 'career' && prog.league);
       go(continuing ? 'hub' : 'select');
     } else if (screen === 'manage') { manageSel = null; go(manageReturn); }
   }
-  let manageReturn = 'preview';
 
   root.addEventListener('click', (e) => {
     const el = e.target.closest('[data-act]');
-    if (!el || busy) return;
+    if (!el || busy || el.disabled) return;
+    e.preventDefault(); // never let a click navigate or submit anything
     const { act, v } = el.dataset;
     const d = Number(el.dataset.d || 1);
     switch (act) {
       case 'start': sfx.select(); go('hub'); break;
-      case 'tab': hubTab = v; sfx.move(); render(); break;
-      case 'mode': chooseMode(v); break;
-      case 'squadTeam': squadsTeam = v; sfx.move(); rerenderKeepFocus(); break;
-      case 'manageSquad': {
-        manageOnlyId = v;
-        manageSide = 0; manageSel = null; manageCursor = 0; manageReturn = 'hub'; sfx.select(); go('manage'); break;
-      }
+      case 'recover': settingsSafe(); go('hub'); break;
+      case 'tab': hubTab = v; uiPrefs.hubTab = v; saveUi(); pushRoute('hub', true); sfx.move(); render(); break;
+      case 'mode': chooseMode(v, el.dataset.pool || null); break;
+      case 'clubsTeam': clubsTeam = v; sfx.move(); screenEl('hub').querySelector('.squad-detail').innerHTML = teamDetailHTML(team(v), true); refreshBrowseList(screenEl('hub'), v, 'clubsTeam'); break;
+      case 'manageSquad': manageOnlyId = v; manageSide = 0; manageSel = null; manageCursor = 0; manageReturn = 'hub'; sfx.select(); go('manage'); break;
+      case 'manageFromSelect': manageOnlyId = null; manageSide = selSide; manageSel = null; manageCursor = 0; manageReturn = 'select'; sfx.select(); go('manage'); break;
+      case 'pool': if (browse.pool !== v) { browse.pool = v; browse.league = 'all'; saveUi(); if (screen === 'select') { settings.pool = v; ensureSelectionsInPool(); api.persistSettings(); } sfx.move(); render(); } break;
+      case 'sort': browse.sort = v; saveUi(); sfx.move(); rerenderBrowse(); break;
+      case 'favOnly': browse.fav = !browse.fav; saveUi(); sfx.move(); rerenderBrowse(); el.classList.toggle('on', browse.fav); break;
+      case 'fav': toggleFav(v); el.classList.toggle('on', favorites.has(v)); sfx.move(); if (browse.fav) rerenderBrowse(); break;
       case 'cycle': e.stopPropagation(); cycleOption(v, d); break;
-      case 'sounds': uiPrefs.sounds = !uiPrefs.sounds; LS.set('fsl-ui', uiPrefs); sfx.select(); rerenderKeepFocus(); break;
+      case 'sounds': uiPrefs.sounds = !uiPrefs.sounds; saveUi(); sfx.select(); rerenderKeepFocus(); break;
       case 'controls': openModal('controls'); break;
       case 'settingsModal': openModal('settings'); break;
       case 'closeModal': closeModal(); break;
       case 'howto': sfx.select(); api.openHowToPlay(); break;
       case 'dev': sfx.select(); api.openDevOptions(); break;
-      case 'resetSquads': squadPrefs = {}; LS.set('fsl-squads', {}); sfx.select(); render(); break;
-      case 'cycleTeam': cycleTeam(Number(el.dataset.side), d); break;
-      case 'pickTeam': {
-        const side = Number(el.dataset.side);
-        const key = side === 0 ? 'home' : 'away';
-        if (settings[key] !== v) { settings[key] = v; if (settings.mode === 'cup') api.clearCup(); if (settings.mode === 'career') api.clearLeague(); api.persistSettings(); sfx.move(); render(); }
-        break;
+      case 'validate': runValidation(); break;
+      case 'export': {
+        const blob = new Blob([JSON.stringify(exportUserData(), null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = `futbol-super-league-save-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); sfx.select(); break;
       }
+      case 'import': screenEl('hub').querySelector('[data-change="importFile"]')?.click(); break;
+      case 'resetSquads': squadPrefs = {}; ls.set('fsl-squads', {}); sfx.select(); render(); break;
+      case 'pickTeam': pickTeam(v); break;
+      case 'side': selSide = Number(v); sfx.move(); refreshSelectParts(); break;
+      case 'kit': settings[selSide === 0 ? 'homeKit' : 'awayKit'] = v; api.persistSettings(); sfx.move(); refreshSelectParts(); break;
       case 'back': back(); break;
-      case 'toPreview': sfx.select(); previewTab = 'preview'; go('preview'); break;
+      case 'toPreview': if (canContinue()) { sfx.select(); previewTab = 'preview'; go('preview'); } break;
       case 'pvTab': previewTab = v; sfx.move(); render(); break;
       case 'pvStats': previewTab = 'stats'; sfx.move(); render(); break;
       case 'play': kickOff(); break;
@@ -714,9 +1002,59 @@ export function createFrontend(api) {
       case 'mgSide': manageSide = Number(v); manageSel = null; manageCursor = 0; sfx.move(); render(); break;
       case 'formation': cycleFormation(d); break;
       case 'tactic': cycleTactic(d); break;
+      case 'dbPick': {
+        dbMember = v; dbPlayer = DB.roster_members.find((r) => r.id === v)?.player_id; sfx.move();
+        const hub = screenEl('hub');
+        hub.querySelector('.pdb-right').innerHTML = playerEditorHTML();
+        hub.querySelectorAll('.pdb-row').forEach((r) => r.classList.toggle('on', r.dataset.v === v));
+        break;
+      }
+      case 'saveEdit': {
+        const edits = ls.get('fsl-edits', {});
+        edits[dbMember] = readEditor();
+        ls.set('fsl-edits', edits); api.refreshDb(); sfx.select(); render(); break;
+      }
+      case 'resetEdit': {
+        const edits = ls.get('fsl-edits', {});
+        delete edits[dbMember];
+        ls.set('fsl-edits', edits); api.refreshDb(); sfx.back(); render(); break;
+      }
+      case 'toggleCustom': {
+        const custom = ls.get('fsl-custom', { name: 'Ultimate XI', players: [] });
+        const i = custom.players.indexOf(dbPlayer);
+        if (i >= 0) custom.players.splice(i, 1); else if (custom.players.length < 18) custom.players.push(dbPlayer);
+        ls.set('fsl-custom', custom); api.refreshDb(); sfx.select(); render(); break;
+      }
       default: break;
     }
   });
+  function rerenderBrowse() {
+    const scope = screenEl(screen);
+    if (screen === 'select') refreshBrowseList(scope, selSide === 0 ? settings.home : settings.away, 'pickTeam');
+    else refreshBrowseList(scope, clubsTeam, 'clubsTeam');
+  }
+  function settingsSafe() { modal.classList.add('hidden'); }
+  root.addEventListener('input', (e) => {
+    const k = e.target.dataset.input;
+    if (k === 'search') { browse.q = e.target.value; rerenderBrowse(); }
+    if (k === 'dbsearch') {
+      dbQuery = e.target.value;
+      const shown = dbResults().slice(0, 80);
+      screenEl('hub').querySelector('.pdb-list').innerHTML = pdbListHTML(shown);
+    }
+  });
+  root.addEventListener('change', (e) => {
+    const k = e.target.dataset.change;
+    if (k === 'league') { browse.league = e.target.value; saveUi(); rerenderBrowse(); }
+    if (k === 'importFile' && e.target.files?.[0]) {
+      e.target.files[0].text().then((txt) => {
+        const written = importUserData(txt);
+        openModal('report', `<h2>Import complete</h2><p>Restored: ${written.map(esc).join(', ') || 'nothing'}.</p><p>Reloading the menus with your data.</p>`);
+        setTimeout(() => location.reload(), 1200); // intentional: rebuild state from the imported data
+      }).catch((err) => openModal('report', `<h2>Import failed</h2><p>${esc(err.message)}</p>`));
+    }
+  });
+  root.addEventListener('submit', (e) => e.preventDefault());
   root.addEventListener('focusin', (e) => { if (e.target.matches?.('[data-nav]')) sfx.move(); });
   intro.addEventListener('click', () => introDone?.());
 
@@ -742,15 +1080,21 @@ export function createFrontend(api) {
       if (score < bestScore) { bestScore = score; best = el; }
     }
     best?.focus();
+    best?.scrollIntoView?.({ block: 'nearest' });
   }
   function handleKey(e) {
     if (!root.classList.contains('show')) return false;
     if (introDone) { if (['Enter', 'Space', 'Escape'].includes(e.code)) { e.preventDefault(); introDone(); } return true; }
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+      if (e.code === 'Escape') e.target.blur();
+      return true; // typing in a field never triggers menu shortcuts
+    }
     if (busy) return true;
-    const onButton = e.target?.tagName === 'BUTTON';
+    const onButton = tag === 'BUTTON';
     const code = e.code;
     if (screen === 'title') {
-      if (!['F1', 'Backquote', 'Tab'].includes(code)) { e.preventDefault(); sfx.select(); go('hub'); }
+      if (!['F1', 'Backquote', 'Tab', 'F5', 'F12'].includes(code) && !e.metaKey && !e.ctrlKey) { e.preventDefault(); sfx.select(); go('hub'); }
       return true;
     }
     if (code === 'Escape' || code === 'Backspace') { e.preventDefault(); back(); return true; }
@@ -758,26 +1102,25 @@ export function createFrontend(api) {
       const row = document.activeElement?.closest?.('.set-row');
       if (row && (code === 'ArrowLeft' || code === 'ArrowRight')) {
         e.preventDefault();
-        if (row.dataset.act === 'sounds') { uiPrefs.sounds = !uiPrefs.sounds; LS.set('fsl-ui', uiPrefs); rerenderKeepFocus(); } else cycleOption(row.dataset.v, code === 'ArrowLeft' ? -1 : 1);
+        if (row.dataset.act === 'sounds') { uiPrefs.sounds = !uiPrefs.sounds; saveUi(); rerenderKeepFocus(); } else cycleOption(row.dataset.v, code === 'ArrowLeft' ? -1 : 1);
         return true;
       }
       if (code.startsWith('Arrow')) { e.preventDefault(); spatial(code.slice(5).toLowerCase()); }
       return true;
     }
     if (screen === 'select') {
-      const single = MODES[settings.mode].single;
-      if (code === 'KeyA' || (single && code === 'ArrowLeft')) { cycleTeam(0, -1); return true; }
-      if (code === 'KeyD' || (single && code === 'ArrowRight')) { cycleTeam(0, 1); return true; }
-      if (!single && code === 'ArrowLeft') { e.preventDefault(); cycleTeam(1, -1); return true; }
-      if (!single && code === 'ArrowRight') { e.preventDefault(); cycleTeam(1, 1); return true; }
-      if (code === 'Enter' && !onButton) { sfx.select(); previewTab = 'preview'; go('preview'); return true; }
+      if (code === 'ArrowDown' || code === 'KeyS') { e.preventDefault(); stepTeam(1); return true; }
+      if (code === 'ArrowUp' || code === 'KeyW') { e.preventDefault(); stepTeam(-1); return true; }
+      if ((code === 'KeyQ' || code === 'KeyE') && !modeInfo(settings.mode, settings.pool).single && settings.mode !== 'practice' && settings.mode !== 'tutorial') {
+        selSide = 1 - selSide; sfx.move(); refreshSelectParts(); return true;
+      }
+      if (code === 'Enter' && !onButton) { if (canContinue()) { sfx.select(); previewTab = 'preview'; go('preview'); } return true; }
       return true;
     }
     if (screen === 'manage') {
       const n = squadOf(currentManageTeam()).length;
       if (code === 'ArrowDown' || code === 'KeyS') { e.preventDefault(); manageCursor = (manageCursor + 1) % n; sfx.move(); render(); return true; }
       if (code === 'ArrowUp' || code === 'KeyW') { e.preventDefault(); manageCursor = (manageCursor - 1 + n) % n; sfx.move(); render(); return true; }
-      if ((code === 'Enter' || code === 'Space') && !onButton) { e.preventDefault(); mgSelect(manageCursor); return true; }
       if (code === 'Enter' || code === 'Space') { e.preventDefault(); mgSelect(manageCursor); return true; }
       if (code === 'KeyF') { cycleFormation(1); return true; }
       if (code === 'KeyT') { cycleTactic(1); return true; }
@@ -788,6 +1131,7 @@ export function createFrontend(api) {
     if (screen === 'hub' && (code === 'KeyQ' || code === 'KeyE')) {
       const i = HUB_TABS.findIndex(([k]) => k === hubTab);
       hubTab = HUB_TABS[(i + (code === 'KeyE' ? 1 : -1) + HUB_TABS.length) % HUB_TABS.length][0];
+      uiPrefs.hubTab = hubTab; saveUi(); pushRoute('hub', true);
       sfx.move(); render(); focusFirst(); return true;
     }
     if (screen === 'preview' && (code === 'KeyQ' || code === 'KeyE')) {
@@ -798,7 +1142,7 @@ export function createFrontend(api) {
     const row = document.activeElement?.closest?.('.set-row');
     if (row && (code === 'ArrowLeft' || code === 'ArrowRight')) {
       e.preventDefault();
-      if (row.dataset.act === 'sounds') { uiPrefs.sounds = !uiPrefs.sounds; LS.set('fsl-ui', uiPrefs); rerenderKeepFocus(); } else cycleOption(row.dataset.v, code === 'ArrowLeft' ? -1 : 1);
+      if (row.dataset.act === 'sounds') { uiPrefs.sounds = !uiPrefs.sounds; saveUi(); rerenderKeepFocus(); } else cycleOption(row.dataset.v, code === 'ArrowLeft' ? -1 : 1);
       return true;
     }
     if (code.startsWith('Arrow')) { e.preventDefault(); spatial(code.slice(5).toLowerCase()); return true; }
@@ -814,10 +1158,17 @@ export function createFrontend(api) {
 
   // ---------- public interface ----------
   return {
+    /** First load: restore the screen in the URL (after a reload) or show the title. */
+    boot() {
+      root.classList.add('show');
+      const r = parseRoute();
+      if (r.tab) hubTab = r.tab;
+      const target = r.screen === 'title' || !canRestore(r.screen) ? 'title' : r.screen;
+      go(target, { instant: true, replace: true });
+    },
     show(name = 'hub') {
       root.classList.add('show');
-      if (name === 'title') { activate('title'); return; }
-      go(name, { instant: screen === null || screen === 'title' });
+      go(name, { instant: screen === null || screen === 'title', replace: true });
     },
     hide() { root.classList.remove('show'); screen = null; },
     isActive: () => root.classList.contains('show'),
@@ -825,33 +1176,42 @@ export function createFrontend(api) {
     handleKey,
     playIntro,
     /** Team data with the user's saved line-up order applied. */
-    applySquad(team) {
-      const all = [...team.players, ...(team.bench || [])];
-      const order = orderOf(team);
+    applySquad(t) {
+      const all = [...t.players, ...(t.bench || [])];
+      const order = orderOf(t);
       const base = api.formations['4-3-3'];
       return {
-        ...team,
+        ...t,
         players: order.slice(0, 11).map((i) => all[i]),
         bench: order.slice(11).map((i) => ({ ...all[i], role: all[i].role || base[i]?.role || 'MID' })),
       };
     },
-    squadSetup(team) { return { formation: formationOf(team), tactic: tacticOf(team) }; },
+    squadSetup(t) { return { formation: formationOf(t), tactic: tacticOf(t) }; },
     recordResult(homeId, awayId, hs, as, humanSide) {
       if (homeId === awayId) return;
-      const all = LS.get('fsl-h2h', {});
+      const all = ls.get('fsl-h2h', {});
       const key = [homeId, awayId].sort().join('|');
       const rec = all[key] || { wins: {}, draws: 0 };
       if (hs === as) rec.draws += 1;
       else { const w = hs > as ? homeId : awayId; rec.wins[w] = (rec.wins[w] || 0) + 1; }
       all[key] = rec;
-      LS.set('fsl-h2h', all);
+      ls.set('fsl-h2h', all);
+      const results = ls.get('fsl-results', []);
+      results.push({ at: new Date().toISOString(), homeId, awayId, hs, as, roster: settings.roster, mode: settings.mode });
+      ls.set('fsl-results', results.slice(-200));
       if (humanSide !== null && humanSide !== undefined) {
         const p = profile();
         const mine = humanSide === 0 ? hs : as, theirs = humanSide === 0 ? as : hs;
         p.played += 1; p.gf += mine; p.ga += theirs;
         if (mine > theirs) p.w += 1; else if (mine === theirs) p.d += 1; else p.l += 1;
-        LS.set('fsl-profile', p);
+        ls.set('fsl-profile', p);
       }
     },
   };
+  function canRestore(name) {
+    if (name === 'hub') return true;
+    if (name === 'select' || name === 'manage') return true;
+    if (name === 'preview') return canContinue();
+    return false;
+  }
 }
