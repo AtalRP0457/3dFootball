@@ -14,6 +14,7 @@ const RING = {
   current: '#22c55e', // green: the player you control
   next: '#facc15', // yellow: who you get on the next pass / switch
   other: '#ef4444', // red: controlled by the computer
+  tackle: '#fb923c', // flashing orange: close enough to tackle
 };
 const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0673b'];
 const HAIR = ['#1b1b1b', '#3b2416', '#6b4423', '#c9a15b', '#2a1a0f'];
@@ -574,7 +575,8 @@ export function createRenderer(canvasEl) {
       m.root.position.set(p.pos.x, 0, p.pos.z);
       m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
       const sp = Math.hypot(p.vel.x, p.vel.z);
-      m.phase += sp * dt * 1.7;
+      // Legs follow game speed, so slow motion looks like slow motion.
+      m.phase += sp * dt * 1.7 * (state.timeScale || 1);
       const amp = Math.min(1, sp / 6) * 0.85;
       const s = Math.sin(m.phase);
       m.legs[0].rotation.x = s * amp;
@@ -599,7 +601,7 @@ export function createRenderer(canvasEl) {
       m.body.rotation.z += (tilt - m.body.rotation.z) * Math.min(1, dt * 14);
       m.body.position.y += (drop - m.body.position.y) * Math.min(1, dt * 14);
       // Keeper holding the ball: arms forward
-      if (state.ball.owner === p && p.role === 'GK') {
+      if (state.ball.owner === p && p.holding) {
         m.arms[0].rotation.x = m.arms[1].rotation.x = -1.3;
       }
       // A clear team reaction gives goals and their replays a readable payoff.
@@ -615,7 +617,7 @@ export function createRenderer(canvasEl) {
     // Ball: position and rolling spin from displacement
     const b = state.ball;
     ball.position.set(b.pos.x, b.pos.y, b.pos.z);
-    if (b.owner && b.owner.role === 'GK') ball.position.y = 1.05;
+    if (b.owner && b.owner.holding) ball.position.y = 1.05; // in the keeper's hands
     const ballHeight = Math.max(0, ball.position.y - BALL_R);
     ballShadow.position.x = ball.position.x;
     ballShadow.position.z = ball.position.z;
@@ -638,9 +640,11 @@ export function createRenderer(canvasEl) {
       let kind = 'other';
       if (team.controlled === p && team.human) kind = 'current';
       else if (team.next === p && team.human) kind = 'next';
+      else if (state.teams.some((t) => t.human && t.tackleTarget === p)) kind = 'tackle';
       m.ring.visible = live && p.onPitch && !p.sentOff;
       m.ring.material.color.set(RING[kind]);
-      const pulse = kind === 'next' ? 1 + Math.sin(time * 8) * 0.12 : 1;
+      const pulse = kind === 'next' ? 1 + Math.sin(time * 8) * 0.12
+        : kind === 'tackle' ? 1.2 + Math.sin(time * 18) * 0.2 : 1;
       const size = kind === 'other' ? 0.8 : 1.1;
       m.ring.scale.setScalar(size * pulse);
       m.ring.material.opacity = kind === 'other' ? 0.6 : 0.95;

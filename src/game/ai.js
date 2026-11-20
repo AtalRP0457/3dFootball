@@ -27,7 +27,7 @@ function predictBall(b, t) {
   return { x: b.pos.x + (b.vel.x / h) * d, z: b.pos.z + (b.vel.z / h) * d };
 }
 
-function interceptPoint(p, b) {
+export function interceptPoint(p, b) {
   const s = runSpeed(p) * 1.2;
   for (let t = 0; t <= 3; t += 0.1) {
     const q = predictBall(b, t);
@@ -140,8 +140,12 @@ function offBallAI(state, p, team, c, dt) {
   const weHave = b.owner ? b.owner.team === p.team : (b.intended && b.intended.team === p.team);
   const theyHave = b.owner && b.owner.team !== p.team;
 
+  // Tackle drill: teammates stay out of the way.
+  if (p.drillPassive) { p.aiState = 'drill (waiting)'; setMove(p, p.pos.x, p.pos.z); return; }
+
   // A pass is on its way to me: go and meet it.
   if (b.intended === p && !b.owner) {
+    p.aiState = 'receive pass';
     const q = interceptPoint(p, b);
     setMove(p, q.x, q.z, true, 0.4);
     return;
@@ -150,14 +154,25 @@ function offBallAI(state, p, team, c, dt) {
   // Chase or press the ball.
   const humanHandling = c.humanCloser && c.humanD < 5;
   if (!weHave && p === c.chaser && !humanHandling) {
+    p.aiState = theyHave ? 'press' : 'chase ball';
     if (theyHave) {
       const o = b.owner;
+      if (o.holding || o.mustPass) {
+        // Can't challenge: wait a few metres away, goal-side.
+        const gx = -HALF_L * team.dir;
+        const vx = gx - o.pos.x, vz = -o.pos.z;
+        const l = len(vx, vz) || 1;
+        setMove(p, o.pos.x + (vx / l) * 4, o.pos.z + (vz / l) * 4, false, 1);
+        p.aiState = 'wait (protected ball)';
+        return;
+      }
       setMove(p, o.pos.x + o.vel.x * 0.25, o.pos.z + o.vel.z * 0.25, true, 0.3);
-      if (o.role !== 'GK' && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.5) {
+      const prot = o.mustPass || (o.holding && o === b.owner);
+      if (!prot && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.6) {
         p.aiTimer -= dt;
         if (p.aiTimer <= 0) {
-          p.aiTimer = team.diff.reaction + Math.random() * 0.5;
-          if (Math.random() < 0.55) p.intent.action = { type: 'tackle' };
+          p.aiTimer = team.diff.reaction + Math.random() * 0.3;
+          if (Math.random() < 0.7 * team.diff.tackle) p.intent.action = { type: 'tackle' };
         }
       }
     } else {
@@ -165,6 +180,32 @@ function offBallAI(state, p, team, c, dt) {
       setMove(p, q.x, q.z, true, 0.3);
     }
     return;
+  }
+
+  p.aiState = weHave ? 'support' : (p === c.second && theyHave ? 'cover' : 'shape');
+  // Keep the run the human started (see rememberRun in match.js): stay up
+  // the pitch and keep going towards goal, unless the opponents win the ball.
+  const kr = p.keepRun;
+  if (kr) {
+    if (state.clock >= kr.until || theyHave) {
+      p.keepRun = null;
+    } else {
+      const gx = HALF_L * dir;
+      const toGoal = Math.abs(gx - p.pos.x);
+      if (kr.running && toGoal > 8) {
+        // Carry on towards the goal, finishing in front of the posts.
+        const tz = clamp(p.pos.z * 0.85, -GOAL.width - 3, GOAL.width + 3);
+        setMove(p, gx - dir * 7, tz, kr.sprint, 2);
+        p.aiState = `keep run (${(kr.until - state.clock).toFixed(1)}s)`;
+      } else {
+        // Hold the spot you left him in (or just in front of goal).
+        const hx = kr.running ? p.pos.x : kr.spot.x;
+        const hz = kr.running ? p.pos.z : kr.spot.z;
+        setMove(p, hx, hz, false, 1.5);
+        p.aiState = `hold spot (${(kr.until - state.clock).toFixed(1)}s)`;
+      }
+      return;
+    }
   }
 
   // Shape: work out a target spot in attack coordinates.
@@ -188,7 +229,16 @@ function offBallAI(state, p, team, c, dt) {
       sprint = ax - p.pos.x * dir > 6;
     }
   } else {
-    if (p === c.second && theyHave) {
+    if (p === c.second && theyHave && bax < -HALF_L * 0.35 && dist(p.pos, b.owner.pos) < 9) {
+      // Danger zone: second defender closes the dribbler down too.
+      const o = b.owner;
+      setMove(p, o.pos.x + o.vel.x * 0.3 - dir * 1.2, o.pos.z + o.vel.z * 0.3, true, 0.3);
+      p.aiState = 'double team';
+      if (!o.mustPass && !o.holding && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.6 && Math.random() < 0.02 * team.diff.tackle) {
+        p.intent.action = { type: 'tackle' };
+      }
+      return;
+    } else if (p === c.second && theyHave) {
       // Cover: stand between the ball and our goal.
       const gx = -HALF_L;
       const vx = gx - bax, vz = -baz;
@@ -239,6 +289,8 @@ function withBallAI(state, p, team, dt) {
   const press = nearestOpponentDist(state, p);
   it.sprint = press > 3.5 && p.stamina > 0.3;
 
+  p.aiState = 'dribble';
+  if (p.drillNoPass) return; // tackle drill: keep dribbling, never pass or shoot
   p.aiTimer -= dt;
   if (p.aiTimer > 0) return;
   p.aiTimer = team.diff.reaction + Math.random() * 0.25;
@@ -293,6 +345,7 @@ function keeperAI(state, p, team, dt) {
   const dir = team.dir;
   const gx = -HALF_L * dir; // own goal line
   const it = p.intent;
+  p.aiState = 'keeper';
 
   if (b.owner === p) {
     it.mx = 0; it.mz = 0;

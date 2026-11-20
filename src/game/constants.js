@@ -27,6 +27,7 @@ export const SHOT_CHARGE_TIME = 0.9; // seconds to reach full shot power
 export const MUST_PASS_TIMEOUT = 5; // throw-ins/kick-offs auto-pass after this
 
 export const DIFFICULTY = {
+  beginner: { reaction: 0.7, speed: 0.8, error: 2.0, tackle: 0.35, keeper: -0.2 },
   easy: { reaction: 0.45, speed: 0.9, error: 1.5, tackle: 0.75, keeper: -0.12 },
   normal: { reaction: 0.28, speed: 1.0, error: 1.0, tackle: 1.0, keeper: 0 },
   hard: { reaction: 0.14, speed: 1.05, error: 0.7, tackle: 1.25, keeper: 0.08 },
@@ -115,3 +116,20 @@ export const KICKOFF_DEFEND = [
   { x: -0.3, z: -0.4 },
   { x: -0.3, z: 0.4 },
 ];
+
+// Assist settings for human players.
+//   off      : pure manual
+//   assisted : steer towards a loose ball / the opponent with the ball when
+//              you press roughly in that direction, bigger tackle and
+//              control range
+//   full     : as assisted, and your player chases a loose ball even when
+//              you press nothing
+export const ASSIST = {
+  off: { steerCos: 2, tackleRange: 1.7, controlBonus: 0, auto: false },
+  assisted: { steerCos: 0.3, tackleRange: 2.2, controlBonus: 0.3, auto: false },
+  full: { steerCos: 0.3, tackleRange: 2.2, controlBonus: 0.3, auto: true },
+};
+
+// After you hand a player back to the AI (pass or switch), he keeps the
+// position you took him to for this many seconds instead of jogging back.
+export const KEEP_RUN_TIME = 5;

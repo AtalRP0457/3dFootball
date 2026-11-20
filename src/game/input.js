@@ -1,6 +1,8 @@
 // Keyboard and gamepad input. Produces one input object per human player
 // each fixed step: { mx, mz, sprint, passPressed, shootHeld, shootPressed }.
 // mx: -1 left .. +1 right on screen. mz: -1 up (far touchline) .. +1 down.
+//
+// P1 always uses W A S D, P2 always uses the arrow keys.
 
 export const BINDINGS = {
   p1: {
@@ -15,6 +17,28 @@ export const BINDINGS = {
 
 const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b).flat()));
 
+// Fallbacks for keyboards / input sources where event.code is missing or
+// unusual: map by the printed key or the legacy keyCode instead.
+const BY_KEY = {
+  w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', f: 'KeyF', g: 'KeyG',
+  ' ': 'Space', '.': 'Period', '/': 'Slash',
+  arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
+};
+const BY_KEYCODE = {
+  87: 'KeyW', 65: 'KeyA', 83: 'KeyS', 68: 'KeyD', 70: 'KeyF', 71: 'KeyG',
+  32: 'Space', 190: 'Period', 191: 'Slash', 38: 'ArrowUp', 40: 'ArrowDown', 37: 'ArrowLeft', 39: 'ArrowRight',
+};
+
+/** Work out which physical key was pressed, as robustly as possible. */
+export function normalizeKey(e) {
+  if (e.code && GAME_KEYS.has(e.code)) return e.code;
+  const k = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+  if (BY_KEY[k]) return BY_KEY[k];
+  if (BY_KEYCODE[e.keyCode]) return BY_KEYCODE[e.keyCode];
+  if (k === 'shift') return e.location === 2 ? 'ShiftRight' : 'ShiftLeft';
+  return e.code || k;
+}
+
 export class Input {
   constructor() {
     this.down = new Set();
@@ -23,12 +47,19 @@ export class Input {
     this.padPressed = {};
     this.enabled = false;
     this.touch = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
+    this.lastRaw = null; // for the debug overlay
     this.onKeyDown = (e) => {
-      if (this.enabled && GAME_KEYS.has(e.code)) e.preventDefault();
-      if (!this.down.has(e.code)) this.pressed.add(e.code);
-      this.down.add(e.code);
+      const code = normalizeKey(e);
+      this.lastRaw = { code: e.code, key: e.key, keyCode: e.keyCode, mapped: code };
+      if (this.enabled && GAME_KEYS.has(code)) e.preventDefault();
+      if (!this.down.has(code)) this.pressed.add(code);
+      this.down.add(code);
     };
-    this.onKeyUp = (e) => this.down.delete(e.code);
+    this.onKeyUp = (e) => {
+      this.down.delete(normalizeKey(e));
+      // Shift can release without a matching code on some systems.
+      if (e.shiftKey === false) { this.down.delete('ShiftLeft'); this.down.delete('ShiftRight'); }
+    };
     this.onBlur = () => {
       this.down.clear();
       this.setTouch({ mx: 0, mz: 0, sprint: false, shootHeld: false });
@@ -61,25 +92,22 @@ export class Input {
     }
   }
 
-  /** Read one player. `ids` lists which key sets apply (1P mode uses both). */
-  sample(ids, padIndexes) {
-    let mx = 0, mz = 0, sprint = false, passPressed = false, shootHeld = false, shootPressed = false;
-    for (const id of ids) {
-      const b = BINDINGS[id];
-      mx += (this.anyDown(b.right) ? 1 : 0) - (this.anyDown(b.left) ? 1 : 0);
-      mz += (this.anyDown(b.down) ? 1 : 0) - (this.anyDown(b.up) ? 1 : 0);
-      sprint = sprint || this.anyDown(b.sprint);
-      passPressed = passPressed || this.anyPressed(b.pass);
-      shootHeld = shootHeld || this.anyDown(b.shoot);
-      shootPressed = shootPressed || this.anyPressed(b.shoot);
-    }
+  /** Read one player: key set id ('p1' / 'p2') and which gamepads count. */
+  sample(id, padIndexes) {
+    let mx = 0, mz = 0;
+    const b = BINDINGS[id];
+    mx += (this.anyDown(b.right) ? 1 : 0) - (this.anyDown(b.left) ? 1 : 0);
+    mz += (this.anyDown(b.down) ? 1 : 0) - (this.anyDown(b.up) ? 1 : 0);
+    let sprint = this.anyDown(b.sprint);
+    let passPressed = this.anyPressed(b.pass);
+    let shootHeld = this.anyDown(b.shoot);
+    let shootPressed = this.anyPressed(b.shoot);
     for (const i of padIndexes) {
       const pad = this.pads && this.pads[i];
       if (!pad) continue;
       const ax = pad.axes[0] || 0, az = pad.axes[1] || 0;
       if (Math.hypot(ax, az) > 0.2) { mx += ax; mz += az; }
       const btn = (k) => pad.buttons[k] && pad.buttons[k].pressed;
-      // D-pad
       if (btn(12)) mz -= 1;
       if (btn(13)) mz += 1;
       if (btn(14)) mx -= 1;
@@ -90,7 +118,7 @@ export class Input {
       shootPressed = shootPressed || !!pr[1];
       sprint = sprint || btn(7) || btn(5);
     }
-    if (ids.includes('p1')) {
+    if (id === 'p1') {
       mx += this.touch.mx;
       mz += this.touch.mz;
       sprint = sprint || this.touch.sprint;
