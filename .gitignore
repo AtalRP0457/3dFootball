@@ -1,3 +1,9 @@
 node_modules
 dist
 .DS_Store
+
+# Local-only user images (see the READMEs in these folders)
+public/assets/players/photos/*
+!public/assets/players/photos/README.md
+public/assets/covers/custom/*
+!public/assets/covers/custom/README.md
