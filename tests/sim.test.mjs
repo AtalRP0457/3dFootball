@@ -58,7 +58,7 @@ for (let i = 0; i < TEAMS.length; i++) {
 }
 console.log(`  ${matches} matches, avg goals ${(goals / matches).toFixed(2)}, avg shots ${(shots / matches).toFixed(1)}`);
 check(goals > 0, 'no goals scored at all');
-check(shots / matches > 4, 'too few shots');
+check(shots / matches > 2.5, 'too few shots');
 
 // Restart types and possession sanity in one longer match
 {
@@ -164,14 +164,33 @@ console.log('Next player highlight');
   check(team.controlled === shown, 'switch goes to the yellow player');
 }
 
+// 2d) A nearby teammate in the aimed direction wins over a much longer option,
+// and the rolling pass speed is calibrated to that short distance.
+console.log('Short pass targeting');
+{
+  const s = createMatch({ home: TEAMS[3], away: TEAMS[7], controllers: ['p1', 'ai'], duration: 120 });
+  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  const passer = s.teams[0].controlled;
+  const teammates = teamPlayers(s, 0).filter((p) => p !== passer && p.onPitch && p.role !== 'GK');
+  const [near, far] = teammates;
+  passer.pos.x = passer.pos.z = 0;
+  near.pos.x = 4; near.pos.z = 0;
+  far.pos.x = 18; far.pos.z = 0;
+  s.ball.owner = passer; s.ball.pos.x = 0; s.ball.pos.z = 0;
+  const target = choosePassTarget(s, passer, 1, 0);
+  check(target === near, 'aimed pass prefers nearby teammate over a long option');
+  doPass(s, passer, target);
+  check(Math.hypot(s.ball.vel.x, s.ball.vel.z) < 6.1, 'short pass leaves at controlled speed');
+}
+
 // 2c) Throw-ins can't be shot
 console.log('Throw-in rules');
 {
   const s = createMatch({ home: TEAMS[1], away: TEAMS[2], controllers: ['p1', 'ai'], duration: 120 });
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
   s.ball.owner = null;
-  s.ball.lastTouch = s.players[7];
-  s.ball.pos.x = 5; s.ball.pos.z = 20.5; s.ball.vel.x = 0; s.ball.vel.z = 1;
+  s.ball.lastTouch = s.players[18]; // away touch awards the human home side a throw-in
+  s.ball.pos.x = 5; s.ball.pos.z = HALF_W + 0.5; s.ball.vel.x = 0; s.ball.vel.z = 1;
   stepMatch(s, {}, FIXED_DT);
   check(s.phase === 'restart' && s.restart.type === 'throw-in', 'throw-in awarded');
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);

@@ -5,7 +5,7 @@
 // the opponent's goal and az is mirrored the same way, so the same rules
 // work for both teams.
 
-import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION } from './constants.js';
+import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.js';
 
 const len = (x, z) => Math.hypot(x, z);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -48,7 +48,7 @@ function setMove(p, tx, tz, sprint = false, slowRadius = 1.5) {
 }
 
 function opponents(state, p) {
-  return state.players.filter((o) => o.team !== p.team);
+  return state.players.filter((o) => o.team !== p.team && o.onPitch && !o.sentOff);
 }
 
 function nearestOpponentDist(state, p) {
@@ -71,7 +71,7 @@ export function bestPass(state, p, allowKeeper = false) {
   const opps = opponents(state, p);
   let best = null;
   for (const t of state.players) {
-    if (t.team !== p.team || t === p) continue;
+    if (t.team !== p.team || t === p || !t.onPitch || t.sentOff) continue;
     if (t.role === 'GK' && !allowKeeper) continue;
     const d = dist(p.pos, t.pos);
     if (d < 4 || d > 42) continue;
@@ -93,7 +93,7 @@ function buildContext(state, team) {
   const target = b.owner ? b.owner.pos : interceptPointRough(b);
   let chaser = null, cd = Infinity, second = null, sd = Infinity;
   for (const p of state.players) {
-    if (p.team !== team.index || p.role === 'GK' || p.human) continue;
+    if (p.team !== team.index || !p.onPitch || p.role === 'GK' || p.human || p.sentOff) continue;
     const d = dist(p.pos, target);
     if (d < cd) { second = chaser; sd = cd; chaser = p; cd = d; }
     else if (d < sd) { second = p; sd = d; }
@@ -111,7 +111,21 @@ export function updateAI(state, dt) {
   const b = state.ball;
   const ctx = state.teams.map((team) => buildContext(state, team));
   for (const p of state.players) {
+    if (!p.onPitch || p.sentOff) {
+      p.intent.mx = p.intent.mz = 0;
+      p.intent.sprint = false;
+      p.intent.action = null;
+      continue;
+    }
     if (p.human) continue;
+    if (state.penalty?.active) {
+      p.intent.mx = p.intent.mz = 0;
+      p.intent.sprint = false;
+      p.intent.action = p === state.penalty.shooter && b.owner === p
+        ? { type: 'shoot', power: 0.78, aim: rand(-0.35, 0.35) }
+        : null;
+      continue;
+    }
     const team = state.teams[p.team];
     if (p.role === 'GK') keeperAI(state, p, team, dt);
     else if (b.owner === p) withBallAI(state, p, team, dt);
@@ -195,21 +209,22 @@ function offBallAI(state, p, team, c, dt) {
   }
 
   // Shape: work out a target spot in attack coordinates.
-  const slot = FORMATION[p.idx];
+  const slot = (state.indoor ? INDOOR_FORMATION : (FORMATIONS[team.formation] || FORMATION))[p.idx];
   const bax = b.pos.x * dir, baz = b.pos.z * dir;
   const hx = slot.x * HALF_L, hz = slot.z * HALF_W;
   let ax, az, sprint = false;
+  const tacticalPush = team.tactic === 'attacking' ? 1 : team.tactic === 'defensive' ? -1 : 0;
   const wobble = Math.sin(state.clock * 0.7 + p.id * 1.7) * 2.5;
 
   if (weHave) {
     if (p.role === 'DEF') {
-      ax = clamp(hx + bax * 0.5 + 5, -HALF_L + 6, Math.max(-HALF_L + 6, bax - 4));
+      ax = clamp(hx + bax * 0.5 + 5 + tacticalPush * 3, -HALF_L + 6, Math.max(-HALF_L + 6, bax - 4));
       az = hz + baz * 0.2;
     } else if (p.role === 'MID') {
-      ax = clamp(bax + 3, -HALF_L + 10, HALF_L - 8);
+      ax = clamp(bax + 3 + tacticalPush * 5, -HALF_L + 10, HALF_L - 8);
       az = (baz > 0 ? -7 : 7) + wobble;
     } else {
-      ax = clamp(Math.max(bax + 9, hx + 8), -HALF_L + 10, HALF_L - 5);
+      ax = clamp(Math.max(bax + 9, hx + 8) + tacticalPush * 6, -HALF_L + 10, HALF_L - 5);
       az = -baz * 0.45 + wobble * 1.5;
       sprint = ax - p.pos.x * dir > 6;
     }
@@ -232,14 +247,14 @@ function offBallAI(state, p, team, c, dt) {
       az = baz + (vz / l) * 5;
       sprint = true;
     } else if (p.role === 'DEF') {
-      ax = clamp(Math.min(hx + bax * 0.45, bax - 3), -HALF_L + 3, -2);
+      ax = clamp(Math.min(hx + bax * 0.45, bax - 3) + tacticalPush * 4, -HALF_L + 3, -2);
       az = hz * 0.7 + baz * 0.35;
       sprint = bax < p.pos.x * dir;
     } else if (p.role === 'MID') {
-      ax = clamp(bax - 6, -HALF_L + 8, HALF_L - 15);
+      ax = clamp(bax - 6 + tacticalPush * 5, -HALF_L + 8, HALF_L - 15);
       az = baz * 0.6;
     } else {
-      ax = clamp(bax * 0.4 + 4, -10, 18);
+      ax = clamp(bax * 0.4 + 4 + tacticalPush * 7, -10, 18);
       az = baz * 0.3 + hz;
     }
   }
@@ -282,6 +297,20 @@ function withBallAI(state, p, team, dt) {
 
   if (p.mustPass) {
     if (p.mustPassTimer < 0.5 + team.diff.reaction) return;
+    const dGoal = len(goalX - p.pos.x, p.pos.z);
+    if (!p.throwIn && p.role !== 'GK' && dGoal < 38) {
+      const shotChance = dGoal < 13 ? 0.68 : dGoal < 22 ? 0.34 : 0.14;
+      if (Math.random() < shotChance) {
+        const gk = state.players.find((o) => o.team !== p.team && o.onPitch && !o.sentOff && o.role === 'GK');
+        const away = gk && gk.pos.z > 0 ? -1 : 1;
+        it.action = {
+          type: 'shoot',
+          power: clamp(0.55 + (38 - dGoal) / 70 + rand(0, 0.15), 0.45, 0.9),
+          aim: away * rand(0.35, 0.9),
+        };
+        return;
+      }
+    }
     const bp = bestPass(state, p, false) || bestPass(state, p, true);
     if (bp) it.action = { type: 'pass', target: bp.target };
     return;
@@ -289,9 +318,10 @@ function withBallAI(state, p, team, dt) {
 
   const dGoal = len(goalX - p.pos.x, p.pos.z);
   if (dGoal < 22 && Math.abs(p.pos.z) < 15) {
-    const prob = dGoal < 11 ? 0.85 : dGoal < 16 ? 0.45 : 0.15;
+    const tacticBias = team.tactic === 'attacking' ? 0.12 : team.tactic === 'defensive' ? -0.08 : 0;
+    const prob = clamp((dGoal < 11 ? 0.85 : dGoal < 16 ? 0.45 : 0.15) + tacticBias, 0.05, 0.95);
     if (Math.random() < prob) {
-      const gk = state.players.find((o) => o.team !== p.team && o.role === 'GK');
+      const gk = state.players.find((o) => o.team !== p.team && o.onPitch && !o.sentOff && o.role === 'GK');
       const away = gk && gk.pos.z > 0 ? -1 : 1;
       it.action = {
         type: 'shoot',

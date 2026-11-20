@@ -1,7 +1,7 @@
 # Legends — prototype
 
 A 3D arcade soccer game in the spirit of FIFA 98, built with three.js.
-Ten decade teams (1910–2000) of all-time greats, 5-a-side, played in the browser on localhost.
+Ten decade teams (1910–2000) of all-time greats, 11-a-side in a 4-3-3 formation, played in the browser on localhost.
 
 ## Run it
 
@@ -15,11 +15,24 @@ npm run dev      # then open the http://localhost:5173 link it prints
 
 `npm test` runs the headless match simulations (no browser needed).
 
+If you're building with friends, see [CONTRIBUTING.md](CONTRIBUTING.md) for
+the code ownership split, local setup, and GitHub branch/review workflow. See
+[ROADMAP.md](ROADMAP.md) for milestones toward a fuller FIFA 98-inspired game.
+
 ## Modes
 
 - **1 Player vs AI**: you pick your team and an AI opponent (Easy / Normal / Hard).
 - **2 Players**: same keyboard (or two gamepads).
 - **Watch AI vs AI**
+- **Decades Cup**: an 8-team knockout tournament with quick AI-simulated fixtures. Tied user matches play extra time, then go to playable penalties: aim each shot, choose a keeper dive and continue through sudden death if needed.
+- **Penalty Shootout**: a standalone sudden-death shootout where you place shots and choose your keeper's dive.
+- **Practice**: an open-ended match against easy AI with no halftime or full-time whistle.
+- **Indoor Soccer**: fast five-a-side play with active side and end boards that keep the ball in motion. Indoor sides use their own compact shape; substitutions remain available from Team Management.
+- **Career Season**: an 18-matchday, 10-team league with AI-simulated matches, standings and saved progress.
+- **Full 11-player teams** with four named reserves, up to three substitutions, 4-3-3/4-4-2/3-5-2 formations, full-size pitch, halftime end switch, offside calls, fouls, free kicks, penalties and yellow/red cards
+- **Goal replays** show the last four seconds from the broadcast camera; press R or use Skip Replay to return to play.
+- **Procedural match sound** for kicks, tackles, saves, whistles, goals and crowd ambience; toggle it in the HUD
+- **Team management** from the pause menu: choose formation, set balanced/attacking/defensive support shape, and make up to three substitutions
 
 ## Modes and options
 
@@ -40,6 +53,7 @@ npm run dev      # then open the http://localhost:5173 link it prints
 | Pass, or switch player (without the ball) | F or Space | `.` | A / Cross |
 | Shoot (hold for power), or tackle (without the ball) | G | `/` | B / Circle |
 | Sprint | Left Shift | Right Shift | RT / RB |
+| Touch screen | Virtual stick + action buttons, Pause, Camera | | |
 | Pause | Esc or P | | Start |
 | Change camera | C | | |
 
@@ -75,10 +89,11 @@ would need rebuilding.
 
 ## Adding a team
 
-Add an entry to `TEAMS` in `src/data/teams.js` with five players in the order
-GK, DEF, DEF, MID, FWD. It appears in the menu automatically.
+Add an entry to `TEAMS` in `src/data/teams.js` with eleven starting players in
+the order GK, DEF, DEF, MID, FWD, DEF, DEF, MID, MID, FWD, FWD, plus a `bench`
+array with reserve roles and ratings. It appears in the menu automatically.
 
-## Not in the prototype yet
+## Still in progress
 
 11-a-side, offside, fouls and penalties, audio,
 tournament or career modes, replays, proper player models.

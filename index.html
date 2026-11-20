@@ -75,7 +75,7 @@
     <div id="menu" class="overlay">
       <div class="card">
         <h1 class="logo">LEGENDS</h1>
-        <div class="sub">The Decades Cup &middot; prototype</div>
+        <div class="sub">Road to Football History &middot; Preview Build</div>
 
         <!-- Step 1 -->
         <div id="menuStep1">
@@ -284,8 +284,12 @@
             <li><b>Kick-off, throw-in:</b> the taker can't run. Choose a direction and press Pass. Shooting a throw-in just throws it.</li>
             <li><b>Corner:</b> press Pass for a pass, or Shoot to whip it towards goal.</li>
             <li><b>Goal kick:</b> your keeper takes it automatically.</li>
-            <li>5-a-side for now: no offside, fouls or penalties.</li>
-            <li><kbd>Esc</kbd> or <kbd>P</kbd> pauses &middot; <kbd>C</kbd> changes the camera (broadcast, wide, close).</li>
+            <li>Choose 4-3-3, 4-4-2 or 3-5-2 in Team Management. Offside is called when a player beyond both the ball and second-last defender receives a pass.</li>
+            <li>Late tackles can be called as fouls; fouls in the penalty area award a penalty kick.</li>
+            <li>Hard fouls can injure a player. Injured players lose pace and accuracy; use Team Management to replace them.</li>
+            <li>Pause to open Team Management. Set the support tactic and make up to three substitutions; a change queued during play takes effect at the next stoppage.</li>
+            <li>The teams change ends at halftime. Sound can be toggled from the match HUD.</li>
+            <li><kbd>Esc</kbd> or <kbd>P</kbd> pauses &middot; <kbd>C</kbd> changes the camera &middot; <kbd>R</kbd> skips a goal replay.</li>
           </ul>
           <div class="legend big-legend">
             <span><span class="dot g"></span> You</span>
@@ -324,12 +328,32 @@
     <!-- Full time -->
     <div id="fulltime" class="overlay hidden">
       <div class="card small">
-        <h2>Full time</h2>
+        <h2 id="ftTitle">Full time</h2>
         <div id="ftScore"></div>
+        <p id="ftCupNote" class="cup-note"></p>
+        <ol id="ftCupResults" class="cup-results hidden"></ol>
         <ul id="ftScorers"></ul>
         <table id="ftStats"></table>
         <button class="big" id="rematchBtn">Rematch</button>
         <button id="menuBtn">Main menu</button>
+      </div>
+    </div>
+
+    <!-- Decades Cup penalty shootout -->
+    <div id="shootout" class="overlay hidden">
+      <div class="card small shootout-card">
+        <h2>Penalty shootout</h2>
+        <p id="shootoutTeams"></p>
+        <div id="shootoutScore" class="shootout-score"></div>
+        <p id="shootoutStatus" aria-live="polite"></p>
+        <div id="shootoutAim" class="shootout-aim">
+          <button type="button" data-aim="-1">Left</button>
+          <button type="button" data-aim="0" class="on">Center</button>
+          <button type="button" data-aim="1">Right</button>
+        </div>
+        <button class="big" id="shootoutKick">Take penalty</button>
+        <button class="big hidden" id="shootoutNext">Next kick</button>
+        <button id="shootoutMenu">Save and quit to menu</button>
       </div>
     </div>
 
