@@ -6,7 +6,8 @@
 // API (#/hub, #/select, ...) so browser Back/Forward move between screens,
 // and selections live in persisted settings so nothing is lost on a reload.
 import './frontend.css';
-import { playerSVG, trophySVG, ballSVG, esc, shade } from './art.js';
+import { trophySVG, ballSVG, esc, shade } from './art.js';
+import { playerSVG, coverSVG, customCoverUrls, loadUserImages } from './hero.js';
 import { DB, IDX, ATTRIBUTE_KEYS, POSITIONS, eraLabel, ERAS } from '../db/index.js';
 import { playerCard, kitUrl, kitTypes, kitFor, crestUrl, teamDisplayName } from '../db/teams.js';
 import { kitSVG } from '../db/crests.js';
@@ -147,7 +148,7 @@ export function createFrontend(api) {
 
   // ---------- DOM skeleton ----------
   const root = h(`<div id="frontend" class="fe">
-    <div class="fe-bg"><div class="fe-rays"></div><div class="fe-vignette"></div><div class="fe-grain"></div></div>
+    <div class="fe-bg"><div class="fe-cover"><div class="cv-slot"></div><div class="cv-slot"></div></div><div class="fe-rays"></div><div class="fe-vignette"></div><div class="fe-grain"></div></div>
     <div class="fe-stage">
       ${SCREENS.map((s) => `<section class="fe-screen" data-screen="${s}"></section>`).join('')}
       <div class="fe-modal hidden" id="feModal"><div class="fe-modal-card"></div></div>
@@ -161,6 +162,7 @@ export function createFrontend(api) {
   const screenEl = (name) => root.querySelector(`[data-screen="${name}"]`);
   const modal = root.querySelector('#feModal');
   const wipe = root.querySelector('.fe-wipe');
+  const coverEl = root.querySelector('.fe-cover');
 
   function fit() {
     const s = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
@@ -318,11 +320,50 @@ export function createFrontend(api) {
   }
   function activate(name) {
     screen = name;
+    root.dataset.screen = name;
     root.querySelectorAll('.fe-screen').forEach((el) => el.classList.toggle('active', el.dataset.screen === name));
     render();
     const el = screenEl(name);
     el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter');
+    updateCover();
     focusFirst();
+  }
+
+  // ---------- cover backgrounds (title, hub, team select) ----------
+  const COVER_KINDS = ['fist', 'back', 'flag'];
+  const coverCache = new Map();
+  let coverIdx = 0, coverKey = '', coverTimer = null;
+  function coverFor(kind, t) {
+    const star = api.isPlayable(t.id) ? starPlayer(t) : null;
+    const pl = star ? { name: star.pd.name, number: star.pd.number, playerId: star.pd.playerId } : { name: display(t), number: 10 };
+    const key = `${kind}|${t.id}|${t.kit.shirt}|${t.kit.design}|${pl.name}`;
+    if (!coverCache.has(key)) {
+      if (coverCache.size > 12) coverCache.clear();
+      const seed = [...String(t.id)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) >>> 0;
+      coverCache.set(key, coverSVG(kind, { kit: t.kit, player: pl, flagColors: [t.kit.shirt, t.kit.secondary || '#ffffff', t.kit.shirt], seed, cx: 1190 }));
+    }
+    return coverCache.get(key);
+  }
+  function showCover(html) {
+    const [a, b] = coverEl.children;
+    const next = a.classList.contains('on') ? b : a, cur = next === a ? b : a;
+    next.innerHTML = html; void next.offsetWidth;
+    next.classList.add('on'); cur.classList.remove('on');
+    setTimeout(() => { if (!cur.classList.contains('on')) cur.innerHTML = ''; }, 1500);
+  }
+  function updateCover() {
+    const on = root.classList.contains('show') && ['title', 'hub', 'select'].includes(screen);
+    root.classList.toggle('has-cover', on);
+    clearInterval(coverTimer); coverTimer = null;
+    if (!on) { coverKey = ''; return; }
+    const custom = customCoverUrls();
+    const sel = screen === 'select' && !custom.length;
+    const t = team(screen === 'select' && selSide === 1 ? settings.away : settings.home);
+    const make = () => (custom.length ? (() => { const u = esc(custom[coverIdx % custom.length]); return `<div class="cv-photo"><img class="bg" src="${u}" alt=""><img class="fg" src="${u}" alt=""></div>`; })()
+      : coverFor(sel ? (selSide ? 'back' : 'fist') : COVER_KINDS[coverIdx % COVER_KINDS.length], t));
+    const key = sel ? `sel|${t.id}|${selSide}` : `rot|${t.id}|${custom.length}|${coverIdx}`;
+    if (key !== coverKey) { coverKey = key; try { showCover(make()); } catch (err) { console.warn('[cover]', err); } }
+    if (!sel) coverTimer = setInterval(() => { coverIdx += 1; coverKey = ''; updateCover(); }, 10000);
   }
   function go(name, opts = {}) {
     if (!opts.fromHistory) pushRoute(name, opts.replace);
@@ -365,15 +406,16 @@ export function createFrontend(api) {
 
   function renderTitle() {
     screenEl('title').innerHTML = `
-      <div class="title-wrap">
-        <div class="title-trophies a-in" style="--i:0">${trophySVG('league')}${trophySVG('cup')}</div>
-        <div class="title-kicker a-in" style="--i:1">FUTBOL</div>
-        <h1 class="title-logo a-in" style="--i:2"><span>SUPER LEAGUE</span></h1>
-        <div class="title-bar a-in" style="--i:3"></div>
-        <p class="title-tag a-in" style="--i:4">The beautiful game. The ultimate competition.</p>
-        <button class="title-press a-in" style="--i:6" data-nav data-autofocus data-act="start">Press any key</button>
+      <div class="t27">
+        <div class="t27-mark a-in" style="--i:0">
+          <span class="t27-badge">${ballSVG()}<b>FSL</b></span>
+          <div><div class="t27-kicker">Futbol</div><h1 class="t27-logo">SUPER LEAGUE <em>27</em></h1></div>
+        </div>
+        <div class="t27-bar a-in" style="--i:1"></div>
+        <p class="t27-tag a-in" style="--i:2">The beautiful game. The ultimate competition.</p>
       </div>
-      <div class="title-foot">v0.3 · ${DB.clubs.length} clubs · ${DB.national_teams.length} national teams · ${DB.players.length} players</div>`;
+      <button class="title-press a-in" style="--i:5" data-nav data-autofocus data-act="start">Press any key</button>
+      <div class="title-foot">${DB.clubs.length} clubs · ${DB.national_teams.length} national teams · ${DB.players.length} players</div>`;
   }
 
   // ----- hub -----
@@ -382,7 +424,7 @@ export function createFrontend(api) {
     const progress = api.getProgress();
     const me = team(settings.home);
     screenEl('hub').innerHTML = `
-      <header class="hub-top a-in" style="--i:0">
+      <header class="hub-top ${hubTab === 'home' ? 'is-home' : ''} a-in" style="--i:0">
         <div class="hub-brand"><span class="mini-ball">${ballSVG()}</span><b>FUTBOL</b><em>SUPER LEAGUE</em></div>
         <nav class="hub-tabs">${keyCap('Q')}
           ${HUB_TABS.map(([k, label]) => `<button class="hub-tab ${hubTab === k ? 'on' : ''}" data-act="tab" data-v="${k}">${label}</button>`).join('')}
@@ -401,22 +443,41 @@ export function createFrontend(api) {
       <span class="tile-shine"></span>${extra}
       <span class="tile-text"><b>${esc(m.title)}</b><small>${esc(m.sub)}</small></span></button>`;
   }
+  const HUB_ICONS = { home: '⌂', play: '◉', clubs: '⛨', players: '☻', settings: '⚙' };
+  function latestResults() {
+    const rows = ls.get('fsl-results', []).slice(-5).reverse();
+    if (!rows.length) return '<p class="h18-empty">Play a match and your results show up here.</p>';
+    const code = (id) => { try { const t = team(id); return esc((t.short || display(t)).slice(0, 3).toUpperCase()); } catch { return '???'; } };
+    return rows.map((r) => {
+      let home = null; try { home = team(r.homeId); } catch { /* removed team */ }
+      return `<div class="h18-res">${home ? crest(home) : ''}<b>${code(r.homeId)} ${r.hs}–${r.as} ${code(r.awayId)}</b><small>${esc(modeInfo(r.mode, settings.pool).title)}</small></div>`;
+    }).join('');
+  }
   function hubHome(progress) {
     const home = team(settings.home);
     const playable = api.isPlayable(home.id);
     const star = playable ? starPlayer(home) : null;
     const r = playable ? teamRatings(home) : { stars: 0 };
-    return `<div class="hub-grid">
-      ${tile('1p', null, 'tile-kick', `${star ? `<span class="tile-player">${playerSVG(star.pd, home.kit)}</span>` : ''}
-        <span class="tile-team">${crest(home)}<span><em>Your team</em><b>${esc(display(home))}</b>${starsHTML(r.stars)}</span></span>`, 1)}
-      ${tile('career', 'clubs', 'tile-league', `<span class="tile-trophy">${trophySVG('league')}</span>
-        <span class="tile-status ${progress.league ? 'live' : ''}">${esc(progress.league || 'New season')}</span>`, 2)}
-      ${tile('cup', 'nations', 'tile-cup', `<span class="tile-trophy">${trophySVG('cup')}</span>
-        <span class="tile-status ${progress.cup ? 'live' : ''}">${esc(progress.cup || 'New tournament')}</span>`, 3)}
-      ${tile('practice', null, 'tile-sm tile-train', '<span class="tile-ico">◎</span>', 4)}
-      ${tile('tutorial', null, 'tile-sm tile-school', '<span class="tile-ico">✦</span>', 5)}
-      ${tile('indoor', null, 'tile-sm tile-indoor', '<span class="tile-ico">▣</span>', 6)}
-      ${tile('penalties', null, 'tile-sm tile-pens', '<span class="tile-ico">◉</span>', 7)}
+    const pr = profile();
+    const level = 1 + Math.floor(pr.played / 3);
+    const keeper = playable ? squadOf(home)[0] : null;
+    return `<div class="h18 a-in" style="--i:1">
+      <aside class="h18-side">
+        <div class="h18-prof">${crest(home)}<div><b>Manager</b><span>LVL: <em>${level}</em></span><small>${pr.w}W · ${pr.d}D · ${pr.l}L</small></div></div>
+        <nav class="h18-nav">${HUB_TABS.map(([k, label]) => `<button class="${hubTab === k ? 'on' : ''}" data-nav data-act="tab" data-v="${k}"><i>${HUB_ICONS[k]}</i>${esc(label)}</button>`).join('')}</nav>
+        <div class="h18-latest"><h4><i>▶</i>Latest results</h4>${latestResults()}</div>
+      </aside>
+      <div class="h18-grid">
+        ${tile('1p', null, 'tile-kick', `${star ? `<span class="tile-player">${playerSVG(star.pd, home.kit, { pose: 'fist', crop: true })}</span>` : ''}
+          <span class="tile-team">${crest(home)}<span><em>Team form</em><span class="form-chips"><i class="w">▲${pr.w}</i><i class="l">▼${pr.l}</i><i class="d">${esc(display(home)).slice(0, 14)}</i></span>${starsHTML(r.stars)}</span></span>`, 2)}
+        ${tile('career', 'clubs', 'tile-league', `<span class="tile-trophy">${trophySVG('league')}</span>
+          <span class="tile-status ${progress.league ? 'live' : ''}">${esc(progress.league || 'New season')}</span>`, 3)}
+        ${tile('cup', 'nations', 'tile-cup', `<span class="tile-trophy">${trophySVG('cup')}</span>
+          <span class="tile-status ${progress.cup ? 'live' : ''}">${esc(progress.cup || 'New tournament')}</span>`, 4)}
+        ${tile('practice', null, 'tile-train', `<span class="tile-balls">${ballSVG()}${ballSVG()}${ballSVG()}</span>`, 5)}
+        ${tile('indoor', null, 'tile-indoor', star ? `<span class="tile-fig">${playerSVG({ ...star.pd, name: `${star.pd.name} b` }, kitFor(home.id, 'away'), { pose: 'roar', crop: true })}</span>` : '', 6)}
+        ${tile('penalties', null, 'tile-pens', keeper ? `<span class="tile-fig">${playerSVG(keeper.pd, home.kit, { keeper: true, crop: true })}</span>` : '', 7)}
+      </div>
     </div>`;
   }
   function hubPlay() {
@@ -592,7 +653,7 @@ export function createFrontend(api) {
       ${starsHTML(r.stars)}
       <div class="ts-bars">${ratingBar('OVR', r.ovr)}${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}</div>
       <div class="ts-featured">${featured.map((p) => `<div class="tf-card" style="--kit:${t.kit.shirt}">
-        <div class="tf-fig">${playerSVG(p.pd, t.kit, { keeper: p.role === 'GK' })}</div>
+        <div class="tf-fig">${playerSVG(p.pd, t.kit, { keeper: p.role === 'GK', crop: true })}</div>
         <b>${esc(p.pd.name)}</b><span>${esc(p.pd.position || p.pos)} · ${p.rating}</span></div>`).join('')}</div>`;
   }
   function selectRightHTML(fx, m) {
@@ -627,6 +688,7 @@ export function createFrontend(api) {
     refreshBrowseList(el, editing.id, 'pickTeam');
     const cont = el.querySelector('[data-act="toPreview"]');
     if (cont) cont.disabled = !canContinue();
+    updateCover();
   }
 
   // ----- match preview -----
@@ -670,7 +732,7 @@ export function createFrontend(api) {
     }
     screenEl('preview').innerHTML = `
       <div class="pv-tunnel"></div>
-      <div class="pv-fig left a-in" style="--i:1">${playerSVG(sh.pd, home.kit)}<div class="pv-figname"><b>${esc(sh.pd.name)}</b><span>${sh.rating} · ${esc(sh.pd.position || sh.pos || '')}</span></div></div>
+      <div class="pv-fig left a-in" style="--i:1">${playerSVG(sh.pd, home.kit, { pose: 'fist' })}<div class="pv-figname"><b>${esc(sh.pd.name)}</b><span>${sh.rating} · ${esc(sh.pd.position || sh.pos || '')}</span></div></div>
       <div class="pv-fig right a-in" style="--i:2">${playerSVG(sa.pd, away.kit, { flip: true, keeper: keeperOnly })}<div class="pv-figname"><b>${esc(sa.pd.name)}</b><span>${sa.rating} · ${esc(sa.pd.position || sa.pos || 'GK')}</span></div></div>
       <div class="pv-center a-in" style="--i:0">
         <nav class="pv-tabs">${[['preview', 'Match preview'], ['stats', 'Team stats'], ['lineups', 'Line-ups']].map(([k, l]) => `<button class="${previewTab === k ? 'on' : ''}" data-act="pvTab" data-v="${k}">${l}</button>`).join('')}</nav>
@@ -1165,12 +1227,13 @@ export function createFrontend(api) {
       if (r.tab) hubTab = r.tab;
       const target = r.screen === 'title' || !canRestore(r.screen) ? 'title' : r.screen;
       go(target, { instant: true, replace: true });
+      loadUserImages().then((found) => { if (found && root.classList.contains('show')) { coverKey = ''; render(); updateCover(); } });
     },
     show(name = 'hub') {
       root.classList.add('show');
       go(name, { instant: screen === null || screen === 'title', replace: true });
     },
-    hide() { root.classList.remove('show'); screen = null; },
+    hide() { root.classList.remove('show'); screen = null; updateCover(); },
     isActive: () => root.classList.contains('show'),
     refresh() { if (root.classList.contains('show')) render(); },
     handleKey,
