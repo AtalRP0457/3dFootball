@@ -3,7 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Legends</title>
+    <title>Futbol Super League</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;0,800;0,900;1,700;1,800;1,900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body>
     <canvas id="game"></canvas>
@@ -85,139 +88,6 @@
         <button class="big" id="devClose">Done</button>
       </div>
     </div>
-
-    <!-- Main menu: step 1 = how to play, step 2 = teams + kick off -->
-    <div id="menu" class="overlay">
-      <div class="card">
-        <h1 class="logo">LEGENDS</h1>
-        <div class="sub">Road to Football History &middot; Preview Build</div>
-
-        <!-- Step 1 -->
-        <div id="menuStep1">
-          <h3 class="step-title">How do you want to play?</h3>
-          <div class="mode-cards" id="modeSeg">
-            <button data-v="tutorial" class="mode-card first">
-              <span class="mc-icon">&#127891;</span><b>Learn to play</b>
-              <span class="mc-text">Interactive tutorial. Best place to start.</span>
-            </button>
-            <button data-v="1p" class="mode-card">
-              <span class="mc-icon">&#9917;</span><b>Play vs computer</b>
-              <span class="mc-text">You (W A S D) against the AI.</span>
-            </button>
-            <button data-v="2p" class="mode-card">
-              <span class="mc-icon">&#129309;</span><b>2 players</b>
-              <span class="mc-text">Same keyboard: W A S D vs arrow keys.</span>
-            </button>
-            <button data-v="cup" class="mode-card">
-              <span class="mc-icon">&#127942;</span><b>Decades Cup</b>
-              <span class="mc-text">8-team knockout with extra time and penalties.</span>
-            </button>
-            <button data-v="career" class="mode-card">
-              <span class="mc-icon">&#128197;</span><b>Career Season</b>
-              <span class="mc-text">18-matchday league with saved progress.</span>
-            </button>
-            <button data-v="indoor" class="mode-card">
-              <span class="mc-icon">&#127967;</span><b>Indoor Soccer</b>
-              <span class="mc-text">Five-a-side with rebound boards.</span>
-            </button>
-            <button data-v="penalties" class="mode-card">
-              <span class="mc-icon">&#129349;</span><b>Penalty Shootout</b>
-              <span class="mc-text">Place your shots, pick your keeper's dive.</span>
-            </button>
-            <button data-v="practice" class="mode-card">
-              <span class="mc-icon">&#127919;</span><b>Practice</b>
-              <span class="mc-text">Just you, your team and their keeper.</span>
-            </button>
-            <button data-v="cpu" class="mode-card">
-              <span class="mc-icon">&#128250;</span><b>Watch</b>
-              <span class="mc-text">AI vs AI.</span>
-            </button>
-          </div>
-          <div class="menu-actions">
-            <button id="tutorialBtn" class="wide">HOW TO PLAY (controls)</button>
-            <button id="devBtn" class="wide">DEVELOPER OPTIONS</button>
-          </div>
-        </div>
-
-        <!-- Step 2 -->
-        <div id="menuStep2" class="hidden">
-          <div class="step-head">
-            <button id="backBtn">&larr; Back</button>
-            <h3 class="step-title" id="step2Title">Pick your teams</h3>
-          </div>
-          <div id="modeBrief" class="mode-brief" aria-live="polite"></div>
-          <div class="teams">
-            <div class="col">
-              <h3 id="homeLabel">Your team <span class="who p1">P1</span></h3>
-              <div class="grid" id="homeGrid"></div>
-              <ol class="lineup" id="homeLineup"></ol>
-            </div>
-            <div class="vs">VS</div>
-            <div class="col" id="awayCol">
-              <h3 id="awayLabel">Opponent <span class="who ai">AI</span></h3>
-              <div class="grid" id="awayGrid"></div>
-              <ol class="lineup" id="awayLineup"></ol>
-            </div>
-          </div>
-
-          <button id="startBtn" class="big">KICK OFF</button>
-          <div class="hint-text center">Enter also starts &middot; Esc goes back</div>
-
-          <details class="options">
-            <summary>Match options <span class="hint-text" id="optSummary"></span></summary>
-            <div class="row" id="diffRow">
-              <label>AI difficulty</label>
-              <div class="seg" id="diffSeg">
-                <button data-v="beginner">Beginner</button>
-                <button data-v="easy">Easy</button>
-                <button data-v="normal" class="on">Normal</button>
-                <button data-v="hard">Hard</button>
-              </div>
-            </div>
-            <div class="row">
-              <label>Assist</label>
-              <div class="seg" id="assistSeg">
-                <button data-v="off">Off</button>
-                <button data-v="assisted" class="on">Assisted</button>
-                <button data-v="full">Full</button>
-              </div>
-              <span class="hint-text" id="assistHint"></span>
-            </div>
-            <div class="row" id="lenRow">
-              <label>Match length</label>
-              <div class="seg" id="lenSeg">
-                <button data-v="120">2 min</button>
-                <button data-v="240" class="on">4 min</button>
-                <button data-v="360">6 min</button>
-              </div>
-            </div>
-            <div class="row">
-              <label>Era look</label>
-              <div class="seg" id="eraSeg">
-                <button data-v="on" class="on">On</button>
-                <button data-v="off">Off</button>
-              </div>
-            </div>
-          </details>
-
-          <details class="controls">
-            <summary>Controls</summary>
-            <table>
-              <tr><th></th><th>Player 1</th><th>Player 2</th><th>Gamepad</th></tr>
-              <tr><td>Move</td><td>W A S D</td><td>Arrow keys</td><td>Left stick / D-pad</td></tr>
-              <tr><td>Pass &middot; switch player</td><td>F or Space</td><td>. (period)</td><td>A / Cross</td></tr>
-              <tr><td>Shoot (hold for power) &middot; tackle</td><td>G</td><td>/ (slash)</td><td>B / Circle</td></tr>
-              <tr><td>Sprint</td><td>Left Shift</td><td>Right Shift</td><td>RT / RB</td></tr>
-              <tr><td>Touch screen</td><td colspan="3">Virtual stick to move; Pass, hold Shoot, and hold Sprint.</td></tr>
-            </table>
-            <p class="legend"><span class="dot g"></span> you &nbsp;
-            <span class="dot y"></span> next player (pass / switch) &nbsp;
-            <span class="dot r"></span> computer &nbsp; flashing orange: close enough to tackle</p>
-          </details>
-        </div>
-      </div>
-    </div>
-
 
     <!-- Tutorial -->
     <div id="tutorial" class="overlay hidden">

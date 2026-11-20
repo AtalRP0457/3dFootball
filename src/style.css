@@ -127,13 +127,14 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 .mode-brief b { color: #fff; font-size: 13px; letter-spacing: .11em; white-space: nowrap; }
 .mode-brief span { font-size: 13px; opacity: .9; }
 
-button {
+/* Game overlays only; the front end (.fe) styles its own buttons. */
+button:where(:not(.fe *)) {
   font: inherit; font-weight: 700; color: #fff; cursor: pointer;
   background: rgba(255,255,255,0.08); border: 1px solid var(--edge); border-radius: 4px;
   padding: 8px 14px;
 }
-button:hover { background: rgba(255,255,255,0.16); }
-button.on { background: var(--gold); color: #111; border-color: var(--gold); }
+button:where(:not(.fe *)):hover { background: rgba(255,255,255,0.16); }
+button:where(:not(.fe *)).on { background: var(--gold); color: #111; border-color: var(--gold); }
 button.big {
   display: block; width: 100%; margin: 18px 0 8px; padding: 14px; font-size: 24px;
   font-style: italic; letter-spacing: 0.12em; background: linear-gradient(180deg, #ffe14d, #f5b800);

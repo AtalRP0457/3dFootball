@@ -1,7 +1,8 @@
 import './style.css';
 import { TEAMS, getTeam } from './data/teams.js';
-import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation } from './game/match.js';
-import { FIXED_DT } from './game/constants.js';
+import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.js';
+import { FIXED_DT, FORMATIONS, INDOOR_FORMATION } from './game/constants.js';
+import { createFrontend } from './ui/frontend.js';
 import { Input } from './game/input.js';
 import { createRenderer } from './render/scene.js';
 import { MatchAudio } from './render/audio.js';
@@ -148,24 +149,6 @@ function refreshSubstitutionStatus() {
   $('subsCancel').disabled = !team?.pendingSubstitution;
 }
 
-function teamCard(team, side) {
-  const el = document.createElement('button');
-  el.className = 'team';
-  el.dataset.id = team.id;
-  el.innerHTML = `
-    <span class="kit"><i style="background:${team.kit.shirt}"></i><i style="background:${team.kit.shorts}"></i></span>
-    <span class="tn">${team.name}</span>
-    <span class="nick">${team.nickname}</span>`;
-  el.addEventListener('click', () => {
-    settings[side] = team.id;
-    if (settings.mode === 'cup') clearCup();
-    if (settings.mode === 'career') clearLeague();
-    persistSettings();
-    refreshMenu();
-  });
-  return el;
-}
-
 function setupTouchControls() {
   const publish = (patch) => {
     Object.assign(touchInput, patch);
@@ -231,27 +214,6 @@ function resetTouchControls() {
 }
 
 function buildMenu() {
-  for (const t of TEAMS) {
-    $('homeGrid').appendChild(teamCard(t, 'home'));
-    $('awayGrid').appendChild(teamCard(t, 'away'));
-  }
-  const seg = (id, key, cast = (v) => v) => {
-    $(id).querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-      settings[key] = cast(b.dataset.v);
-      if (key === 'mode' && settings.mode !== 'cup') clearCup();
-      if (key === 'mode' && settings.mode !== 'career') clearLeague();
-      persistSettings();
-      refreshMenu();
-    }));
-  };
-  // Step 1: picking a mode moves on to the team screen (tutorial starts at once).
-  $('modeSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => chooseMode(b.dataset.v)));
-  $('backBtn').addEventListener('click', () => showStep(1));
-  seg('diffSeg', 'difficulty');
-  seg('lenSeg', 'duration', Number);
-  seg('eraSeg', 'era');
-  seg('assistSeg', 'assist');
-  $('startBtn').addEventListener('click', startMatch);
   $('shootoutAim').querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
     if (!cupShootout) return;
     cupShootout.aim = Number(button.dataset.aim);
@@ -326,7 +288,6 @@ function buildMenu() {
     startMatch();
   });
   $('menuBtn').addEventListener('click', toMenu);
-  refreshMenu();
 }
 
 function clearCup() {
@@ -445,103 +406,6 @@ function persistLeague() {
   } catch {}
 }
 
-let menuStep = 1;
-function showStep(n) {
-  menuStep = n;
-  $('menuStep1').classList.toggle('hidden', n !== 1);
-  $('menuStep2').classList.toggle('hidden', n !== 2);
-  refreshMenu();
-}
-
-function chooseMode(mode) {
-  settings.mode = mode;
-  if (mode !== 'cup') clearCup();
-  if (mode !== 'career') clearLeague();
-  persistSettings();
-  if (mode === 'tutorial') { startMatch(); return; }
-  showStep(2);
-}
-
-const STEP2_TITLES = {
-  '1p': 'Pick your team and your opponent',
-  '2p': 'Player 1 and player 2: pick your teams',
-  practice: 'Pick your team',
-  cpu: 'Pick two teams to watch',
-  cup: 'Pick your cup team',
-  career: 'Pick your career team',
-  indoor: 'Pick your indoor side and opponent',
-  penalties: 'Pick your shooters and their keeper',
-};
-
-const ASSIST_HINTS = {
-  off: 'Pure manual control.',
-  assisted: 'Press roughly towards the ball and your player runs onto it. Bigger tackle range.',
-  full: 'Like Assisted, and your player chases a loose ball even with no keys pressed.',
-};
-
-function refreshMenu() {
-  const segOn = (id, v) => $(id).querySelectorAll('button')
-    .forEach((b) => b.classList.toggle('on', b.dataset.v === String(v)));
-  segOn('modeSeg', settings.mode);
-  segOn('diffSeg', settings.difficulty);
-  segOn('lenSeg', settings.duration);
-  segOn('eraSeg', settings.era);
-  segOn('assistSeg', settings.assist);
-  $('assistHint').textContent = ASSIST_HINTS[settings.assist];
-  for (const side of ['home', 'away']) {
-    $(`${side}Grid`).querySelectorAll('.team')
-      .forEach((b) => b.classList.toggle('on', b.dataset.id === settings[side]));
-    $(`${side}Lineup`).innerHTML = getTeam(settings[side]).players
-      .map((p) => `<li><b>${p.number}</b> ${p.name}</li>`).join('');
-  }
-  const labels = {
-    '1p': ['Your team <span class="who p1">P1</span>', 'Opponent <span class="who ai">AI</span>'],
-    '2p': ['Player 1 <span class="who p1">P1</span>', 'Player 2 <span class="who p2">P2</span>'],
-    cpu: ['Home <span class="who ai">AI</span>', 'Away <span class="who ai">AI</span>'],
-    cup: ['Cup team <span class="who p1">P1</span>', 'Opening opponent <span class="who ai">AI</span>'],
-    penalties: ['Shooter <span class="who p1">P1</span>', 'Keeper <span class="who ai">AI</span>'],
-    indoor: ['Indoor side <span class="who p1">P1</span>', 'Indoor opposition <span class="who ai">AI</span>'],
-    practice: ['Your team <span class="who p1">P1</span>', 'Their keeper <span class="who ai">AI</span>'],
-    tutorial: ['Your team <span class="who p1">P1</span>', 'Their keeper <span class="who ai">AI</span>'],
-    career: ['Career team <span class="who p1">P1</span>', 'First opponent <span class="who ai">AI</span>'],
-  }[settings.mode];
-  const modeBriefs = {
-    '1p': ['FRIENDLY MATCH', 'Take a decade side into a full 11-a-side match against the computer.'],
-    '2p': ['HEAD TO HEAD', 'Two local players, one keyboard or two gamepads.'],
-    cpu: ['SPECTATOR MATCH', 'Let the match engine play both teams while you watch the tactics unfold.'],
-    cup: ['DECADES CUP', 'Win three knockout rounds. Draws are settled by a playable shootout.'],
-    penalties: ['PENALTY SHOOTOUT', 'Pick each shot placement, then read the next kick and choose your keeper dive.'],
-    indoor: ['INDOOR SOCCER', 'Five-a-side under the lights. Boards keep the ball live and there is no offside.'],
-    career: ['CAREER SEASON', 'Play an 18-matchday league season and chase first place in the table.'],
-    practice: ['PRACTICE', 'Just you, your team and their keeper: no clock, no halftime, no final whistle.'],
-    tutorial: ['TUTORIAL', 'A guided practice with a checklist of the basic controls.'],
-  };
-  const [briefTitle, briefCopy] = modeBriefs[settings.mode];
-  $('modeBrief').innerHTML = `<b>${briefTitle}</b><span>${briefCopy}</span>`;
-  $('homeLabel').innerHTML = labels[0];
-  const careerFixture = settings.mode === 'career' && league && !league.complete
-    ? league.schedule[league.round][0]
-    : null;
-  const careerOpponent = careerFixture && (careerFixture.home.id === league.userTeam.id ? careerFixture.away : careerFixture.home);
-  $('awayLabel').innerHTML = careerOpponent
-    ? `${careerOpponent.name} <span class="who ai">AI</span>`
-    : labels[1];
-  const vsAi = ['1p', 'cpu', 'cup', 'career', 'indoor'].includes(settings.mode);
-  const untimed = ['practice', 'tutorial', 'penalties'].includes(settings.mode);
-  $('diffRow').style.display = vsAi ? '' : 'none';
-  $('lenRow').style.display = untimed ? 'none' : '';
-  $('startBtn').textContent = settings.mode === 'tutorial' ? 'START TUTORIAL'
-    : settings.mode === 'practice' ? 'START PRACTICE' : 'KICK OFF';
-  $('step2Title').textContent = STEP2_TITLES[settings.mode] || 'Pick your teams';
-  const diffName = { beginner: 'Beginner', easy: 'Easy', normal: 'Normal', hard: 'Hard' }[settings.difficulty];
-  const parts = [];
-  if (vsAi) parts.push(diffName);
-  parts.push({ off: 'Assist off', assisted: 'Assist on', full: 'Full assist' }[settings.assist]);
-  if (!untimed) parts.push(`${settings.duration / 60} min`);
-  $('optSummary').textContent = `(${parts.join(' \u00b7 ')})`;
-}
-
-// ---------- "How to play" page ----------
 let tutStep = 0;
 const TUT_STEPS = 6;
 function showTutStep(i) {
@@ -562,7 +426,6 @@ function closeTutorialPage() {
   $('tutorial').classList.add('hidden');
 }
 function setupTutorialPage() {
-  $('tutorialBtn').addEventListener('click', openTutorialPage);
   $('pauseTutorialBtn').addEventListener('click', openTutorialPage);
   $('tutClose').addEventListener('click', closeTutorialPage);
   $('tutPrev').addEventListener('click', () => showTutStep(tutStep - 1));
@@ -575,6 +438,7 @@ function setupTutorialPage() {
 const isOpen = (id) => !$(id).classList.contains('hidden');
 
 // ---------- developer options ----------
+let openDevOptions = () => {};
 function setupDevPanel() {
   const sync = () => {
     $('speedRange').value = dev.speed;
@@ -587,11 +451,11 @@ function setupDevPanel() {
   $('debugCheck').addEventListener('change', (e) => { dev.debug = e.target.checked; saveDev(); sync(); });
   $('devReset').addEventListener('click', () => { Object.assign(dev, DEV_DEFAULTS); saveDev(); sync(); });
   const open = () => { sync(); $('devPanel').classList.remove('hidden'); };
-  $('devBtn').addEventListener('click', open);
+  openDevOptions = open;
   $('pauseDevBtn').addEventListener('click', open);
   $('devClose').addEventListener('click', () => $('devPanel').classList.add('hidden'));
   $('drillTackleBtn').addEventListener('click', startTackleDrill);
-  $('drillPracticeBtn').addEventListener('click', () => { settings.mode = 'practice'; refreshMenu(); startMatch(); });
+  $('drillPracticeBtn').addEventListener('click', () => { settings.mode = 'practice'; persistSettings(); startMatch(); });
   sync();
 }
 
@@ -688,7 +552,6 @@ function startTackleDrill() {
   settings.difficulty = 'beginner';
   startMatch();
   Object.assign(settings, saved);
-  refreshMenu();
   match.duration = Infinity; // no clock, no halftime
   drill = { timer: 0, resetIn: 0, rounds: 0 };
   setupDrillRound();
@@ -1109,6 +972,9 @@ function startMatch() {
     home = getTeam(settings.home);
     away = getTeam(settings.away);
   }
+  // Line-ups, formations and tactics saved in Team Management.
+  home = frontend.applySquad(home);
+  away = frontend.applySquad(away);
   const practice = settings.mode === 'practice' || settings.mode === 'tutorial';
   match = createMatch({
     home, away, controllers: controllers(),
@@ -1118,6 +984,13 @@ function startMatch() {
     timeScale: dev.speed / 100,
     assist: settings.assist,
   });
+  [home, away].forEach((team, i) => {
+    const setup = frontend.squadSetup(team);
+    if (!match.indoor) setTeamFormation(match, i, setup.formation);
+    setTeamTactic(match, i, setup.tactic);
+  });
+  setupKickoff(match, 0); // line up in the chosen shape
+  match.events.length = 0;
   goals = [];
   acc = 0;
   replayBuffer = [];
@@ -1148,7 +1021,7 @@ function startMatch() {
   $('p1panel').classList.toggle('right', !!p1Team && p1Team.index === 1);
   $('debug').classList.toggle('hidden', !dev.debug);
 
-  $('menu').classList.add('hidden');
+  frontend.hide();
   $('fulltime').classList.add('hidden');
   $('shootout').classList.add('hidden');
   $('subsBtn').classList.add('hidden');
@@ -1182,8 +1055,7 @@ function toMenu() {
   $('subsBtn').classList.remove('hidden');
   $('fulltime').classList.add('hidden');
   $('shootout').classList.add('hidden');
-  $('menu').classList.remove('hidden');
-  showStep(1);
+  frontend.show('hub');
   renderTutorial();
 }
 
@@ -1215,13 +1087,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (!match) {
-    const onButton = e.target && e.target.tagName === 'BUTTON';
-    if (!isOpen('menu')) return;
-    if (e.code === 'Enter' && !onButton) {
-      if (menuStep === 1) chooseMode(settings.mode); else startMatch();
-    } else if (e.code === 'Escape' && menuStep === 2) {
-      showStep(1);
-    }
+    frontend.handleKey(e);
     return;
   }
   if (e.code === 'Escape' || e.code === 'KeyP') {
@@ -1459,6 +1325,10 @@ function updateDebug() {
 }
 
 function showFullTime() {
+  if (match && !match.practice && settings.mode !== 'penalties' && !drill) {
+    const humanSide = match.teams.findIndex((t) => t.human === 'p1');
+    frontend.recordResult(match.teams[0].data.id, match.teams[1].data.id, match.teams[0].score, match.teams[1].score, humanSide < 0 ? null : humanSide);
+  }
   $('ftTitle').textContent = 'Full time';
   $('ftScorers').classList.remove('hidden');
   $('ftStats').classList.remove('hidden');
@@ -1584,5 +1454,49 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// ---------- front end (menus) ----------
+const CUP_ROUNDS = ['Quarter-final', 'Semi-final', 'Final'];
+function resolveFixture() {
+  if (settings.mode === 'cup') {
+    const active = !!(cup && !cup.champion);
+    const c = active ? cup : createCup();
+    return { home: c.matches[0].home, away: c.matches[0].away, stage: CUP_ROUNDS[c.round] || `Round ${c.round + 1}`, continuing: active };
+  }
+  if (settings.mode === 'career') {
+    const active = !!(league && !league.complete);
+    const l = active ? league : createLeague();
+    const f = l.schedule[l.round][0];
+    return { home: f.home, away: f.away, stage: `Matchday ${l.round + 1} of ${l.schedule.length}`, continuing: active };
+  }
+  return { home: getTeam(settings.home), away: getTeam(settings.away), continuing: false };
+}
+function getProgress() {
+  const out = { cup: null, league: null };
+  if (cup && !cup.champion) {
+    const f = cup.matches[0];
+    const opp = f.home.id === cup.userTeam.id ? f.away : f.home;
+    out.cup = `${CUP_ROUNDS[cup.round] || 'Next round'} · v ${opp.nickname}`;
+  }
+  if (league && !league.complete) {
+    const place = leagueStandings().findIndex((row) => row.team.id === league.userTeam.id) + 1;
+    out.league = `Matchday ${league.round + 1}/${league.schedule.length} · ${place}${['st', 'nd', 'rd'][place - 1] || 'th'} place`;
+  }
+  return out;
+}
+const frontend = createFrontend({
+  settings, teams: TEAMS, getTeam, persistSettings, clearCup, clearLeague,
+  formations: FORMATIONS, indoorFormation: INDOOR_FORMATION,
+  resolveFixture, getProgress, startMatch,
+  controllers() {
+    if (settings.mode === 'career' && !(league && !league.complete)) {
+      return resolveFixture().home.id === settings.home ? ['p1', 'ai'] : ['ai', 'p1'];
+    }
+    return controllers();
+  },
+  openHowToPlay: () => openTutorialPage(),
+  openDevOptions: () => openDevOptions(),
+});
+
 buildMenu();
+frontend.show('title');
 requestAnimationFrame(frame);
