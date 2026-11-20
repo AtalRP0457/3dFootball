@@ -75,7 +75,25 @@ backspin) with error from power, running speed, body angle and ball distance;
 pass types (short/long ground, lofted, through ball) with receiver lead and
 first-touch quality.
 
-### Phase 3 — Human players & animation
+### Phase 3 — Human players, identity & animation (implemented, procedural)
+Status: done on `feature/player-identity` with procedural characters; see
+`docs/PLAYER_ASSETS.md` for what a professional GLB would replace.
+- One player record per person in the Players list (club + country shown
+  together); "Database" wording removed from the UI.
+- `src/game/players/identity.js`: height, weight, age, body type, looks,
+  boots, accessories and captain, shared by cards, 3D views and physics.
+- Extended attributes (balance, short/long passing, shot power, first
+  touch, curve, marking, positioning) and position-weighted overall ratings;
+  every attribute is used by the engine (see physics/attributes.js header).
+- Skinned characters with kits, crests, numbers, names, boots and studs,
+  hair and armbands; AnimationMixer clips with stride-synced locomotion.
+- Kick-Off 3D viewer (rotate, zoom, front/side/back, animations, captain,
+  random, XI overview), 3D star players on the match preview, 3D figure on
+  the Players tab.
+- Goal celebrations (scorer runs off, teammates join), then a close-up
+  replay with slow motion around the strike and the goal.
+
+Original scope:
 `PlayerModel` interface that loads rigged GLB characters (one shared skeleton,
 kit colours applied via material slots) and an `AnimationController` built on
 `THREE.AnimationMixer` with a locomotion blend space driven by actual speed,

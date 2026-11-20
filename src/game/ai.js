@@ -177,7 +177,8 @@ function offBallAI(state, p, team, c, dt) {
       if (!prot && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.6) {
         p.aiTimer -= dt;
         if (p.aiTimer <= 0) {
-          p.aiTimer = team.diff.reaction + Math.random() * 0.3;
+          // Defenders who read the game (marking, positioning, awareness) react sooner.
+          p.aiTimer = team.diff.reaction * (1.35 - (p.phys?.defending ?? 0.65) * 0.6) + Math.random() * 0.3;
           if (Math.random() < 0.7 * team.diff.tackle) p.intent.action = { type: 'tackle' };
         }
       }
@@ -422,7 +423,8 @@ function keeperAI(state, p, team, dt) {
     // Narrow the angle against an attacker.
     const vx = b.pos.x - gx, vz = b.pos.z;
     const l = len(vx, vz) || 1;
-    const out = Math.min(4, ballAx * 0.3);
+    // Good positional keepers come off their line to narrow the angle.
+    const out = Math.min(4, ballAx * 0.3) * (0.7 + (p.phys?.keeper?.positioning ?? 0.7) * 0.45);
     tx = gx + (vx / l) * out;
     tz = (vz / l) * out;
   }

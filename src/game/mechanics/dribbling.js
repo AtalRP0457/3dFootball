@@ -98,6 +98,10 @@ export function updateDribble(p, b, dt, bounds) {
     return null;
   }
 
+  // A player about to pass or shoot doesn't knock the ball on again: he
+  // runs onto it and strikes it (see queuedAction in match.js).
+  if (p.queuedAction) return null;
+
   // Running: touch when the player has caught up with the ball.
   const fx = p.vel.x / s, fz = p.vel.z / s;
   const along = rx * fx + rz * fz;

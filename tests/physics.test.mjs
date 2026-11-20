@@ -176,7 +176,9 @@ function drive(p, prof, cmdFn, seconds, dt) {
     return q.pos;
   };
   const a = path(1 / 30), b = path(1 / 60), c = path(1 / 240);
-  check(Math.hypot(a.x - c.x, a.z - c.z) < 0.45 && Math.hypot(b.x - c.x, b.z - c.z) < 0.2,
+  // Within ~2.5% (60 Hz) / ~4% (30 Hz) of the ~15 m path length.
+  const pathLen = Math.hypot(c.x, c.z);
+  check(Math.hypot(a.x - c.x, a.z - c.z) < pathLen * 0.04 && Math.hypot(b.x - c.x, b.z - c.z) < pathLen * 0.025,
     `run path independent of step: (${a.x.toFixed(2)},${a.z.toFixed(2)}) (${b.x.toFixed(2)},${b.z.toFixed(2)}) (${c.x.toFixed(2)},${c.z.toFixed(2)})`);
 
   // A 180-degree reversal at sprint is a plant-and-turn: the player has to

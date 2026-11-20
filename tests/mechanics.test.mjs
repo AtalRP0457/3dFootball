@@ -1,7 +1,7 @@
 // Tests for dribbling, passing and shooting mechanics. Run with: npm test
 import { planShot } from '../src/game/mechanics/shooting.js';
 import { planPass } from '../src/game/mechanics/passing.js';
-import { touchLead } from '../src/game/mechanics/dribbling.js';
+import { touchLead, kickReach } from '../src/game/mechanics/dribbling.js';
 import { physicalProfile } from '../src/game/physics/attributes.js';
 import { integrateBall, substepsFor, setKickSpin, setRollingSpin } from '../src/game/physics/ballPhysics.js';
 import { createMatch, stepMatch, setControlled } from '../src/game/match.js';
@@ -197,6 +197,28 @@ console.log('Reach and queued actions');
   }
   check(shotAt >= 0, 'queued shot is taken once the ball is in reach');
   check(me.charge === 0, 'charge is consumed by the release');
+}
+
+{
+  // Shooting out of a sprint dribble: the ball is a couple of metres ahead
+  // when shoot is released and the stick is let go; the shot must still be
+  // taken (the player runs onto it rather than touching it on again).
+  for (const release of [true, false]) {
+    const r = dribbleRun(1, 0, true, 150);
+    const { s, me } = r;
+    let shot = -1;
+    const gap = () => Math.hypot(s.ball.pos.x - me.pos.x, s.ball.pos.z - me.pos.z);
+    // Charge while sprinting, then release just after a touch has sent the
+    // ball out of reach.
+    for (let i = 0; i < 12; i++) stepMatch(s, { p1: { mx: 1, mz: 0, sprint: true, shootHeld: true } }, FIXED_DT);
+    for (let i = 0; i < 60 && gap() <= kickReach(me) + 0.15; i++) stepMatch(s, { p1: { mx: 1, mz: 0, sprint: true, shootHeld: true } }, FIXED_DT);
+    check(gap() > kickReach(me), 'ball is out of reach when shoot is released');
+    for (let i = 0; i < 60 && shot < 0; i++) {
+      stepMatch(s, { p1: release ? {} : { mx: 1, mz: 0, sprint: true } }, FIXED_DT);
+      if (s.teams[0].shots === 1) shot = i;
+    }
+    check(shot >= 0, `shot taken from a sprint dribble (${release ? 'stick released' : 'still running'})`);
+  }
 }
 
 console.log(failures ? `\n${failures} mechanics check(s) failed` : '\nall mechanics checks passed');

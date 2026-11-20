@@ -1,18 +1,42 @@
-// Physical profile of a player: the numbers the locomotion and collision
-// code actually uses. Built once per player from the full database
-// attributes when they are available (src/db), otherwise derived from the six
-// legacy engine stats (spd, pas, sho, tac, dri, gk) so old team data and the
-// headless tests keep working.
+// Physical and technical profile of a player: the numbers the match engine
+// actually uses. Built once per player from the same attribute set and
+// identity (height/weight) that the player cards and the 3D preview show,
+// so there is one attribute system across the game. Falls back to the six
+// legacy engine stats (spd, pas, sho, tac, dri, gk) for old team data.
+//
+// Where each attribute is used:
+//   pace, sprintSpeed      top run / sprint speed          playerPhysics, AI
+//   acceleration           speed build-up                   playerPhysics
+//   agility                turn rate, grip, body yaw        playerPhysics
+//   strength, weight       body mass in contacts, tackles   playerPhysics, match (tackles)
+//   balance                staggering in contacts           playerPhysics
+//   stamina                sprint drain / recovery          match (movePlayer)
+//   firstTouch, ballCtrl   first-touch failures, reach      match (first touch), dribbling
+//   dribbling              touch length, U-turns, tackles   dribbling, match (tackles)
+//   shortPassing           ground pass accuracy             passing
+//   longPassing            lofted / through / keeper kicks  passing
+//   shotPower              shot pace                        shooting
+//   finishing (+shooting)  shot accuracy                    shooting
+//   curve                  finesse curl and its accuracy    shooting
+//   tackling               tackle success                   match (tackles)
+//   interceptions          reach on opponents' passes       match (possession)
+//   marking, positioning,
+//   defensiveAwareness     AI defensive reaction time       ai
+//   gk reflexes/diving/
+//   handling/positioning   saves, parries, angle play       match (keeperSave), ai
+//   gkKicking (distrib.)   keeper passing accuracy          passing
+//   height                 keeper reach, stride length      match, animation
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const n = (v, fallback) => (Number.isFinite(v) ? v : fallback);
+const u = (v) => clamp(v / 100, 0.2, 1);
 
 /**
- * @param {{spd:number,dri:number,tac:number}} stats
- * @param {object|undefined} attrs full attribute set (pace, acceleration,
- *   sprintSpeed, agility, strength, stamina, ...), 0-99
+ * @param stats    legacy six stats (may be partial)
+ * @param attrs    full attribute set (0-99), optional
+ * @param identity { heightCm, weightKg } from players/identity.js, optional
  */
-export function physicalProfile(stats, attrs) {
+export function physicalProfile(stats, attrs, identity) {
   const s = stats || {};
   const a = attrs || {};
   const pace = n(a.pace, n(s.spd, 70));
@@ -22,17 +46,37 @@ export function physicalProfile(stats, attrs) {
   const strength = n(a.strength, 55 + (n(s.tac, 55) - 50) * 0.4);
   const stamina = n(a.stamina, 75);
   const control = n(a.ballControl, n(s.dri, 65));
+  const firstTouch = n(a.firstTouch, control);
   const dribbling = n(a.dribbling, n(s.dri, 65));
   const finishing = n(a.finishing, n(s.sho, 65));
   const shooting = n(a.shooting, n(s.sho, 65));
   const longShots = n(a.longShots, n(s.sho, 65));
+  const shotPower = n(a.shotPower, shooting * 0.55 + strength * 0.25 + longShots * 0.2);
+  const curve = n(a.curve, n(a.crossing, n(s.pas, 60)));
   const passing = n(a.passing, n(s.pas, 65));
+  const shortPassing = n(a.shortPassing, passing);
   const vision = n(a.vision, n(s.pas, 65));
   const crossing = n(a.crossing, n(s.pas, 60));
+  const longPassing = n(a.longPassing, passing * 0.5 + crossing * 0.3 + vision * 0.2);
+  const balanceAttr = n(a.balance, strength * 0.45 + agility * 0.55);
+  const tackling = n(a.tackling, n(s.tac, 60));
+  const interceptions = n(a.interceptions, n(s.tac, 60));
+  const marking = n(a.marking, n(s.tac, 60));
+  const positioning = n(a.positioning, n(s.tac, 60));
+  const awareness = n(a.defensiveAwareness, n(s.tac, 60));
+  const gk = n(s.gk, 20);
+  const reflexes = n(a.gkReflexes, gk);
+  const diving = n(a.gkDiving, gk);
+  const handling = n(a.gkHandling, gk);
+  const gkPositioning = n(a.gkPositioning, gk);
+  const distribution = n(a.gkKicking, gk);
 
-  const ag = clamp(agility / 100, 0.2, 1);
-  const st = clamp(strength / 100, 0.2, 1);
-  const balance = clamp((strength * 0.45 + agility * 0.55) / 100, 0.2, 1);
+  const heightCm = identity?.heightCm ?? 180;
+  const weightKg = identity?.weightKg ?? 66 + u(strength) * 22;
+  const ag = u(agility);
+  const st = u(strength);
+  // Heavier, taller players turn a little slower; light ones a little quicker.
+  const sizeTurn = clamp(1 - (weightKg - 75) * 0.004, 0.9, 1.08);
 
   // Jogging/running top speed. Kept on the same scale as the original engine
   // (4.6 + spd * 0.026) so match balance and AI timings stay comparable.
@@ -43,32 +87,45 @@ export function physicalProfile(stats, attrs) {
     runSpeed,
     sprintMul,
     // Peak acceleration from standing (m/s^2); it fades towards top speed.
-    accel: 7 + (acceleration / 100) * 7,
+    accel: (7 + (acceleration / 100) * 7) * clamp(1 - (weightKg - 75) * 0.003, 0.92, 1.05),
     // Braking when the stick points away from the run, and coasting when
     // the stick is released.
     brake: 12 + ag * 6,
     coast: 6.5 + ag * 2,
     // Turn rate of the running line at zero speed (rad/s) and how fast that
     // falls off with speed: agile players carve tighter at pace.
-    turnBase: 7 + ag * 6,
+    turnBase: (7 + ag * 6) * sizeTurn,
     turnFalloff: 0.36 - ag * 0.13,
     // Lateral grip: the most sideways acceleration a player can produce
     // before the turn has to cost speed.
-    grip: 9 + ag * 5,
+    grip: (9 + ag * 5) * sizeTurn,
     // How fast the body (hips/shoulders) can rotate, rad/s.
-    yawRate: 10 + ag * 8,
+    yawRate: (10 + ag * 8) * sizeTurn,
     agility: ag,
-    balance,
+    balance: u(balanceAttr),
     strength: st,
-    mass: 66 + st * 22,
+    mass: weightKg,
+    heightCm,
     // Stamina: drain while sprinting and recovery while not.
     staminaDrain: 0.11 * (1.35 - (stamina / 100) * 0.6),
     staminaRecover: 0.05 * (0.7 + (stamina / 100) * 0.6),
-    control: clamp(control / 100, 0.2, 1),
-    dribbling: clamp((dribbling * 0.6 + control * 0.4) / 100, 0.2, 1),
-    shotAccuracy: clamp((finishing * 0.7 + shooting * 0.3) / 100, 0.2, 1),
-    shotPower: clamp((shooting * 0.5 + longShots * 0.3 + strength * 0.2) / 100, 0.2, 1),
-    passAccuracy: clamp((passing * 0.75 + vision * 0.25) / 100, 0.2, 1),
-    longPassing: clamp((passing * 0.5 + crossing * 0.3 + vision * 0.2) / 100, 0.2, 1),
+    control: u(control * 0.4 + firstTouch * 0.6),
+    firstTouch: u(firstTouch),
+    dribbling: u(dribbling * 0.6 + control * 0.4),
+    shotAccuracy: u(finishing * 0.7 + shooting * 0.3),
+    shotPower: u(shotPower),
+    curve: u(curve),
+    passAccuracy: u(shortPassing * 0.8 + vision * 0.2),
+    longPassing: u(longPassing),
+    distribution: u(distribution),
+    tackling: u(tackling),
+    interceptions: u(interceptions),
+    // How quickly a defender reads play (AI reaction time).
+    defending: u(marking * 0.35 + positioning * 0.3 + awareness * 0.35),
+    keeper: {
+      reflexes: u(reflexes), diving: u(diving), handling: u(handling), positioning: u(gkPositioning),
+      // Standing reach (m) for claiming high balls: height plus arm span.
+      reach: 2.15 + (heightCm - 185) * 0.012,
+    },
   };
 }

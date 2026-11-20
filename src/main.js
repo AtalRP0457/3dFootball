@@ -103,10 +103,13 @@ let paused = false;
 let goals = [];
 let acc = 0;
 const REPLAY_FPS = 20;
-const REPLAY_FRAMES = REPLAY_FPS * 6;
+const REPLAY_FRAMES = REPLAY_FPS * 9;
 let replayBuffer = [];
 let replayFrames = null;
-let replayElapsed = 0;
+let replayElapsed = 0; // replay position in frames (fractional)
+let replayInfo = null; // { shooterId, scorerId, dir, shotIdx, goalIdx }
+let pendingReplay = null; // goal scored: replay after the celebration
+let replayFrameCount = 0; // absolute index of frames pushed to the buffer
 let replayCaptureElapsed = 0;
 let fps = 60;
 let lastInputs = {};
@@ -1036,6 +1039,8 @@ function startMatch() {
   acc = 0;
   replayBuffer = [];
   replayFrames = null;
+  replayInfo = null;
+  pendingReplay = null;
   replayElapsed = replayCaptureElapsed = 0;
   $('replaySkip').classList.add('hidden');
   const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
@@ -1091,6 +1096,8 @@ function toMenu() {
   audio.setInMatch(false);
   match = null;
   replayFrames = null;
+  replayInfo = null;
+  pendingReplay = null;
   replayBuffer = [];
   $('replaySkip').classList.add('hidden');
   $('touchControls').classList.add('hidden');
@@ -1199,20 +1206,66 @@ function captureReplayFrame(force = false) {
   if (!force && replayCaptureElapsed < 1 / REPLAY_FPS) return;
   if (!force) replayCaptureElapsed -= 1 / REPLAY_FPS;
   replayBuffer.push(snapshotForRender(match));
+  replayFrameCount++;
   if (replayBuffer.length > REPLAY_FRAMES) replayBuffer.shift();
 }
 
-function beginGoalReplay() {
+/** Remember the goal; the replay runs once the live celebration has played. */
+function queueGoalReplay(e) {
+  pendingReplay = {
+    goalAbs: replayFrameCount,
+    scorerId: e.scorerId,
+    shotId: match.ball.shotId,
+    shooterId: match.ball.shooter?.id ?? e.scorerId,
+    dir: match.teams[e.team].dir,
+  };
+}
+
+function beginGoalReplay(info) {
   if (replayFrames || replayBuffer.length < REPLAY_FPS) return;
   captureReplayFrame(true);
-  replayFrames = replayBuffer.slice(-REPLAY_FPS * 4);
+  const firstAbs = replayFrameCount - replayBuffer.length;
+  const startAbs = Math.max(firstAbs, info.goalAbs - Math.round(REPLAY_FPS * 3.6));
+  const endAbs = Math.min(replayFrameCount, info.goalAbs + Math.round(REPLAY_FPS * 1.6));
+  replayFrames = replayBuffer.slice(startAbs - firstAbs, endAbs - firstAbs);
+  if (replayFrames.length < 2) { replayFrames = null; return; }
+  const shotIdx = replayFrames.findIndex((f) => f.ball.shotId === info.shotId && !f.ball.owner);
+  replayInfo = {
+    shooterId: info.shooterId, scorerId: info.scorerId, dir: info.dir,
+    shotIdx: shotIdx >= 0 && info.shotId > 0 ? shotIdx : null,
+    goalIdx: info.goalAbs - startAbs,
+  };
   replayElapsed = 0;
   $('replaySkip').classList.remove('hidden');
   showSub('GOAL REPLAY · press R to skip', 4.2);
 }
 
+/** Playback rate: slow motion around the strike and as the ball goes in. */
+function replayRate(pos) {
+  const bump = (centre, before, after) => {
+    if (centre == null) return 0;
+    const d = pos - centre;
+    const w = d < 0 ? before : after;
+    return Math.max(0, 1 - Math.abs(d) / (w * REPLAY_FPS)) ** 0.6;
+  };
+  const slow = Math.max(bump(replayInfo?.shotIdx, 0.45, 0.6), bump(replayInfo?.goalIdx, 0.5, 0.25));
+  return 1 - 0.68 * slow;
+}
+
+/** Blend two replay snapshots (positions interpolate in the renderer). */
+function replayView(pos) {
+  const i = Math.min(replayFrames.length - 2, Math.floor(pos));
+  const a = replayFrames[i], b = replayFrames[i + 1];
+  b.players.forEach((p, k) => { p.prevPos = a.players[k]?.pos || null; });
+  b.ball.prevPos = a.ball.pos;
+  return { state: b, alpha: Math.min(1, Math.max(0, pos - i)) };
+}
+
 function finishReplay() {
   replayFrames = null;
+  replayInfo = null;
+  pendingReplay = null;
+  replayInfo = null;
   replayElapsed = 0;
   $('replaySkip').classList.add('hidden');
 }
@@ -1224,8 +1277,8 @@ function handleEvents() {
     if (e.type === 'goal') {
       const team = match.teams[e.team];
       goals.push({ team: e.team, name: e.scorer, own: e.ownGoal, minute: Math.max(1, displayMinute(match)) });
-      showSub(`${e.ownGoal ? 'Own goal: ' : ''}${e.scorer} (${team.data.name})`, 2.4);
-      beginGoalReplay();
+      showSub(`${e.ownGoal ? 'Own goal: ' : ''}${e.scorer} (${team.data.name})`, 2.8);
+      queueGoalReplay(e);
     } else if (e.type === 'woodwork') {
       showSub(e.what === 'bar' ? 'Off the crossbar!' : 'Off the post!', 1.2);
     } else if (e.type === 'save' && Math.random() < 0.6) {
@@ -1499,17 +1552,27 @@ function frame(now) {
     } else {
       input.endStep(); // drop key presses while paused or watching a replay
     }
-    let renderState = match;
-    if (!paused && replayFrames) {
-      replayElapsed += dt;
-      const frameIndex = Math.floor(replayElapsed * REPLAY_FPS);
-      if (frameIndex >= replayFrames.length) finishReplay();
-      else renderState = replayFrames[frameIndex];
+    // The goal replay starts once the live celebration has played out.
+    if (pendingReplay) {
+      if (match.phase !== 'goal') pendingReplay = null;
+      else if (match.phaseTimer <= 1.0 && !replayFrames) { beginGoalReplay(pendingReplay); pendingReplay = null; }
     }
-    // Interpolate between the last two physics steps (replay frames are
-    // already snapshots, so they are drawn as-is).
-    const alpha = renderState === match && !blocked ? Math.min(1, acc / FIXED_DT) : 1;
-    renderer.update(renderState, blocked && !replayFrames ? 0 : dt, alpha);
+    let renderState = match;
+    let alpha = !blocked ? Math.min(1, acc / FIXED_DT) : 1;
+    let renderDt = blocked && !replayFrames ? 0 : dt;
+    let view = null;
+    if (replayFrames) {
+      const rate = paused ? 0 : replayRate(replayElapsed);
+      replayElapsed += dt * REPLAY_FPS * rate;
+      if (replayElapsed >= replayFrames.length - 1) finishReplay();
+      else {
+        const rv = replayView(replayElapsed);
+        renderState = rv.state; alpha = rv.alpha; renderDt = dt * rate;
+        view = { replay: { ...replayInfo, t: replayElapsed / REPLAY_FPS, fps: REPLAY_FPS }, realDt: dt };
+      }
+    }
+    // Interpolate between the last two physics steps (or replay snapshots).
+    renderer.update(renderState, renderDt, alpha, view);
     updateHud(dt);
   } else {
     renderer.renderIdle(dt);
@@ -1585,3 +1648,11 @@ fetch(`${import.meta.env.BASE_URL}assets/clubs/logos/official/manifest.json`)
   })
   .catch(() => {});
 requestAnimationFrame(frame);
+
+// Dev-only handle for debugging in the browser console (stripped from builds).
+if (import.meta.env.DEV) {
+  window.__legends = {
+    get match() { return match; },
+    renderer,
+  };
+}

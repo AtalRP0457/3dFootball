@@ -2,6 +2,8 @@
 // FIFA 98 style broadcast camera. Reads match state, never changes it.
 
 import * as THREE from 'three';
+import { createCharacter } from './character/character.js';
+import { playerIdentity } from '../game/players/identity.js';
 import {
   PITCH, HALF_L, HALF_W, GOAL, BOX, GOAL_AREA, PENALTY_SPOT,
   PENALTY_ARC_RADIUS, BALL_R,
@@ -17,7 +19,6 @@ const RING = {
   tackle: '#fb923c', // flashing orange: close enough to tackle
 };
 const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0673b'];
-const HAIR = ['#1b1b1b', '#3b2416', '#6b4423', '#c9a15b', '#2a1a0f'];
 
 const CAMERA_MODES = {
   broadcast: { h: 22, back: 29, ahead: 0.82, fov: 44, clampX: 13 },
@@ -279,161 +280,6 @@ function buildGoal(scene, sx) {
 }
 
 // ---------- players ----------
-function luminance(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-}
-
-function numberTexture(num, shirt, renderer) {
-  const [c, g] = canvas(64, 64);
-  g.fillStyle = luminance(shirt) > 0.6 ? '#111111' : '#ffffff';
-  g.font = '900 44px Arial Black, Arial, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(String(num), 32, 36);
-  return texture(c, renderer);
-}
-
-function jerseyTexture(shirt, trim, renderer, kit = {}) {
-  const [c, g] = canvas(128, 128);
-  g.fillStyle = shirt; g.fillRect(0, 0, 128, 128);
-  // Club kit patterns from the kit database (stripes, hoops, halves, ...).
-  const sec = kit.secondary;
-  if (sec && kit.design) {
-    g.fillStyle = sec;
-    if (kit.design === 'stripes') for (let x = 8; x < 128; x += 32) g.fillRect(x, 0, 16, 128);
-    if (kit.design === 'pinstripes') for (let x = 4; x < 128; x += 12) g.fillRect(x, 0, 3, 128);
-    if (kit.design === 'hoops') for (let y = 12; y < 128; y += 30) g.fillRect(0, y, 128, 15);
-    if (kit.design === 'halves') g.fillRect(64, 0, 64, 128);
-    if (kit.design === 'quarters') { g.fillRect(64, 0, 64, 64); g.fillRect(0, 64, 64, 64); }
-    if (kit.design === 'band') g.fillRect(0, 50, 128, 26);
-    if (kit.design === 'side') { g.fillRect(0, 0, 14, 128); g.fillRect(114, 0, 14, 128); }
-    if (kit.design === 'sash') { g.beginPath(); g.moveTo(0, 20); g.lineTo(20, 0); g.lineTo(128, 108); g.lineTo(108, 128); g.closePath(); g.fill(); }
-    if (kit.design === 'chevron') { g.beginPath(); g.moveTo(0, 40); g.lineTo(64, 80); g.lineTo(128, 40); g.lineTo(128, 60); g.lineTo(64, 100); g.lineTo(0, 60); g.closePath(); g.fill(); }
-  }
-  // Fine fabric weave and original diagonal paneling keep kits readable at
-  // broadcast distance without relying on branded artwork.
-  g.globalAlpha = 0.16;
-  g.strokeStyle = '#ffffff'; g.lineWidth = 1;
-  for (let i = -128; i < 192; i += 8) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 128, 128); g.stroke();
-  }
-  g.globalAlpha = 1;
-  g.fillStyle = trim;
-  g.fillRect(0, 8, 128, 6);
-  g.fillRect(58, 0, 12, 128);
-  return texture(c, renderer);
-}
-
-function makePlayer(p, kit, renderer) {
-  const isGK = p.role === 'GK';
-  const shirt = isGK ? kit.gk : kit.shirt;
-  const shorts = isGK ? '#1a1a1a' : kit.shorts;
-  const socks = isGK ? kit.gk : kit.socks;
-  const skin = SKIN[(p.id * 7 + p.number) % SKIN.length];
-  const hair = HAIR[(p.id * 3 + p.number) % HAIR.length];
-  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
-  const kitTrim = luminance(shirt) > 0.55 ? '#17304d' : '#f2d36b';
-  const shirtM = new THREE.MeshLambertMaterial({ map: jerseyTexture(shirt, kitTrim, renderer, isGK ? {} : kit) });
-  const sleeveM = !isGK && kit.design === 'sleeves' && kit.secondary ? mat(kit.secondary) : shirtM;
-  const shortsM = mat(shorts), sockM = mat(socks), skinM = mat(skin);
-  const bootM = mat('#111111');
-
-  const root = new THREE.Group();
-  const body = new THREE.Group(); // tilts for dives
-  root.add(body);
-
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.62, 0.28), shirtM);
-  torso.position.y = 1.2;
-  body.add(torso);
-  const num = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.32, 0.32),
-    new THREE.MeshBasicMaterial({ map: numberTexture(p.number, shirt, renderer), transparent: true }),
-  );
-  num.position.set(0, 1.24, -0.145);
-  num.rotation.y = Math.PI;
-  body.add(num);
-  const frontNum = new THREE.Mesh(new THREE.PlaneGeometry(0.19, 0.19),
-    new THREE.MeshBasicMaterial({ map: numberTexture(p.number, shirt, renderer), transparent: true }));
-  frontNum.position.set(0, 1.22, 0.145);
-  body.add(frontNum);
-  const trimM = mat(kitTrim);
-  const trim = (w, h, d, x, y, z, material = trimM) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-    mesh.position.set(x, y, z); body.add(mesh); return mesh;
-  };
-  trim(0.18, 0.045, 0.29, 0, 1.515, 0);
-  for (const sx of [-1, 1]) {
-    trim(0.045, 0.52, 0.012, sx * 0.235, 1.2, 0.146);
-    trim(0.145, 0.035, 0.15, sx * 0.32, 1.31, 0);
-    trim(0.035, 0.26, 0.018, sx * 0.23, 0.8, 0.155);
-  }
-  const shortsMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.3), shortsM);
-  shortsMesh.position.y = 0.8;
-  body.add(shortsMesh);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), skinM);
-  head.position.y = 1.7;
-  body.add(head);
-  const faceDetail = mat('#241a17');
-  for (const sx of [-1, 1]) {
-    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), skinM);
-    ear.position.set(sx * 0.15, 1.69, 0); body.add(ear);
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), faceDetail);
-    eye.position.set(sx * 0.055, 1.72, 0.145); body.add(eye);
-    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.012, 0.018), faceDetail);
-    brow.position.set(sx * 0.055, 1.75, 0.145); body.add(brow);
-  }
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.023, 8, 6), skinM);
-  nose.position.set(0, 1.685, 0.16); body.add(nose);
-  const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.009, 0.012), faceDetail);
-  mouth.position.set(0, 1.65, 0.15); body.add(mouth);
-  const hairMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.168, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(hair),
-  );
-  hairMesh.position.y = 1.72;
-  hairMesh.rotation.x = -0.25;
-  body.add(hairMesh);
-
-  const limb = (w, h, m, y) => {
-    const pivot = new THREE.Group();
-    pivot.position.y = y;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), m);
-    mesh.position.y = -h / 2;
-    mesh.castShadow = true;
-    pivot.add(mesh);
-    return pivot;
-  };
-  const legs = [];
-  for (const sx of [-1, 1]) {
-    const leg = limb(0.17, 0.4, skinM, 0.72);
-    leg.position.x = sx * 0.13;
-    const lower = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.32, 0.17), sockM);
-    lower.position.y = -0.56;
-    lower.castShadow = true;
-    leg.add(lower);
-    const sockBand = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.038, 0.18), trimM);
-    sockBand.position.y = -0.47;
-    leg.add(sockBand);
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.08, 0.28), bootM);
-    boot.position.set(0, -0.72, 0.05);
-    leg.add(boot);
-    body.add(leg);
-    legs.push(leg);
-  }
-  const arms = [];
-  for (const sx of [-1, 1]) {
-    const arm = limb(0.12, 0.58, isGK ? shirtM : skinM, 1.48);
-    arm.position.x = sx * 0.32;
-    const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.14), sleeveM);
-    sleeve.position.y = -0.1;
-    arm.add(sleeve);
-    body.add(arm);
-    arms.push(arm);
-  }
-  for (const m of [torso, shortsMesh, head]) m.castShadow = true;
-
-  return { root, body, legs, arms, phase: Math.random() * 6, prevX: p.pos.x, prevZ: p.pos.z };
-}
-
 function ballTexture(renderer) {
   const [c, g] = canvas(256, 128);
   g.fillStyle = '#ffffff'; g.fillRect(0, 0, 256, 128);
@@ -491,6 +337,7 @@ export function createRenderer(canvasEl) {
   ballShadow.position.y = 0.035;
   scene.add(ballShadow);
   const prevBall = new THREE.Vector3();
+  const handA = new THREE.Vector3(), handB = new THREE.Vector3();
   const spinAxis = new THREE.Vector3();
   const spinQuat = new THREE.Quaternion();
 
@@ -530,9 +377,19 @@ export function createRenderer(canvasEl) {
     arenaGlow.visible = !!state.indoor;
     scene.background.set(state.indoor ? '#071329' : '#8fbfe8');
     scene.fog.color.set(state.indoor ? '#071329' : '#8fbfe8');
-    for (const m of playerMeshes) scene.remove(m.root);
+    for (const m of playerMeshes) m.character.dispose();
     playerMeshes = state.players.map((p) => {
-      const m = makePlayer(p, state.teams[p.team].kit, renderer);
+      const team = state.teams[p.team];
+      // The same identity the cards and Kick-Off preview use.
+      const identity = p.identity || playerIdentity({ ...p, position: p.role });
+      const character = createCharacter({
+        identity: { ...identity, captain: !!(p.captain || identity.captain) },
+        kit: team.kit,
+        keeper: p.role === 'GK',
+        crestUrl: team.data?.crest,
+        teamKey: `t${team.index}|${team.kit.shirt}|${team.kit.secondary}|${team.kit.design}`,
+      });
+      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z } };
       m.ring = new THREE.Mesh(
         ringGeo,
         new THREE.MeshBasicMaterial({ color: RING.other, transparent: true, opacity: 0.85, depthWrite: false }),
@@ -590,7 +447,45 @@ export function createRenderer(canvasEl) {
   };
   const blendable = (prev, cur) => !!prev && Math.abs(prev.x - cur.x) + Math.abs(prev.z - cur.z) < 3;
 
-  function update(state, dt, alpha = 1) {
+  // ---------- replay / celebration director ----------
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const byId = (state, id) => (id == null ? null : state.players.find((p) => p.id === id) || null);
+  /** Rendered (interpolated) position of a player, so the camera never jitters. */
+  function shownPos(state, p) {
+    const m = playerMeshes[state.players.indexOf(p)];
+    return m ? m.root.position : V(p.pos.x, 0, p.pos.z);
+  }
+  function celebrationCamera(state) {
+    const sc = byId(state, state.lastGoal?.scorerId);
+    if (!sc || state.lastGoal.ownGoal) return null;
+    const p = shownPos(state, sc);
+    // Stand between the scorer and the middle of the pitch, a little to the side.
+    let vx = -p.x, vz = -p.z;
+    const l = Math.hypot(vx, vz) || 1; vx /= l; vz /= l;
+    return { pos: V(p.x + vx * 7 - vz * 2.5, 2.4, p.z + vz * 7 + vx * 2.5), look: V(p.x, 1.1, p.z), fov: 34, rate: 2.6 };
+  }
+  function replayCamera(state, r) {
+    const b = ball.position;
+    const goalX = HALF_L * (r.dir || 1);
+    const shooter = byId(state, r.shooterId);
+    const t = r.t, shotT = r.shotIdx != null ? r.shotIdx / r.fps : null, goalT = r.goalIdx / r.fps;
+    if (shotT != null && t < shotT + 0.12 && shooter) {
+      // Low and behind the shooter, looking past him at the goal.
+      const p = shownPos(state, shooter);
+      let gx = goalX - p.x, gz = -p.z;
+      const l = Math.hypot(gx, gz) || 1; gx /= l; gz /= l;
+      return { pos: V(p.x - gx * 6.5 + gz * 2.6, 2.1, p.z - gz * 6.5 - gx * 2.6), look: V((p.x + b.x) / 2 + gx * 3, 1.0, (p.z + b.z) / 2 + gz * 3), fov: 40, rate: 4 };
+    }
+    if (t < goalT + 0.7) {
+      // Beside the goal, tracking the ball past the keeper into the net.
+      const side = Math.sign(b.z || 1);
+      return { pos: V(goalX - Math.sign(goalX) * 8.5, 1.9, side * (GOAL.width / 2 + 6.5)), look: V(b.x, Math.max(0.6, b.y), b.z), fov: 36, rate: 5 };
+    }
+    return celebrationCamera(state) || { pos: V(b.x - Math.sign(goalX) * 9, 3, b.z + 6), look: V(b.x, 0.8, b.z), fov: 38, rate: 3 };
+  }
+  let lastCamMode = 'live';
+
+  function update(state, dt, alpha = 1, view = null) {
     time += dt;
     // Players
     state.players.forEach((p, i) => {
@@ -600,55 +495,39 @@ export function createRenderer(canvasEl) {
       const pa = blendable(p.prevPos, p.pos) ? alpha : 1;
       m.root.position.set(lerpPos(p.prevPos, p.pos, pa, 'x'), 0, lerpPos(p.prevPos, p.pos, pa, 'z'));
       m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
-      const sp = Math.hypot(p.vel.x, p.vel.z);
-      // Legs follow game speed, so slow motion looks like slow motion.
-      m.phase += sp * dt * 1.7 * (state.timeScale || 1);
-      const amp = Math.min(1, sp / 6) * 0.85;
-      const s = Math.sin(m.phase);
-      m.legs[0].rotation.x = s * amp;
-      m.legs[1].rotation.x = -s * amp;
-      m.arms[0].rotation.x = -s * amp * 0.8;
-      m.arms[1].rotation.x = s * amp * 0.8;
-      if (p.kickAnim > 0) {
-        const k = Math.sin((1 - p.kickAnim / 0.3) * Math.PI);
-        m.legs[1].rotation.x = -1.3 * k;
-      } else if (p.touchAnim > 0) {
-        // Dribble touch: a short prod of the leg, synced to the touch event.
-        const k = Math.sin((1 - p.touchAnim / 0.22) * Math.PI);
-        m.legs[1].rotation.x = Math.min(m.legs[1].rotation.x, -0.55 * k);
-      }
-      // Keeper dive / stumble tilt
-      let tilt = 0, drop = 0;
-      if (p.dive > 0) {
-        const localX = p.vel.x * p.face.z - p.vel.z * p.face.x;
-        tilt = -Math.sign(localX || 1) * 1.2;
-        drop = -0.5;
-        m.arms[0].rotation.z = -2.6; m.arms[1].rotation.z = 2.6;
-      } else {
-        m.arms[0].rotation.z = 0; m.arms[1].rotation.z = 0;
-        if (p.stun > 0) tilt = 0.25;
-      }
+      // Body yaw rate, for turn-in-place steps.
+      const yaw = Math.atan2(p.face.x, p.face.z), pyaw = Math.atan2(m.prevFace.x, m.prevFace.z);
+      let dyaw = yaw - pyaw;
+      if (dyaw > Math.PI) dyaw -= 2 * Math.PI; else if (dyaw < -Math.PI) dyaw += 2 * Math.PI;
+      m.prevFace.x = p.face.x; m.prevFace.z = p.face.z;
+      const gdt = dt * (state.timeScale || 1);
+      m.yawRate = gdt > 0 ? m.yawRate * 0.8 + (dyaw / gdt) * 0.2 : (m.yawRate || 0);
       // Lean with the physics: forward into acceleration, back when braking,
       // and into the turn (centripetal acceleration).
       const acc = p.acc || { x: 0, z: 0 };
       const fwdAcc = acc.x * p.face.x + acc.z * p.face.z;
       const sideAcc = acc.x * p.face.z - acc.z * p.face.x;
-      const pitch = THREE.MathUtils.clamp(fwdAcc * 0.022, -0.22, 0.26);
-      if (p.dive <= 0) tilt += THREE.MathUtils.clamp(sideAcc * 0.018, -0.2, 0.2);
-      m.body.rotation.x += (pitch - m.body.rotation.x) * Math.min(1, dt * 10);
-      m.body.rotation.z += (tilt - m.body.rotation.z) * Math.min(1, dt * 14);
-      m.body.position.y += (drop - m.body.position.y) * Math.min(1, dt * 14);
-      // Keeper holding the ball: arms forward
-      if (state.ball.owner === p && p.holding) {
-        m.arms[0].rotation.x = m.arms[1].rotation.x = -1.3;
+      const mesh = m.character.mesh;
+      const pitch = THREE.MathUtils.clamp(fwdAcc * 0.018, -0.16, 0.2);
+      const roll = p.dive > 0 ? 0 : THREE.MathUtils.clamp(-sideAcc * 0.014, -0.16, 0.16);
+      const kk = Math.min(1, dt * 10);
+      mesh.rotation.x += (pitch - mesh.rotation.x) * kk;
+      mesh.rotation.z += (roll - mesh.rotation.z) * kk;
+      const goalTeam = state.phase === 'goal' && state.lastGoal ? state.lastGoal.team : -1;
+      let celebration = null;
+      if (goalTeam >= 0) {
+        if (p.team === goalTeam) celebration = state.lastGoal.scorerId === p.id && !state.lastGoal.ownGoal ? 'scorer' : 'team';
+        else celebration = 'beaten';
       }
-      // A clear team reaction gives goals and their replays a readable payoff.
-      if (state.phase === 'goal' && state.lastGoal?.team === p.team && p.role !== 'GK') {
-        const cheer = Math.sin(time * 9 + p.id) * 0.18;
-        m.arms[0].rotation.x = -2.15 + cheer;
-        m.arms[1].rotation.x = -2.15 - cheer;
-        m.arms[0].rotation.z = -0.35;
-        m.arms[1].rotation.z = 0.35;
+      const own = -HALF_L * state.teams[p.team].dir;
+      if (gdt > 0 && m.root.visible) {
+        m.character.update(gdt, p, {
+          owner: state.ball.owner === p,
+          keeperAlert: p.role === 'GK' && Math.abs(state.ball.pos.x - own) < 40,
+          celebration,
+          id: p.id,
+          yawRate: m.yawRate || 0,
+        });
       }
     });
 
@@ -656,7 +535,19 @@ export function createRenderer(canvasEl) {
     const b = state.ball;
     const ba = blendable(b.prevPos, b.pos) ? alpha : 1;
     ball.position.set(lerpPos(b.prevPos, b.pos, ba, 'x'), lerpPos(b.prevPos, b.pos, ba, 'y'), lerpPos(b.prevPos, b.pos, ba, 'z'));
-    if (b.owner && b.owner.holding) ball.position.y = 1.05; // in the keeper's hands
+    // Ball in the hands (keeper, throw-in): between the two hands.
+    const holder = b.owner && (b.owner.holding || (b.owner.throwIn && b.owner.mustPass)) ? b.owner : null;
+    if (holder) {
+      const hm = playerMeshes[state.players.indexOf(holder)];
+      const hl = hm?.character.bones['hand.L'], hr = hm?.character.bones['hand.R'];
+      if (hl && hr) {
+        hm.root.updateMatrixWorld(true);
+        hl.getWorldPosition(handA); hr.getWorldPosition(handB);
+        ball.position.copy(handA).add(handB).multiplyScalar(0.5);
+        ball.position.x += holder.face.x * 0.07; ball.position.z += holder.face.z * 0.07;
+        ball.position.y -= 0.05;
+      } else ball.position.y = 1.05;
+    }
     const ballHeight = Math.max(0, ball.position.y - BALL_R);
     ballShadow.position.x = ball.position.x;
     ballShadow.position.z = ball.position.z;
@@ -703,14 +594,26 @@ export function createRenderer(canvasEl) {
       const arrow = markers[id].arrow;
       arrow.visible = !!p && live;
       if (arrow.visible) {
-        const mp = playerMeshes[state.players.indexOf(p)]?.root.position;
-        arrow.position.set(mp ? mp.x : p.pos.x, 2.35 + Math.sin(time * 5) * 0.08, mp ? mp.z : p.pos.z);
+        const pm = playerMeshes[state.players.indexOf(p)];
+        const mp = pm?.root.position;
+        const top = (pm?.character.headHeight ?? 1.95) + 0.35;
+        arrow.position.set(mp ? mp.x : p.pos.x, top + Math.sin(time * 5) * 0.08, mp ? mp.z : p.pos.z);
       }
     }
 
-    // Camera
-    const t = cameraTarget(state);
-    const k = 1 - Math.exp(-dt * 3.2);
+    // Camera: broadcast play, celebration close-up, or the replay director.
+    let t = null;
+    let mode = 'live';
+    if (view?.replay) { t = replayCamera(state, view.replay); mode = 'replay'; }
+    else if (state.phase === 'goal') { t = celebrationCamera(state); if (t) mode = 'celebration'; }
+    if (!t) t = cameraTarget(state);
+    const camDt = view?.realDt ?? dt;
+    // Cut (rather than swoop) into and out of the replay, like a broadcast.
+    if ((mode === 'replay') !== (lastCamMode === 'replay')) {
+      camPos.copy(t.pos); camLook.copy(t.look); camera.fov = t.fov; camera.updateProjectionMatrix();
+    }
+    lastCamMode = mode;
+    const k = 1 - Math.exp(-camDt * (t.rate || 3.2));
     camPos.lerp(t.pos, k);
     camLook.lerp(t.look, k);
     if (Math.abs(camera.fov - t.fov) > 0.01) {
