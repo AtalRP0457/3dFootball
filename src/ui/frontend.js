@@ -79,6 +79,7 @@ const OPTIONS = {
   duration: { label: 'Match length', values: [[120, '2 minutes'], [240, '4 minutes'], [360, '6 minutes']] },
   assist: { label: 'Control assist', values: [['off', 'Manual'], ['assisted', 'Assisted'], ['full', 'Full assist']] },
   dribbleStyle: { label: 'Dribbling', values: [['sticky', 'Arcade (ball at feet)'], ['touch', 'Realistic (touches)']] },
+  physics: { label: 'Physics', values: [['engine', 'Gold Standard engine'], ['classic', 'Classic']] },
   era: { label: 'Era colour grading', values: [['on', 'On'], ['off', 'Off']] },
 };
 const optionText = (key, v) => (OPTIONS[key].values.find(([x]) => String(x) === String(v)) || OPTIONS[key].values[0])[1];
@@ -532,7 +533,7 @@ export function createFrontend(api) {
       <div class="set-col a-in" style="--i:1">
         <h3>Football universe</h3>${settingsRows(['roster', 'clubIdentity', 'playerIdentity'])}
         ${locked ? '<p class="set-note">A tournament in progress keeps the roster profile it started with. Names and crests follow your identity choice everywhere.</p>' : ''}
-        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'dribbleStyle', 'era'])}
+        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'physics', 'dribbleStyle', 'era'])}
       </div>
       <div class="set-col a-in" style="--i:2"><h3>Help, tools & data</h3>
         <button class="set-link" data-nav data-act="controls" data-v="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>

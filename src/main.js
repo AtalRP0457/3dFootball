@@ -10,6 +10,7 @@ import { createRenderer } from './render/scene.js';
 import { MatchAudio } from './render/audio.js';
 import { stopBall } from './game/physics/ballPhysics.ts';
 import { mountHud } from './ui/hud/Hud.tsx';
+import { MatchPhysics, preparePhysics, physicsReady } from './game/engineBridge.ts';
 import { startHud, hideHud, publishFrame, showNotice, showGoal, setReplay } from './ui/hud/hudStore.ts';
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,7 @@ const DEFAULT_SETTINGS = {
   era: 'on', // era colour grading for the decade teams
   assist: 'assisted',
   dribbleStyle: 'sticky',
+  physics: 'engine', // engine (Gold Standard: Rapier, shared player controller) | classic
 };
 const SETTINGS_KEY = 'legends-settings';
 const dataMigration = migrate();
@@ -1024,6 +1026,7 @@ function startMatch() {
   home = frontend.applySquad(home);
   away = frontend.applySquad(away);
   const practice = settings.mode === 'practice' || settings.mode === 'tutorial';
+  if (match?.engine) { match.engine.dispose(); match.engine = null; }
   match = createMatch({
     home, away, controllers: controllers(),
     difficulty: practice ? 'easy' : settings.difficulty,
@@ -1039,6 +1042,11 @@ function startMatch() {
     setTeamTactic(match, i, setup.tactic);
   });
   setupKickoff(match, 0); // line up in the chosen shape
+  // Gold Standard engine: Rapier physics, the shared player controller and one
+  // ball-interaction authority. Indoor fives (boards) and the shoot-out mode
+  // still use the classic physics.
+  match.engine = settings.physics !== 'classic' && physicsReady() && !match.indoor && settings.mode !== 'penalties'
+    ? new MatchPhysics(match) : null;
   match.events.length = 0;
   goals = [];
   acc = 0;
@@ -1600,6 +1608,7 @@ const frontend = createFrontend({
 });
 
 buildMenu();
+preparePhysics().catch((err) => console.warn('[physics] engine unavailable, using classic physics', err));
 frontend.boot();
 // Licensed club logos (if the user has added any) replace the original art.
 fetch(`${import.meta.env.BASE_URL}assets/clubs/logos/official/manifest.json`)
