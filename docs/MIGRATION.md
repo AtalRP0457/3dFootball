@@ -17,18 +17,18 @@ the canvas. The game keeps working at every step of the migration.
 
 | Area | Files | State |
 | --- | --- | --- |
-| Shared types | `src/types/game.ts` | done |
+| Shared types | `src/types/game.ts`, `src/types/db.ts` | done |
 | Engine | `src/game/**` (match, ai, input, physics, mechanics, identity, constants) | **TypeScript (strict)** |
 | In-match HUD | `src/ui/hud/Hud.tsx`, `hudStore.ts` | **React + TypeScript** |
+| Data | `src/db/**` (tables, team service, crests, validation, seeds), `src/data/**`, `src/state/**` | **TypeScript (strict)** |
 | 3D renderer | `src/render/**` (scene, character, stadium, viewer, audio) | JavaScript, next |
-| Data | `src/db/**`, `src/data/**`, `src/state/**` | JavaScript, next |
 | Menus | `src/ui/frontend.js`, `hero.js`, `art.js` | JavaScript, React screen by screen |
 | App shell | `src/main.js` | JavaScript, becomes `App.tsx` + a `GameHost` canvas component last |
 
 ## Order for the rest (each step lands separately, tests + typecheck green)
 
-1. `src/db`, `src/state`, `src/data` to TypeScript (types for clubs, kits,
-   roster members, player cards).
+1. ~~`src/db`, `src/state`, `src/data` to TypeScript~~ (done: seed, table,
+   player card and built team types in `src/types/db.ts`).
 2. `src/render` to TypeScript (Three.js has its own types).
 3. Menus to React, one screen per PR, sharing a small settings/session
    store: title and hub, team select (the 3D viewer becomes a `<PlayerViewer>`

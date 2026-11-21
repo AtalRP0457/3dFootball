@@ -1,7 +1,7 @@
 import './style.css';
-import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.js';
-import { teamRecord, ERAS } from './db/index.js';
-import { migrate, ls } from './state/store.js';
+import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.ts';
+import { teamRecord, ERAS } from './db/index.ts';
+import { migrate, ls } from './state/store.ts';
 import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.ts';
 import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.ts';
 import { createFrontend } from './ui/frontend.js';
@@ -18,7 +18,7 @@ const $ = (id) => document.getElementById(id);
 const DEFAULT_SETTINGS = {
   mode: '1p', // 1p | 2p | cpu | cup | career | penalties | indoor | practice | tutorial
   pool: 'clubs', // clubs | nations | decades
-  roster: 'modern', // roster profile (see ERAS in src/db/index.js)
+  roster: 'modern', // roster profile (see ERAS in src/db/index.ts)
   clubIdentity: 'authentic', // authentic | parody | mixed
   playerIdentity: 'real', // real | parody
   home: 'fcb',

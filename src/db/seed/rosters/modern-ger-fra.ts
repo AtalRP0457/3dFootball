@@ -1,5 +1,7 @@
-// Modern Football (2024-25): Germany and France. Format: see modern-eng.js.
-export default {
+// Modern Football (2024-25): Germany and France. Format: see modern-eng.ts.
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   bay: `Manuel Neuer|GK|86|1|GER
 Sven Ulreich|GK|72|26|GER
 Dayot Upamecano|CB|83|2|FRA
@@ -422,3 +424,5 @@ Bahereba Guirassy|CM|66|14|FRA
 Mohamed Achi|ST|64|11|FRA
 Jean-Kévin Duverne|CB|70|17|FRA`,
 };
+
+export default rosters;

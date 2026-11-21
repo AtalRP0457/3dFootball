@@ -3,8 +3,8 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DB } from '../src/db/index.js';
-import { validateDatabase } from '../src/db/validate.js';
+import { DB } from '../src/db/index.ts';
+import { validateDatabase } from '../src/db/validate.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const report = validateDatabase();

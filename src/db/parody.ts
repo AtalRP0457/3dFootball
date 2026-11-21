@@ -1,8 +1,9 @@
 // Parody identities for players. Hand-written names for famous players, and a
 // deterministic pun generator for everyone else. The parody name is a DISPLAY
 // alias only: player IDs, ratings and roster links never change.
+import type { Group, ParodyAlias } from '../types/db.ts';
 
-export const PARODY_PLAYERS = {
+export const PARODY_PLAYERS: Record<string, string> = {
   'Lionel Messi': 'Messigician', 'Cristiano Ronaldo': 'Arrogontaldo', 'Kylian Mbappé': 'Mbappuccino',
   'Erling Haaland': 'Haalandinho the Goal Machine', Neymar: 'Neymarvellous', 'Zinedine Zidane': 'Zizou Wizard',
   Ronaldinho: 'Ronaldinho Magic', 'Ronaldo Nazário': 'Il Fenomenal', 'Vinícius Júnior': 'Vini Vidi Vici',
@@ -45,21 +46,21 @@ export const PARODY_PLAYERS = {
   'Robert Pirès': 'Robert Pie-res', 'Toni Kroos ': 'Toni Kroossword',
 };
 
-const ROLE_PATTERNS = {
+const ROLE_PATTERNS: Record<string, string[]> = {
   GK: ['Gloves {s}', '{s} the Wall', 'Safe-Hands {s}', 'Captain Catch {s}'],
   DEF: ['Iron {s}', '{s}-Block', 'No-Entry {s}', '{s} the Bouncer', 'Big Slide {s}'],
   MID: ['{s}tronome', 'Maestro {s}', '{s} the Engine', 'Professor {s}', '{s}-Spinner'],
   FWD: ['{s}inho', 'Goalden {s}', '{s} the Finisher', 'Turbo {s}', '{s}-Rocket'],
 };
-const BIO = {
+const BIO: Record<string, string[]> = {
   GK: ['Has never met a penalty he did not dive the wrong way for, then save anyway.', 'Spends warm-ups shouting at the crossbar for motivation.', 'Claims to have caught a pigeon mid-match once. Witnesses disagree.'],
   DEF: ['Treats every through ball as a personal insult.', 'Has a slide tackle named after him in three languages.', 'Famously cleared a ball so far it landed in the next fixture.'],
   MID: ['Passes the ball before he even receives it.', 'Has more touches per game than a smartphone.', 'Can find a team-mate through a closed door.'],
   FWD: ['Celebrates goals he has not scored yet, just to save time.', 'Allergic to defending, immune to offside flags (allegedly).', 'Has a celebration for every day of the week.'],
 };
 
-function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
-function surnameOf(name) {
+function hash(s: unknown): number { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
+function surnameOf(name: string): string {
   const parts = name.replace(/[.]/g, '').split(' ').filter(Boolean);
   if (parts.length === 1) return parts[0];
   const particles = new Set(['van', 'de', 'der', 'da', 'di', 'dos', 'del', 'la', 'le', 'von', 'ter', 'den']);
@@ -69,14 +70,14 @@ function surnameOf(name) {
 }
 
 /** Build a parody alias table for a set of players: { playerId: {name, bio, inspiration} } */
-export function buildParodyAliases(players) {
+export function buildParodyAliases(players: { id: string; name: string; group: Group }[]): Record<string, ParodyAlias> {
   const used = new Set(Object.values(PARODY_PLAYERS));
-  const out = {};
+  const out: Record<string, ParodyAlias> = {};
   for (const p of players) {
     const role = p.group;
     const bios = BIO[role] || BIO.MID;
     const bio = bios[hash(p.id) % bios.length];
-    let name = PARODY_PLAYERS[p.name];
+    let name: string | undefined = PARODY_PLAYERS[p.name];
     if (!name) {
       const s = surnameOf(p.name);
       const pats = ROLE_PATTERNS[role] || ROLE_PATTERNS.MID;

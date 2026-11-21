@@ -1,6 +1,8 @@
 // FIFA 14 Classics (2013-14) and FIFA 18 Classics (2017-18) squads for the
-// biggest clubs. Format: see modern-eng.js.
-export const fifa14 = {
+// biggest clubs. Format: see modern-eng.ts.
+import type { RosterSource } from '../../../types/db.ts';
+
+export const fifa14: RosterSource = {
   fcb: `Víctor Valdés|GK|85|1|ESP
 José Manuel Pinto|GK|74|13|ESP
 Gerard Piqué|CB|85|3|ESP
@@ -171,7 +173,7 @@ Edinson Cavani|ST|86|9|URU
 Jérémy Ménez|LW|76|7|FRA`,
 };
 
-export const fifa18 = {
+export const fifa18: RosterSource = {
   fcb: `Marc-André ter Stegen|GK|87|1|GER
 Jasper Cillessen|GK|80|13|NED
 Gerard Piqué|CB|87|3|ESP

@@ -1,8 +1,10 @@
 // Modern Football (2024): national team squads outside Europe (Copa América,
-// AFCON, Asian Cup and 2024 qualifier call-ups). Format: see modern-eng.js.
+// AFCON, Asian Cup and 2024 qualifier call-ups). Format: see modern-eng.ts.
 // Nepal's squad is lower-confidence than the rest; verify it in the Player
 // Database and edit anything that is out of date.
-export default {
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   'n-arg': `Emiliano Martínez|GK|87|23|ARG
 Gerónimo Rulli|GK|78|12|ARG
 Cristian Romero|CB|85|13|ARG
@@ -507,3 +509,5 @@ Haythem Jouini|ST|67|9|TUN
 Anis Ben Slimane|CM|70|25|TUN
 Hamza Rafia|CM|69|18|TUN`,
 };
+
+export default rosters;

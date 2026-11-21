@@ -7,7 +7,7 @@ if (!globalThis.navigator || !('getGamepads' in globalThis.navigator)) {
   Object.defineProperty(globalThis, 'navigator', { value: { getGamepads: () => [] }, configurable: true });
 }
 const { normalizeKey, Input } = await import('../src/game/input.ts');
-import { TEAMS } from '../src/data/teams.js';
+import { TEAMS } from '../src/data/teams.ts';
 import { FIXED_DT, HALF_L, HALF_W, BALL_R } from '../src/game/constants.ts';
 
 let failures = 0;

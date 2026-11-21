@@ -1,7 +1,7 @@
 // Database + identity tests (run with: npm test)
-import { DB } from '../src/db/index.js';
-import { validateDatabase } from '../src/db/validate.js';
-import { buildTeam, configure, isPlayable, resolveKitClash } from '../src/db/teams.js';
+import { DB } from '../src/db/index.ts';
+import { validateDatabase } from '../src/db/validate.ts';
+import { buildTeam, configure, isPlayable, resolveKitClash } from '../src/db/teams.ts';
 import { createMatch, stepMatch } from '../src/game/match.ts';
 import { FIXED_DT } from '../src/game/constants.ts';
 

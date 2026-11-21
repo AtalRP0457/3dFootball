@@ -1,13 +1,16 @@
 // National teams: identity, parody identity, colours, original emblem spec,
-// flag layout (drawn by src/db/crests.js) and kits.
+// flag layout (drawn by src/db/crests.ts) and kits.
 // flag: [layout, ...colours]  layouts: v3 (vertical tricolour), h3, h2, cross
 // (Nordic cross), plain, diag, star, circle, ...
-const N = (id, name, code, parody, confed, colors, flag, emblem, kits, stadium) => ({
+import type { FlagSpec, KitTuple, SeedKits, SeedNation } from '../../types/db.ts';
+
+const N = (id: string, name: string, code: string, parody: string, confed: string, colors: string[],
+  flag: FlagSpec, emblem: string, kits: SeedKits, stadium: string): SeedNation => ({
   id: `n-${id}`, iso: id, name, short: name, code, parody, confed, colors, flag, emblem, kits, stadium,
 });
-const K = (home, away, gk) => ({ home, away, third: away, gk });
+const K = (home: KitTuple, away: KitTuple, gk: string): SeedKits => ({ home, away, third: away, gk });
 
-export const NATIONS = [
+export const NATIONS: SeedNation[] = [
   // Europe
   N('fra', 'France', 'FRA', 'Les Bleus Cheese', 'UEFA', ['#002395', '#ed2939', '#ffffff'], ['v3', '#002395', '#ffffff', '#ed2939'], 'cockerel',
     K(['plain', '#002395', '#ed2939', '#ffffff', '#ed2939'], ['plain', '#ffffff', '#002395', '#ffffff', '#ffffff'], '#3fd18c'), 'Stade de France'),

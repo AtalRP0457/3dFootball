@@ -1,5 +1,7 @@
-// FIFA 07 Classics roster profile: 2006-07 squads. Format: see modern-eng.js.
-export default {
+// FIFA 07 Classics roster profile: 2006-07 squads. Format: see modern-eng.ts.
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   fcb: `Víctor Valdés|GK|84|1|ESP
 Albert Jorquera|GK|72|13|ESP
 Carles Puyol|CB|87|5|ESP
@@ -226,3 +228,5 @@ David Villa|ST|86|7|ESP
 Fernando Morientes|ST|81|9|ESP
 Mario Regueiro|LM|74|10|URU`,
 };
+
+export default rosters;

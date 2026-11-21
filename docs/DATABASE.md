@@ -13,14 +13,14 @@ normalised in-memory model built from seed files at startup, plus user data in
 | `src/db/seed/nations.js` | 52 national teams: names, parody names, confederation, flag layout, emblem, kits |
 | `src/db/seed/rosters/*.js` | Squads per roster profile: `modern` (2024-25, all 156 teams), `fifa18`, `fifa14`, `fifa07` (top clubs) and `legends` (all-time XIs), one line per player: `Name|Position|Overall|Shirt|Nation|Foot|Pace` |
 | `src/db/parody.js` | Hand-written parody names for famous players + a deterministic pun generator for everyone else |
-| `src/data/teams.js` | The original ten decade legends teams (kept as the "Decade Legends" pool) |
+| `src/data/teams.ts` | The original ten decade legends teams (kept as the "Decade Legends" pool) |
 
 Ratings are this game's own estimates on a 1–99 scale, not EA data. Detailed
 attributes (pace, finishing, vision, GK diving, ...) are derived from each
 player's position profile and overall rating, with an optional pace value per
 player; every attribute can be edited in-game (Player Database tab).
 
-## Tables (`src/db/index.js`)
+## Tables (`src/db/index.ts`)
 
 | Table | Key | Relations |
 | --- | --- | --- |

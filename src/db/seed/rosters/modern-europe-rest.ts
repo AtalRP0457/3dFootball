@@ -1,6 +1,8 @@
-// Modern Football (2024-25): rest of Europe. Format: see modern-eng.js.
+// Modern Football (2024-25): rest of Europe. Format: see modern-eng.ts.
 // Squads outside the big five leagues are lower-confidence; edit in-game.
-export default {
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   slb: `Anatoliy Trubin|GK|80|1|UKR
 Samuel Soares|GK|69|24|POR
 António Silva|CB|78|4|POR
@@ -396,3 +398,5 @@ Silas|RW|71|17|COD
 Aleksandar Katai|LW|69|10|SRB
 Jovan Mijatović|ST|63|79|SRB`,
 };
+
+export default rosters;

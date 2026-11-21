@@ -4,18 +4,20 @@
 // tac = tackling, dri = dribbling, gk = goalkeeping.
 // Edit freely: add players, change ratings or kits. Adding a team here is
 // enough for it to appear in the menu.
+import type { PlayerData, Role } from '../types/game.ts';
+import type { DecadeTeam } from '../types/db.ts';
 
-const p = (name, number, spd, pas, sho, tac, dri, gk = 20) => ({
+const p = (name: string, number: number, spd: number, pas: number, sho: number, tac: number, dri: number, gk = 20): PlayerData => ({
   name, number, stats: { spd, pas, sho, tac, dri, gk },
 });
-const extra = (role, name, number, spd, pas, sho, tac, dri) => ({
+const extra = (role: Role, name: string, number: number, spd: number, pas: number, sho: number, tac: number, dri: number): PlayerData => ({
   ...p(name, number, spd, pas, sho, tac, dri), role,
 });
-const reserve = (role, name, number, spd, pas, sho, tac, dri, gk = 20) => ({
+const reserve = (role: Role, name: string, number: number, spd: number, pas: number, sho: number, tac: number, dri: number, gk = 20): PlayerData => ({
   ...p(name, number, spd, pas, sho, tac, dri, gk), role,
 });
 
-export const TEAMS = [
+export const TEAMS: DecadeTeam[] = [
   {
     id: '1910', name: '1910', nickname: 'The Pioneers',
     kit: { shirt: '#f2efe6', shorts: '#1d1d1d', socks: '#1d1d1d', gk: '#3c6e3c' },
@@ -131,7 +133,7 @@ export const TEAMS = [
 // Six additional outfield players complete the 4-3-3 starting XI. The first
 // five entries above retain the prototype's GK/DEF/DEF/MID/FWD ordering;
 // extras are appended as DEF/DEF/MID/MID/FWD/FWD.
-const supportingPlayers = {
+const supportingPlayers: Record<string, PlayerData[]> = {
   '1910': [
     extra('DEF', 'Charlie Roberts', 4, 72, 68, 42, 84, 62), extra('DEF', 'Frank Barson', 5, 68, 58, 38, 86, 48),
     extra('MID', 'Billy Meredith', 11, 82, 86, 72, 48, 90), extra('MID', 'Arthur Grimsdell', 6, 72, 70, 58, 76, 66),
@@ -188,7 +190,7 @@ for (const team of TEAMS) team.players.push(...(supportingPlayers[team.id] || []
 
 // Four named bench options per team give each side a reserve keeper and three
 // outfield choices. Matches allow three substitutions, as in the game's era.
-const benchPlayers = {
+const benchPlayers: Record<string, PlayerData[]> = {
   '1910': [reserve('GK', 'Sam Hardy', 12, 65, 58, 30, 42, 48, 84), reserve('DEF', 'Colin Veitch', 13, 75, 70, 50, 82, 68), reserve('MID', 'Billy Gillespie', 14, 76, 82, 75, 50, 82), reserve('FWD', 'George Wall', 15, 80, 74, 86, 42, 84)],
   '1920': [reserve('GK', 'Elisha Scott', 12, 63, 58, 30, 42, 48, 87), reserve('DEF', 'George Male', 13, 73, 70, 48, 83, 64), reserve('MID', 'Jimmy Gordon', 14, 76, 78, 70, 54, 80), reserve('FWD', 'Hughie Gallacher', 15, 82, 76, 90, 42, 86)],
   '1930': [reserve('GK', 'Alex Thepot', 12, 64, 59, 30, 42, 48, 86), reserve('DEF', 'Ernst Ocwirk', 13, 74, 80, 58, 84, 76), reserve('MID', 'Giovanni Ferrari', 14, 78, 84, 77, 54, 82), reserve('FWD', 'Guillermo Stábile', 15, 82, 75, 92, 40, 80)],
@@ -203,6 +205,6 @@ const benchPlayers = {
 
 for (const team of TEAMS) team.bench = benchPlayers[team.id] || [];
 
-export function getTeam(id) {
+export function getTeam(id: string): DecadeTeam {
   return TEAMS.find((t) => t.id === id) || TEAMS[0];
 }

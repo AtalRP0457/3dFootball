@@ -5,7 +5,7 @@ import { touchLead, kickReach } from '../src/game/mechanics/dribbling.ts';
 import { physicalProfile } from '../src/game/physics/attributes.ts';
 import { integrateBall, substepsFor, setKickSpin, setRollingSpin } from '../src/game/physics/ballPhysics.ts';
 import { createMatch, stepMatch, setControlled } from '../src/game/match.ts';
-import { TEAMS } from '../src/data/teams.js';
+import { TEAMS } from '../src/data/teams.ts';
 import { FIXED_DT, HALF_L, BALL_R, GOAL } from '../src/game/constants.ts';
 
 let failures = 0;
