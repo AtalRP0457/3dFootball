@@ -2,10 +2,10 @@
 import {
   integrateBall, rollDistance, speedForRollDistance, setRollingSpin, setKickSpin,
   collideBallWithBody, solveLoftedKick, substepsFor, predictGroundBall,
-} from '../src/game/physics/ballPhysics.js';
-import { stepLocomotion, resolvePlayerContacts } from '../src/game/physics/playerPhysics.js';
-import { physicalProfile } from '../src/game/physics/attributes.js';
-import { BALL_R } from '../src/game/constants.js';
+} from '../src/game/physics/ballPhysics.ts';
+import { stepLocomotion, resolvePlayerContacts } from '../src/game/physics/playerPhysics.ts';
+import { physicalProfile } from '../src/game/physics/attributes.ts';
+import { BALL_R } from '../src/game/constants.ts';
 
 let failures = 0;
 function check(cond, msg) {

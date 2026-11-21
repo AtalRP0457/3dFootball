@@ -8,16 +8,21 @@
 // - A ball that gets too far from its owner (a heavy touch, a sharp turn at
 //   full speed) is lost and becomes a loose ball anyone can win.
 
-import { BALL, setRollingSpin, gauss } from '../physics/ballPhysics.js';
-import { BALL_R } from '../constants.js';
+import { BALL, setRollingSpin, gauss } from '../physics/ballPhysics.ts';
+import type { BallBody } from '../physics/ballPhysics.ts';
+import type { Player, Vec2 } from '../../types/game.ts';
+import { BALL_R } from '../constants.ts';
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
+/** Pitch half-extents the close-control spot is kept inside. */
+export interface Bounds { x: number; z: number }
 
 /** Speed below which the dribbler uses continuous close control. */
 export const CLOSE_CONTROL_SPEED = 2.6;
 
 /** How far in front of the body the ball sits/leads at a given speed. */
-export function touchLead(p, speed) {
+export function touchLead(p: Pick<Player, 'phys'>, speed: number): number {
   const prof = p.phys;
   const run = prof.runSpeed;
   const sprintExtra = Math.max(0, speed - run * 1.02) * 0.4;
@@ -26,18 +31,18 @@ export function touchLead(p, speed) {
 }
 
 /** Distance from the body within which the player can strike the ball. */
-export function kickReach(p) {
+export function kickReach(p: Pick<Player, 'phys'>): number {
   return 1.25 + p.phys.control * 0.35;
 }
 
-export function canKick(p, b) {
+export function canKick(p: Player, b: BallBody): boolean {
   if (p.mustPass || p.holding) return true;
   const d = Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z);
   return d <= kickReach(p) && b.pos.y < 0.9;
 }
 
 /** The direction the dribbler wants to take the ball. */
-function wantedDirection(p) {
+function wantedDirection(p: Player): Vec2 {
   const it = p.intent;
   const il = Math.hypot(it.mx, it.mz);
   if (il > 0.2) return { x: it.mx / il, z: it.mz / il };
@@ -51,7 +56,7 @@ function wantedDirection(p) {
  * this step. Returns 'lost' when the dribbler has lost it, 'touch' on a
  * touch, or null.
  */
-export function updateDribble(p, b, dt, bounds) {
+export function updateDribble(p: Player, b: BallBody, dt: number, bounds: Bounds | null): 'lost' | 'touch' | null {
   const prof = p.phys;
   p.touchCd = Math.max(0, (p.touchCd || 0) - dt);
   const s = Math.hypot(p.vel.x, p.vel.z);
@@ -150,4 +155,60 @@ export function updateDribble(p, b, dt, bounds) {
   p.touchCd = 0.16 + (1 - prof.dribbling) * 0.12;
   p.touchAnim = 0.22;
   return 'touch';
+}
+
+// ---------------------------------------------------------------------------
+// Sticky (arcade) dribbling: the default.
+//
+// The ball stays at the dribbler's feet until he passes, shoots or is
+// tackled. It sits just in front of the leading foot along his body
+// direction, so it swings round with him when he turns, and pulses forward
+// in small touches in rhythm with his stride (the leg animation is cued by
+// touchAnim). Better dribblers keep it a little tighter. The ball's
+// velocity is derived from its movement so spin and rendering stay right.
+// ---------------------------------------------------------------------------
+const STICKY_TOUCH_EVERY = 1.25; // metres of running per visible touch
+
+export function stickyLead(p: Pick<Player, 'phys'>, speed: number): number {
+  const skill = 1.15 - p.phys.dribbling * 0.3; // 0.85 (elite) .. 1.09 (poor)
+  return (0.42 + Math.min(speed, 9) * 0.035) * skill;
+}
+
+export function updateStickyDribble(p: Player, b: BallBody, dt: number, bounds: Bounds | null): 'touch' | null {
+  const s = Math.hypot(p.vel.x, p.vel.z);
+  p.touchCd = 0;
+  // Touch rhythm: one touch every ~1.25 m covered.
+  const prev = p.dribblePhase || 0;
+  p.dribblePhase = prev + (s * dt) / STICKY_TOUCH_EVERY;
+  let touched = false;
+  if (Math.floor(p.dribblePhase) !== Math.floor(prev) && s > 1.2) {
+    p.touchAnim = 0.22;
+    touched = true;
+  }
+  // Forward pulse after each touch: the ball runs a few centimetres ahead
+  // and is gathered again.
+  const frac = p.dribblePhase % 1;
+  const pulse = s > 1.2 ? Math.sin(Math.PI * frac) * (0.06 + s * 0.012) : 0;
+  const lead = stickyLead(p, s) + pulse;
+  // Slightly towards the kicking foot (right foot unless left-footed).
+  const side = (p.identity?.foot === 'Left' ? 1 : -1) * 0.06;
+  const fx = p.face.x, fz = p.face.z;
+  // Left of the facing direction is (fz, -fx); a negative side means right.
+  let tx = p.pos.x + fx * lead + fz * side;
+  let tz = p.pos.z + fz * lead - fx * side;
+  if (bounds) {
+    tx = clamp(tx, -bounds.x, bounds.x);
+    tz = clamp(tz, -bounds.z, bounds.z);
+  }
+  // Follow the anchor quickly (stays glued, but turns read as a swing).
+  const k = 1 - Math.exp(-dt * (20 + p.phys.dribbling * 12));
+  const nx = b.pos.x + (tx - b.pos.x) * k;
+  const nz = b.pos.z + (tz - b.pos.z) * k;
+  b.vel.x = (nx - b.pos.x) / dt;
+  b.vel.z = (nz - b.pos.z) / dt;
+  b.vel.y = 0;
+  b.pos.x = nx; b.pos.z = nz;
+  b.pos.y = BALL_R;
+  setRollingSpin(b);
+  return touched ? 'touch' : null;
 }

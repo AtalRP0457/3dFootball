@@ -10,13 +10,23 @@
     "prebuild": "node scripts/generate-assets.mjs",
     "preview": "vite preview",
     "assets": "node scripts/generate-assets.mjs",
-    "db:validate": "node scripts/validate-db.mjs",
-    "test": "node tests/physics.test.mjs && node tests/mechanics.test.mjs && node tests/character.test.mjs && node tests/sim.test.mjs && node tests/db.test.mjs && node scripts/validate-db.mjs"
+    "db:validate": "tsx scripts/validate-db.mjs",
+    "test": "tsx tests/physics.test.mjs && tsx tests/mechanics.test.mjs && tsx tests/character.test.mjs && tsx tests/sim.test.mjs && tsx tests/db.test.mjs && tsx scripts/validate-db.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
     "vite": "^5.4.0"
   }
 }

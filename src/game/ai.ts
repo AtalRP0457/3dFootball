@@ -5,15 +5,19 @@
 // the opponent's goal and az is mirrored the same way, so the same rules
 // work for both teams.
 
-import { HALF_L, HALF_W, GOAL, BOX, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.js';
-import { predictGroundBall, samplePath } from './physics/ballPhysics.js';
+import type { MatchState, Player, Team, Ball, Vec2, PassKind, ShotType } from '../types/game.ts';
 
-const len = (x, z) => Math.hypot(x, z);
-const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+/** Per-team view of who should chase the ball this step. */
+export interface TeamContext { chaser: Player | null; second: Player | null; humanCloser: boolean; humanD: number }
+import { HALF_L, HALF_W, GOAL, BOX, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.ts';
+import { predictGroundBall, samplePath } from './physics/ballPhysics.ts';
+
+const len = (x: number, z: number) => Math.hypot(x, z);
+const dist = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a = -1, b = 1) => a + Math.random() * (b - a);
 
-function runSpeed(p) {
+function runSpeed(p: Player) {
   return p.phys ? p.phys.runSpeed : 4.6 + (p.stats.spd / 100) * 2.6;
 }
 
@@ -22,9 +26,9 @@ function runSpeed(p) {
  * (spin, bounces, rolling) when the match has computed one, otherwise the
  * closed-form rolling model.
  */
-function predictBall(b, t) {
+function predictBall(b: Ball, t: number): { x: number; z: number; y: number } {
   if (b.owner) return { x: b.pos.x + b.vel.x * t, z: b.pos.z + b.vel.z * t, y: b.pos.y };
-  if (b.path) return samplePath(b.path, t);
+  if (b.path) { const q = samplePath(b.path, t); if (q) return q; }
   return { ...predictGroundBall(b, t), y: b.pos.y };
 }
 
@@ -32,7 +36,7 @@ function predictBall(b, t) {
  * Earliest point on the ball's path the player can get to while it is low
  * enough to play (so receivers run to where a lofted ball comes down).
  */
-export function interceptPoint(p, b, reachH = 1.3) {
+export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
   const s = runSpeed(p) * 1.2;
   for (let t = 0; t <= 3 + 1e-9; t += 0.1) {
     const q = predictBall(b, t);
@@ -42,7 +46,7 @@ export function interceptPoint(p, b, reachH = 1.3) {
   return predictBall(b, 3);
 }
 
-function setMove(p, tx, tz, sprint = false, slowRadius = 1.5) {
+function setMove(p: Player, tx: number, tz: number, sprint: boolean = false, slowRadius: number = 1.5) {
   const dx = tx - p.pos.x, dz = tz - p.pos.z;
   const d = len(dx, dz);
   const it = p.intent;
@@ -54,21 +58,21 @@ function setMove(p, tx, tz, sprint = false, slowRadius = 1.5) {
 }
 
 /** Is p behind the ball carrier o (relative to where o is facing)? */
-function fromBehind(p, o) {
+function fromBehind(p: Player, o: Player) {
   return (p.pos.x - o.pos.x) * o.face.x + (p.pos.z - o.pos.z) * o.face.z < -0.35;
 }
 
-function opponents(state, p) {
+function opponents(state: MatchState, p: Player) {
   return state.players.filter((o) => o.team !== p.team && o.onPitch && !o.sentOff);
 }
 
-function nearestOpponentDist(state, p) {
+function nearestOpponentDist(state: MatchState, p: Player) {
   let m = Infinity;
   for (const o of opponents(state, p)) m = Math.min(m, dist(o.pos, p.pos));
   return m;
 }
 
-function segmentDist(px, pz, ax, az, bx, bz) {
+function segmentDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number) {
   const vx = bx - ax, vz = bz - az;
   const l2 = vx * vx + vz * vz || 1;
   const t = clamp(((px - ax) * vx + (pz - az) * vz) / l2, 0, 1);
@@ -76,7 +80,7 @@ function segmentDist(px, pz, ax, az, bx, bz) {
 }
 
 /** Score every teammate as a pass option. Returns {target, score} or null. */
-export function bestPass(state, p, allowKeeper = false) {
+export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = false) {
   const team = state.teams[p.team];
   const dir = team.dir;
   const opps = opponents(state, p);
@@ -99,7 +103,7 @@ export function bestPass(state, p, allowKeeper = false) {
   return best;
 }
 
-function buildContext(state, team) {
+function buildContext(state: MatchState, team: Team) {
   const b = state.ball;
   const target = b.owner ? b.owner.pos : interceptPointRough(b);
   let chaser = null, cd = Infinity, second = null, sd = Infinity;
@@ -114,11 +118,11 @@ function buildContext(state, team) {
   return { chaser, second, humanCloser: humanD < cd, humanD };
 }
 
-function interceptPointRough(b) {
+function interceptPointRough(b: Ball) {
   return predictBall(b, 0.6);
 }
 
-export function updateAI(state, dt) {
+export function updateAI(state: MatchState, dt: number) {
   const b = state.ball;
   const ctx = state.teams.map((team) => buildContext(state, team));
   for (const p of state.players) {
@@ -145,7 +149,7 @@ export function updateAI(state, dt) {
 }
 
 // ---------- outfield, without the ball ----------
-function offBallAI(state, p, team, c, dt) {
+function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt: number) {
   const b = state.ball;
   const dir = team.dir;
   const weHave = b.owner ? b.owner.team === p.team : (b.intended && b.intended.team === p.team);
@@ -167,7 +171,7 @@ function offBallAI(state, p, team, c, dt) {
   if (!weHave && p === c.chaser && !humanHandling) {
     p.aiState = theyHave ? 'press' : 'chase ball';
     if (theyHave) {
-      const o = b.owner;
+      const o = b.owner!; // theyHave guarantees an owner
       if (o.holding || o.mustPass) {
         // Can't challenge: wait a few metres away, goal-side.
         const gx = -HALF_L * team.dir;
@@ -242,9 +246,9 @@ function offBallAI(state, p, team, c, dt) {
       sprint = ax - p.pos.x * dir > 6;
     }
   } else {
-    if (p === c.second && theyHave && bax < -HALF_L * 0.35 && dist(p.pos, b.owner.pos) < 9) {
+    if (p === c.second && theyHave && bax < -HALF_L * 0.35 && dist(p.pos, b.owner!.pos) < 9) {
       // Danger zone: second defender closes the dribbler down too.
-      const o = b.owner;
+      const o = b.owner!;
       setMove(p, o.pos.x + o.vel.x * 0.3 - dir * 1.2, o.pos.z + o.vel.z * 0.3, true, 0.3);
       p.aiState = 'double team';
       if (!o.mustPass && !o.holding && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.6 && Math.random() < (fromBehind(p, o) ? 0.006 : 0.02) * team.diff.tackle) {
@@ -279,7 +283,7 @@ function offBallAI(state, p, team, c, dt) {
  * AI shot selection: low and placed up close, finesse from an angle, a chip
  * when the keeper is well off his line, power from distance.
  */
-function chooseShotType(state, p, dGoal, gk) {
+function chooseShotType(state: MatchState, p: Player, dGoal: number, gk: Player | undefined): ShotType {
   const team = state.teams[p.team];
   const goalX = HALF_L * team.dir;
   const prof = p.phys;
@@ -292,7 +296,7 @@ function chooseShotType(state, p, dGoal, gk) {
 }
 
 /** AI pass selection: through balls for runners, lofted over blocked lanes. */
-function passKind(state, p, target) {
+function passKind(state: MatchState, p: Player, target: Player): PassKind | undefined {
   const dir = state.teams[p.team].dir;
   const d = dist(p.pos, target.pos);
   const ahead = (target.pos.x - p.pos.x) * dir;
@@ -308,7 +312,7 @@ function passKind(state, p, target) {
 }
 
 // ---------- outfield, with the ball ----------
-function withBallAI(state, p, team, dt) {
+function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
   const dir = team.dir;
   const goalX = HALF_L * dir;
   const it = p.intent;
@@ -387,7 +391,7 @@ function withBallAI(state, p, team, dt) {
 }
 
 // ---------- goalkeeper ----------
-function keeperAI(state, p, team, dt) {
+function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
   const b = state.ball;
   const dir = team.dir;
   const gx = -HALF_L * dir; // own goal line

@@ -13,15 +13,28 @@
 // the pass, pressure from opponents, fatigue and AI difficulty, and is
 // applied to both direction and weight, so passes are never laser-perfect.
 
-import { HALF_L, HALF_W } from '../constants.js';
+import { HALF_L, HALF_W } from '../constants.ts';
+import type { Vec2, Vec3, PassKind, PhysicalProfile } from '../../types/game.ts';
 import {
   speedForRollDistance, rollDistanceAfter, rollStopTime, solveLoftedKick, gauss,
-} from '../physics/ballPhysics.js';
+} from '../physics/ballPhysics.ts';
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
+/** Passer / receiver as the planner needs them (match Players satisfy this). */
+export interface Passer {
+  pos: Vec2; vel: Vec2; face: Vec2; stamina?: number; injured?: boolean; role?: string;
+  phys: Pick<PhysicalProfile, 'runSpeed' | 'sprintMul' | 'passAccuracy' | 'longPassing'> & { distribution?: number };
+}
+export interface Receiver { pos: Vec2; vel: Vec2; phys?: { runSpeed: number } | null }
+export interface PassInput {
+  p: Passer; target: Receiver; ball: { pos: Vec3 }; kind?: PassKind; driven?: boolean;
+  errMul?: number; pressure?: number; attackDir?: number; assisted?: boolean; rng?: () => number;
+}
+export interface PassPlan { vel: Vec3; top: number | null; aim: Vec2; kind: PassKind; sigma: number; flight: number }
 
 /** Time for a rolling ball launched at v0 to cover d metres (Infinity if it stops short). */
-export function rollTimeTo(v0, d) {
+export function rollTimeTo(v0: number, d: number): number {
   const stop = rollStopTime(v0);
   if (rollDistanceAfter(v0, stop) < d) return Infinity;
   let lo = 0, hi = stop;
@@ -32,7 +45,7 @@ export function rollTimeTo(v0, d) {
   return (lo + hi) / 2;
 }
 
-function groundSpeed(d, driven) {
+function groundSpeed(d: number, driven?: boolean): number {
   // Run-on past the receiver: a short pass is played to feet, a long one
   // firmer so it doesn't die before it arrives.
   const extra = clamp(d * 0.15, 0.6, 2.5);
@@ -48,11 +61,11 @@ function groundSpeed(d, driven) {
  * }
  * @returns { vel:{x,y,z}, top, aim:{x,z}, kind, sigma, flight }
  */
-export function planPass(o) {
+export function planPass(o: PassInput): PassPlan {
   const { p, target, ball } = o;
   const rng = o.rng || Math.random;
   const prof = p.phys;
-  let kind = o.kind || 'ground';
+  const kind: PassKind = o.kind || 'ground';
   const from = ball.pos;
 
   // ----- where to aim (lead the receiver) -----

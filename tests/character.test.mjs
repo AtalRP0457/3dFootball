@@ -3,8 +3,8 @@
 import * as THREE from 'three';
 import { createCharacter } from '../src/render/character/character.js';
 import { clipLibrary } from '../src/render/character/clips.js';
-import { playerIdentity, BODY_TYPES } from '../src/game/players/identity.js';
-import { physicalProfile } from '../src/game/physics/attributes.js';
+import { playerIdentity, BODY_TYPES } from '../src/game/players/identity.ts';
+import { physicalProfile } from '../src/game/physics/attributes.ts';
 
 let failures = 0;
 function check(cond, msg) { if (!cond) { failures++; console.error('  FAIL:', msg); } }

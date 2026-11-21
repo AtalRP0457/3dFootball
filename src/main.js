@@ -2,13 +2,15 @@ import './style.css';
 import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.js';
 import { teamRecord, ERAS } from './db/index.js';
 import { migrate, ls } from './state/store.js';
-import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.js';
-import { FIXED_DT, FORMATIONS, INDOOR_FORMATION } from './game/constants.js';
+import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.ts';
+import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.ts';
 import { createFrontend } from './ui/frontend.js';
-import { Input } from './game/input.js';
+import { Input } from './game/input.ts';
 import { createRenderer } from './render/scene.js';
 import { MatchAudio } from './render/audio.js';
-import { stopBall } from './game/physics/ballPhysics.js';
+import { stopBall } from './game/physics/ballPhysics.ts';
+import { mountHud } from './ui/hud/Hud.tsx';
+import { startHud, hideHud, publishFrame, showNotice, showGoal, setReplay } from './ui/hud/hudStore.ts';
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,6 +29,7 @@ const DEFAULT_SETTINGS = {
   duration: 240,
   era: 'on', // era colour grading for the decade teams
   assist: 'assisted',
+  dribbleStyle: 'sticky',
 };
 const SETTINGS_KEY = 'legends-settings';
 const dataMigration = migrate();
@@ -80,6 +83,7 @@ function saveDev() {
 }
 
 const renderer = createRenderer($('game'));
+mountHud($('hudRoot'));
 const input = new Input();
 const touchInput = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
 const audio = new MatchAudio();
@@ -534,7 +538,7 @@ function startTutorialState() {
   match.banner = null;
   for (const p of match.players) p.mustPass = false;
   b.owner = null;
-  b.pos.x = 8; b.pos.z = 7; b.pos.y = 0.22;
+  b.pos.x = 8; b.pos.z = 7; b.pos.y = BALL_R;
   stopBall(b);
   renderTutorial();
 }
@@ -627,7 +631,7 @@ function setupDrillRound() {
   victim.drillNoPass = true;
   b.owner = victim; b.lastTouch = victim; b.intended = null; b.shotLive = false;
   stopBall(b);
-  b.pos.x = victim.pos.x - 0.75; b.pos.z = victim.pos.z; b.pos.y = 0.22;
+  b.pos.x = victim.pos.x - DRIBBLE_OFFSET; b.pos.z = victim.pos.z; b.pos.y = BALL_R;
   setControlled(match, me, mine);
   me.seenOpponentOwner = victim; // don't auto-switch away from your defender
   drill.timer = 0;
@@ -1027,6 +1031,7 @@ function startMatch() {
     extraTime: settings.mode === 'cup', extraTimeDuration: Math.max(30, Math.round(settings.duration / 4)),
     timeScale: dev.speed / 100,
     assist: settings.assist,
+    dribbleStyle: settings.dribbleStyle,
   });
   [home, away].forEach((team, i) => {
     const setup = frontend.squadSetup(team);
@@ -1041,7 +1046,6 @@ function startMatch() {
   replayFrames = null;
   replayInfo = null;
   pendingReplay = null;
-  goalCard = null;
   replayElapsed = replayCaptureElapsed = 0;
   $('replaySkip').classList.add('hidden');
   const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
@@ -1054,17 +1058,7 @@ function startMatch() {
   renderer.setMatch(match);
   $('game').style.filter = eraFilter(home, away);
 
-  $('homeName').textContent = shortCode(home);
-  $('awayName').textContent = practice ? 'PRC' : shortCode(away);
-  for (const [chip, team, data, i] of [['homeChip', match.teams[0], home, 0], ['awayChip', match.teams[1], away, 1]]) {
-    const k = team.kit;
-    $(chip).style.background = `linear-gradient(90deg, ${k.shirt} 0 50%, ${k.secondary && k.secondary !== k.shirt ? k.secondary : k.shorts} 50% 100%)`;
-    const crestImg = $(`teamPanel${i}`).querySelector('.tp-crest');
-    crestImg.src = data.crest || '';
-    crestImg.classList.toggle('hidden', !data.crest);
-    $(`teamPanel${i}`).style.setProperty('--team', k.shirt);
-  }
-  $('teamPanel1').classList.toggle('hidden', !!practice);
+  startHud(match);
   try { history.pushState({ screen: 'match' }, '', '#/match'); } catch { /* sandboxed frames */ }
   $('subsBtn').classList.toggle('hidden', !match.teams.some((t) => t.human));
   $('formationRow').classList.toggle('hidden', !!match.indoor);
@@ -1099,7 +1093,6 @@ function toMenu() {
   replayFrames = null;
   replayInfo = null;
   pendingReplay = null;
-  goalCard = null;
   replayBuffer = [];
   $('replaySkip').classList.add('hidden');
   $('touchControls').classList.add('hidden');
@@ -1109,6 +1102,7 @@ function toMenu() {
   input.enabled = false;
   $('game').style.filter = 'none';
   $('hud').classList.add('hidden');
+  hideHud();
   $('pause').classList.add('hidden');
   $('subsPanel').classList.add('hidden');
   $('subsBtn').classList.remove('hidden');
@@ -1165,11 +1159,8 @@ window.addEventListener('popstate', () => {
 });
 
 // ---------- HUD ----------
-let subTimer = 0;
 function showSub(text, time = 1.6) {
-  $('subBanner').textContent = text;
-  $('subBanner').classList.add('show');
-  subTimer = time;
+  showNotice(text, time);
 }
 
 function snapshotForRender(state) {
@@ -1239,7 +1230,7 @@ function beginGoalReplay(info) {
   };
   replayElapsed = 0;
   $('replaySkip').classList.remove('hidden');
-  $('replayTag').classList.remove('hidden');
+  setReplay(true);
 }
 
 /** Playback rate: slow motion around the strike and as the ball goes in. */
@@ -1267,11 +1258,10 @@ function finishReplay() {
   replayFrames = null;
   replayInfo = null;
   pendingReplay = null;
-  goalCard = null;
   replayInfo = null;
   replayElapsed = 0;
   $('replaySkip').classList.add('hidden');
-  $('replayTag').classList.add('hidden');
+  setReplay(false);
 }
 
 function handleEvents() {
@@ -1281,7 +1271,7 @@ function handleEvents() {
     if (e.type === 'goal') {
       const team = match.teams[e.team];
       goals.push({ team: e.team, name: e.scorer, own: e.ownGoal, minute: Math.max(1, displayMinute(match)) });
-      showGoalCard(team, e);
+      showGoal(team, e.scorer, e.ownGoal);
       queueGoalReplay(e);
     } else if (e.type === 'offside') {
       showSub(`Offside · ${match.players[e.player].name}`, 1.6);
@@ -1374,115 +1364,9 @@ function promptsFor(id, team) {
   return items.map((t) => `<span>${t}</span>`).join('');
 }
 
-const shortCode = (t) => String(t.short || t.code || t.name || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'TEAM';
-
-/** Match clock as a 90-minute broadcast clock (mm:ss). */
-function broadcastClock(state) {
-  if (!Number.isFinite(state.duration)) return '00:00';
-  const reg = state.regulationDuration || state.duration;
-  const total = Math.max(0, (state.clock / reg) * 90 * 60);
-  const m = Math.floor(total / 60), sec = Math.floor(total % 60);
-  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
-
-/** Big centre card for goals / half time / full time; restarts get nothing. */
-const BANNERS_SHOWN = new Set(['GOAL!', 'HALF TIME', 'FULL TIME', 'EXTRA TIME', 'PENALTY']);
-let goalCard = null;
-function showGoalCard(team, e) {
-  goalCard = { text: e.ownGoal ? 'OWN GOAL' : 'GOAL', name: e.scorer || '', team: shortCode(team.data), color: team.kit.shirt, t: 3.2 };
-}
-
-/** The player each team "has": your controlled player, or for the computer the man on the ball / nearest to it. */
-function activePlayer(team) {
-  if (team.controlled && !team.controlled.sentOff) return team.controlled;
-  const b = match.ball;
-  if (b.owner && b.owner.team === team.index) return b.owner;
-  let best = null, bd = Infinity;
-  for (const p of match.players) {
-    if (p.team !== team.index || !p.onPitch || p.sentOff) continue;
-    const d = Math.hypot(p.pos.x - b.pos.x, p.pos.z - b.pos.z);
-    if (d < bd) { bd = d; best = p; }
-  }
-  return best;
-}
-
 function updateHud(dt) {
-  const [h, a] = match.teams;
-  $('scoreHome').textContent = h.score;
-  $('scoreAway').textContent = match.practice ? '–' : a.score;
-  $('clock').textContent = match.practice ? 'TRAINING'
-    : match.phase === 'halftime' ? 'HT' : match.phase === 'fulltime' ? 'FT' : broadcastClock(match);
-  const banner = $('banner');
-  if (goalCard && goalCard.t > 0) {
-    goalCard.t -= dt;
-    const html = `<span class="gc-word">${goalCard.text}</span><span class="gc-name"><i style="background:${goalCard.color}"></i>${goalCard.team} · ${goalCard.name}</span>`;
-    if (banner.innerHTML !== html) banner.innerHTML = html;
-    banner.classList.add('show', 'goal');
-  } else if (match.banner && match.phase !== 'fulltime' && BANNERS_SHOWN.has(match.banner.text) && match.banner.text !== 'GOAL!') {
-    if (banner.textContent !== match.banner.text) banner.textContent = match.banner.text;
-    banner.classList.remove('goal');
-    banner.classList.add('show');
-  } else {
-    banner.classList.remove('show', 'goal');
-  }
-  if (subTimer > 0) {
-    subTimer -= dt;
-    if (subTimer <= 0) $('subBanner').classList.remove('show');
-  }
-  for (const team of match.teams) {
-    const panel = $(`teamPanel${team.index}`);
-    const p = activePlayer(team);
-    const last = (p?.name || '').split(' ');
-    const surname = (last.length > 1 ? last.slice(1).join(' ') : last[0]).toUpperCase();
-    panel.querySelector('.tp-num').textContent = p ? p.number : '';
-    panel.querySelector('.tp-pname').textContent = p ? surname : '';
-    panel.querySelector('.tp-tag').textContent = team.human ? team.human.toUpperCase() : '';
-    panel.querySelector('.tp-stamina').style.width = `${(p ? p.stamina : 0) * 100}%`;
-    panel.querySelector('.tp-power').style.width = `${(p && p.charge ? p.charge : 0) * 100}%`;
-    panel.classList.toggle('charging', !!p && p.charge > 0);
-    panel.classList.toggle('human', !!team.human);
-  }
-  drawRadar();
+  publishFrame(match, dt);
   if (dev.debug) updateDebug();
-}
-
-/** Mini-map of the whole pitch: circles for the home side, triangles for the away side. */
-function drawRadar() {
-  const cv = $('radar');
-  const g = cv.getContext('2d');
-  const W = cv.width, H = cv.height, pad = 8;
-  const sx = (W - pad * 2) / 105, sz = (H - pad * 2) / 68;
-  const X = (x) => pad + (x + 52.5) * sx, Y = (z) => pad + (z + 34) * sz;
-  g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(28, 74, 36, 0.62)';
-  g.fillRect(0, 0, W, H);
-  g.strokeStyle = 'rgba(255,255,255,0.55)';
-  g.lineWidth = 1.5;
-  g.strokeRect(X(-52.5), Y(-34), 105 * sx, 68 * sz);
-  g.beginPath(); g.moveTo(X(0), Y(-34)); g.lineTo(X(0), Y(34)); g.stroke();
-  g.beginPath(); g.arc(X(0), Y(0), 9.15 * sx, 0, Math.PI * 2); g.stroke();
-  for (const s of [-1, 1]) {
-    g.strokeRect(Math.min(X(s * 52.5), X(s * (52.5 - 16.5))), Y(-20.16), 16.5 * sx, 40.32 * sz);
-    g.strokeRect(Math.min(X(s * 52.5), X(s * (52.5 - 5.5))), Y(-9.16), 5.5 * sx, 18.32 * sz);
-  }
-  for (const p of match.players) {
-    if (!p.onPitch || p.sentOff) continue;
-    const team = match.teams[p.team];
-    const x = X(p.pos.x), y = Y(p.pos.z);
-    const controlled = team.controlled === p && team.human;
-    g.fillStyle = controlled ? (team.human === 'p1' ? '#22d3ee' : '#f43f5e') : team.kit.shirt;
-    g.strokeStyle = 'rgba(0,0,0,0.65)';
-    g.lineWidth = 1;
-    g.beginPath();
-    const r = controlled ? 5.5 : 4;
-    if (p.team === 0) g.arc(x, y, r, 0, Math.PI * 2);
-    else { g.moveTo(x, y - r); g.lineTo(x + r, y + r * 0.8); g.lineTo(x - r, y + r * 0.8); g.closePath(); }
-    g.fill(); g.stroke();
-  }
-  const b = match.ball.pos;
-  g.fillStyle = '#ffffff';
-  g.beginPath(); g.arc(X(b.x), Y(b.z), 3, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = '#000'; g.stroke();
 }
 
 function updateDebug() {

@@ -1,3 +1,5 @@
+import type { HumanId, InputFrame } from '../types/game.ts';
+
 // Keyboard and gamepad input. Produces one input object per human player
 // each fixed step: { mx, mz, sprint, passPressed, loftPressed, throughPressed,
 // shootHeld, shootPressed, finesseHeld, chipHeld }.
@@ -7,7 +9,9 @@
 //
 // P1 always uses W A S D, P2 always uses the arrow keys.
 
-export const BINDINGS = {
+export type Binding = Record<'up' | 'down' | 'left' | 'right' | 'pass' | 'shoot' | 'sprint' | 'loft' | 'through' | 'finesse' | 'chip', string[]>;
+
+export const BINDINGS: Record<HumanId, Binding> = {
   p1: {
     up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
     pass: ['KeyF', 'Space'], shoot: ['KeyG'], sprint: ['ShiftLeft'],
@@ -24,29 +28,45 @@ const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b
 
 // Fallbacks for keyboards / input sources where event.code is missing or
 // unusual: map by the printed key or the legacy keyCode instead.
-const BY_KEY = {
+const BY_KEY: Record<string, string> = {
   w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', f: 'KeyF', g: 'KeyG',
   v: 'KeyV', r: 'KeyR', h: 'KeyH', t: 'KeyT',
   ' ': 'Space', '.': 'Period', '/': 'Slash', ',': 'Comma', ';': 'Semicolon', "'": 'Quote', ']': 'BracketRight',
   arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
 };
-const BY_KEYCODE = {
+const BY_KEYCODE: Record<number, string> = {
   87: 'KeyW', 65: 'KeyA', 83: 'KeyS', 68: 'KeyD', 70: 'KeyF', 71: 'KeyG',
   86: 'KeyV', 82: 'KeyR', 72: 'KeyH', 84: 'KeyT', 188: 'Comma', 186: 'Semicolon', 222: 'Quote', 221: 'BracketRight',
   32: 'Space', 190: 'Period', 191: 'Slash', 38: 'ArrowUp', 40: 'ArrowDown', 37: 'ArrowLeft', 39: 'ArrowRight',
 };
 
 /** Work out which physical key was pressed, as robustly as possible. */
-export function normalizeKey(e) {
+export function normalizeKey(e: { code?: string; key?: string; keyCode?: number; location?: number }): string {
   if (e.code && GAME_KEYS.has(e.code)) return e.code;
   const k = typeof e.key === 'string' ? e.key.toLowerCase() : '';
   if (BY_KEY[k]) return BY_KEY[k];
-  if (BY_KEYCODE[e.keyCode]) return BY_KEYCODE[e.keyCode];
+  if (e.keyCode != null && BY_KEYCODE[e.keyCode]) return BY_KEYCODE[e.keyCode];
   if (k === 'shift') return e.location === 2 ? 'ShiftRight' : 'ShiftLeft';
   return e.code || k;
 }
 
+export interface TouchState {
+  mx: number; mz: number; sprint: boolean; passPressed: boolean; shootHeld: boolean; shootPressed: boolean;
+}
+
 export class Input {
+  down = new Set<string>();
+  pressed = new Set<string>();
+  padPrev: Record<number, boolean[]> = {};
+  padPressed: Record<number, boolean[]> = {};
+  pads: Gamepad[] = [];
+  enabled = false;
+  touch: TouchState = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
+  lastRaw: { code: string; key: string; keyCode: number; mapped: string } | null = null;
+  onKeyDown: (e: KeyboardEvent) => void;
+  onKeyUp: (e: KeyboardEvent) => void;
+  onBlur: () => void;
+
   constructor() {
     this.down = new Set();
     this.pressed = new Set();
@@ -76,10 +96,10 @@ export class Input {
     window.addEventListener('blur', this.onBlur);
   }
 
-  anyDown(codes) { return codes.some((c) => this.down.has(c)); }
-  anyPressed(codes) { return codes.some((c) => this.pressed.has(c)); }
+  anyDown(codes: string[]): boolean { return codes.some((c) => this.down.has(c)); }
+  anyPressed(codes: string[]): boolean { return codes.some((c) => this.pressed.has(c)); }
 
-  setTouch(input) {
+  setTouch(input: Partial<TouchState>): void {
     Object.assign(this.touch, input);
   }
 
@@ -100,7 +120,7 @@ export class Input {
   }
 
   /** Read one player: key set id ('p1' / 'p2') and which gamepads count. */
-  sample(id, padIndexes) {
+  sample(id: HumanId, padIndexes: number[]): Required<InputFrame> {
     let mx = 0, mz = 0;
     const b = BINDINGS[id];
     mx += (this.anyDown(b.right) ? 1 : 0) - (this.anyDown(b.left) ? 1 : 0);
@@ -118,7 +138,7 @@ export class Input {
       if (!pad) continue;
       const ax = pad.axes[0] || 0, az = pad.axes[1] || 0;
       if (Math.hypot(ax, az) > 0.2) { mx += ax; mz += az; }
-      const btn = (k) => pad.buttons[k] && pad.buttons[k].pressed;
+      const btn = (k: number) => !!(pad.buttons[k] && pad.buttons[k].pressed);
       if (btn(12)) mz -= 1;
       if (btn(13)) mz += 1;
       if (btn(14)) mx -= 1;
@@ -154,7 +174,7 @@ export class Input {
 
   endStep() {
     this.pressed.clear();
-    for (const k of Object.keys(this.padPressed)) this.padPressed[k] = [];
+    for (const k of Object.keys(this.padPressed)) this.padPressed[Number(k)] = [];
     this.touch.passPressed = false;
     this.touch.shootPressed = false;
   }

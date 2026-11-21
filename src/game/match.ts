@@ -1,47 +1,50 @@
 // Match engine: pure game logic with no rendering code, so it can run
 // headless (tests) and be ported to Unity/Godot later.
 
+import type {
+  MatchState, MatchConfig, Player, Team, Ball, Vec2, Inputs, InputFrame, Kit, PlayerData, HumanId, Action, PassKind, ShotType, Role,
+} from '../types/game.ts';
 import {
   HALF_L, HALF_W, GOAL, BOX, BALL_R, CONTROL_RADIUS, DRIBBLE_OFFSET, PLAYER_RADIUS, SHOT_CHARGE_TIME,
   MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, FORMATIONS, INDOOR_FORMATION,
   PENALTY_SPOT, ASSIST, KEEP_RUN_TIME,
-} from './constants.js';
-import { updateAI, interceptPoint } from './ai.js';
-import { physicalProfile } from './physics/attributes.js';
-import { playerIdentity } from './players/identity.js';
-import { stepLocomotion, resolvePlayerContacts } from './physics/playerPhysics.js';
+} from './constants.ts';
+import { updateAI, interceptPoint } from './ai.ts';
+import { physicalProfile } from './physics/attributes.ts';
+import { playerIdentity } from './players/identity.ts';
+import { stepLocomotion, resolvePlayerContacts } from './physics/playerPhysics.ts';
 import {
   integrateBall, substepsFor, collideBallWithBody, setRollingSpin, setKickSpin,
   stopBall, ensureSpin, computeBallPath,
-} from './physics/ballPhysics.js';
-import { updateDribble, canKick } from './mechanics/dribbling.js';
-import { planShot, shotTypeFromCharge } from './mechanics/shooting.js';
-import { planPass } from './mechanics/passing.js';
+} from './physics/ballPhysics.ts';
+import { updateDribble, updateStickyDribble, canKick } from './mechanics/dribbling.ts';
+import { planShot, shotTypeFromCharge } from './mechanics/shooting.ts';
+import { planPass } from './mechanics/passing.ts';
 
 // Player body used for ball contacts: an upright cylinder.
 const BODY_RADIUS = 0.3;
 const BODY_HEIGHT = 1.85;
 
 // ---------- small vector helpers ----------
-export const len = (x, z) => Math.hypot(x, z);
-export const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
-export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+export const len = (x: number, z: number) => Math.hypot(x, z);
+export const dist = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
+export const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a = -1, b = 1) => a + Math.random() * (b - a);
 
 // ---------- kits ----------
-function hexToRgb(h) {
+function hexToRgb(h: string) {
   const n = parseInt(h.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
-function colorDist(a, b) {
+function colorDist(a: string, b: string) {
   const x = hexToRgb(a), y = hexToRgb(b);
   return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
-const ALT_KITS = [
+const ALT_KITS: Kit[] = [
   { shirt: '#111111', shorts: '#111111', socks: '#f5c400', gk: '#7dd3fc' },
   { shirt: '#d62828', shorts: '#ffffff', socks: '#d62828', gk: '#222222' },
 ];
-function resolveKits(homeKit, awayKit) {
+function resolveKits(homeKit: Kit, awayKit: Kit): [Kit, Kit] {
   if (colorDist(homeKit.shirt, awayKit.shirt) > 120) return [homeKit, awayKit];
   const alt = ALT_KITS.find((k) => colorDist(k.shirt, homeKit.shirt) > 160) || ALT_KITS[0];
   return [homeKit, alt];
@@ -60,16 +63,16 @@ function resolveKits(homeKit, awayKit) {
  *   practice: true = no opponents except their goalkeeper, no time limit
  * }
  */
-export function createMatch(cfg) {
+export function createMatch(cfg: MatchConfig) {
   const [homeKit, awayKit] = resolveKits(cfg.home.kit, cfg.away.kit);
-  const teams = [cfg.home, cfg.away].map((data, i) => {
+  const teams = [cfg.home, cfg.away].map((data, i): Team => {
     const ctrl = cfg.controllers[i];
     const human = ctrl === 'p1' || ctrl === 'p2' ? ctrl : null;
     return {
       index: i,
       data,
       kit: i === 0 ? homeKit : awayKit,
-      dir: i === 0 ? 1 : -1, // attacking direction along x
+      dir: (i === 0 ? 1 : -1) as 1 | -1, // attacking direction along x
       human,
       controlled: null, // player currently driven by the human
       next: null, // player the human would get on the next pass/switch
@@ -86,7 +89,7 @@ export function createMatch(cfg) {
       injuries: 0,
       substitutions: 0,
       pendingSubstitution: null,
-      tactic: 'balanced',
+      tactic: 'balanced' as Team['tactic'],
       formation: '4-3-3',
       // AI on a human's team plays at normal level; pure-AI teams use the
       // chosen difficulty.
@@ -94,9 +97,9 @@ export function createMatch(cfg) {
     };
   });
 
-  const players = [];
+  const players: Player[] = [];
   teams.forEach((team) => {
-    const addPlayer = (pd, idx, role, onPitch, benchIndex = -1) => {
+    const addPlayer = (pd: PlayerData, idx: number, role: Role, onPitch: boolean, benchIndex = -1) => {
       players.push({
         id: players.length,
         team: team.index,
@@ -112,8 +115,8 @@ export function createMatch(cfg) {
         overall: pd.overall ?? null,
         captain: !!pd.captain,
         // One identity for the engine, the 3D character and the cards.
-        identity: pd.identity || playerIdentity({ ...pd, position: pd.position || role }),
-        phys: null, // filled below from attributes + identity
+        identity: pd.identity || playerIdentity({ ...pd, position: pd.position || role, appearance: undefined }),
+        phys: null as unknown as Player['phys'], // filled below from attributes + identity
         yellowCards: 0,
         sentOff: false,
         subbedOff: false,
@@ -149,7 +152,7 @@ export function createMatch(cfg) {
       const slot = startingSlots[idx] || FORMATION[idx];
       addPlayer(player, idx < startingSlots.length ? idx : -1, slot.role, idx < startingSlots.length);
     });
-    (team.data.bench || []).forEach((pd, benchIndex) => addPlayer(pd, -1, pd.role, false, benchIndex));
+    (team.data.bench || []).forEach((pd, benchIndex) => addPlayer(pd, -1, pd.role || 'MID', false, benchIndex));
   });
 
   for (const p of players) p.phys = physicalProfile(p.stats, p.attributes, p.identity);
@@ -160,10 +163,14 @@ export function createMatch(cfg) {
     }
   }
 
-  const state = {
+  const state: MatchState = {
     teams,
     players,
     timeScale: cfg.timeScale || 1,
+    // 'sticky' (arcade default): the ball stays at the feet until a pass,
+    // shot or tackle. 'touch' (realistic): touch-based dribbling where the
+    // ball can run away from you.
+    dribbleStyle: cfg.dribbleStyle === 'touch' ? 'touch' : 'sticky',
     assistName: cfg.assist || 'assisted',
     assist: ASSIST[cfg.assist || 'assisted'],
     ball: {
@@ -207,20 +214,20 @@ export function createMatch(cfg) {
   return state;
 }
 
-export function teamPlayers(state, t) {
+export function teamPlayers(state: MatchState, t: number): Player[] {
   return state.players.filter((p) => p.team === t);
 }
 
-export function setTeamTactic(state, teamIdx, tactic) {
+export function setTeamTactic(state: MatchState, teamIdx: number, tactic: string) {
   const team = state.teams[teamIdx];
   if (!team || !['balanced', 'attacking', 'defensive'].includes(tactic)) return false;
   if (team.tactic === tactic) return true;
-  team.tactic = tactic;
+  team.tactic = tactic as Team['tactic'];
   state.events.push({ type: 'tactic', team: teamIdx, tactic });
   return true;
 }
 
-export function setTeamFormation(state, teamIdx, formation) {
+export function setTeamFormation(state: MatchState, teamIdx: number, formation: string) {
   const team = state.teams[teamIdx];
   if (state.indoor) return false;
   const slots = FORMATIONS[formation];
@@ -234,12 +241,12 @@ export function setTeamFormation(state, teamIdx, formation) {
   return true;
 }
 
-function formationFor(state, team) {
+function formationFor(state: MatchState, team: Team) {
   return state.indoor ? INDOOR_FORMATION : (FORMATIONS[team.formation] || FORMATION);
 }
 
 /** Make the change now at a stoppage, or queue it for the next dead ball. */
-export function makeSubstitution(state, teamIdx, outgoingId, incomingId) {
+export function makeSubstitution(state: MatchState, teamIdx: number, outgoingId: number, incomingId: number) {
   const team = state.teams[teamIdx];
   const outgoing = state.players[outgoingId];
   const incoming = state.players[incomingId];
@@ -255,7 +262,7 @@ export function makeSubstitution(state, teamIdx, outgoingId, incomingId) {
   return applySubstitution(state, team, outgoing, incoming);
 }
 
-export function cancelPendingSubstitution(state, teamIdx) {
+export function cancelPendingSubstitution(state: MatchState, teamIdx: number) {
   const team = state.teams[teamIdx];
   if (!team?.pendingSubstitution) return false;
   team.pendingSubstitution = null;
@@ -263,7 +270,7 @@ export function cancelPendingSubstitution(state, teamIdx) {
   return true;
 }
 
-function applySubstitution(state, team, outgoing, incoming) {
+function applySubstitution(state: MatchState, team: Team, outgoing: Player, incoming: Player) {
   if (!outgoing.onPitch || outgoing.sentOff || incoming.onPitch || incoming.sentOff || incoming.subbedOff) return false;
   if (team.substitutions >= 3) return false;
   const slot = outgoing.idx;
@@ -319,7 +326,7 @@ function applySubstitution(state, team, outgoing, incoming) {
   return true;
 }
 
-function applyPendingSubstitutions(state) {
+function applyPendingSubstitutions(state: MatchState) {
   for (const team of state.teams) {
     const pending = team.pendingSubstitution;
     if (!pending) continue;
@@ -329,7 +336,7 @@ function applyPendingSubstitutions(state) {
   }
 }
 
-function automateHalftimeSubstitutions(state) {
+function automateHalftimeSubstitutions(state: MatchState) {
   for (const team of state.teams) {
     if (team.human || team.substitutions >= 3) continue;
     while (team.substitutions < 3) {
@@ -350,7 +357,7 @@ function automateHalftimeSubstitutions(state) {
   }
 }
 
-function ratingForRole(player, role = player.role) {
+function ratingForRole(player: Player, role: string = player.role) {
   const s = player.stats;
   if (role === 'GK') return s.gk;
   if (role === 'DEF') return s.tac * 0.55 + s.spd * 0.2 + s.pas * 0.15 + s.dri * 0.1;
@@ -358,16 +365,16 @@ function ratingForRole(player, role = player.role) {
   return s.sho * 0.4 + s.spd * 0.25 + s.dri * 0.25 + s.pas * 0.1;
 }
 
-export function toWorld(team, fx, fz) {
+export function toWorld(team: Team, fx: number, fz: number) {
   return { x: fx * HALF_L * team.dir, z: fz * HALF_W * team.dir };
 }
 
-function clampPlayer(p) {
+function clampPlayer(p: Player) {
   p.pos.x = clamp(p.pos.x, -HALF_L - 3, HALF_L + 3);
   p.pos.z = clamp(p.pos.z, -HALF_W - 2.5, HALF_W + 2.5);
 }
 
-function placePlayer(p, pos, faceDir) {
+function placePlayer(p: Player, pos: Vec2, faceDir: number) {
   p.pos.x = pos.x; p.pos.z = pos.z;
   p.vel.x = 0; p.vel.z = 0;
   p.face.x = faceDir; p.face.z = 0;
@@ -376,25 +383,25 @@ function placePlayer(p, pos, faceDir) {
   p.keepRun = null;
 }
 
-function setBanner(state, text, time = 1.6) {
+function setBanner(state: MatchState, text: string, time = 1.6) {
   state.banner = { text, time };
   state.events.push({ type: 'banner', text });
 }
 
 /** Keeper with the ball in his hands: can't be pushed or tackled. */
-export function isHolding(state, p) {
+export function isHolding(state: MatchState, p: Player) {
   return !!p.holding && state.ball.owner === p;
 }
 
 /** Ball can't be challenged: keeper's hands, or a set piece not yet taken. */
-export function isProtected(state, p) {
+export function isProtected(state: MatchState, p: Player) {
   return state.ball.owner === p && (isHolding(state, p) || p.mustPass);
 }
 
 // ---------- human control ----------
-export function setControlled(state, team, p) {
+export function setControlled(state: MatchState, team: Team, p: Player | null | undefined) {
   if (!team.human) return;
-  if (p?.sentOff) p = null;
+  if (!p || p.sentOff) p = null;
   if (team.controlled === p) return;
   if (team.controlled) {
     const old = team.controlled;
@@ -409,7 +416,7 @@ export function setControlled(state, team, p) {
   state.events.push({ type: 'switch', team: team.index, player: p ? p.id : null });
 }
 
-function nearestTo(state, teamIdx, point, exclude = null, allowGK = false) {
+function nearestTo(state: MatchState, teamIdx: number, point: Vec2, exclude: Player | null = null, allowGK: boolean = false) {
   let best = null, bd = Infinity;
   for (const p of state.players) {
     if (p.team !== teamIdx || p === exclude || !p.onPitch || p.sentOff) continue;
@@ -425,7 +432,7 @@ function nearestTo(state, teamIdx, point, exclude = null, allowGK = false) {
  * up there for KEEP_RUN_TIME seconds and carries on his run towards goal,
  * instead of pulling him straight back into formation.
  */
-function rememberRun(state, team, p) {
+function rememberRun(state: MatchState, team: Team, p: Player) {
   p.keepRun = null;
   if (state.phase !== 'play' || p.role === 'GK') return;
   const ax = p.pos.x * team.dir; // how far forward he is
@@ -442,7 +449,7 @@ function rememberRun(state, team, p) {
 }
 
 // ---------- set pieces ----------
-export function setupKickoff(state, teamIdx) {
+export function setupKickoff(state: MatchState, teamIdx: number) {
   applyPendingSubstitutions(state);
   const b = state.ball;
   for (const team of state.teams) {
@@ -482,7 +489,7 @@ export function setupKickoff(state, teamIdx) {
   setBanner(state, 'KICK OFF', 1.2);
 }
 
-function startRestart(state, type, teamIdx, spot) {
+function startRestart(state: MatchState, type: string, teamIdx: number, spot: Vec2) {
   applyPendingSubstitutions(state);
   const b = state.ball;
   state.penalty = null;
@@ -570,19 +577,19 @@ function startRestart(state, type, teamIdx, spot) {
   setBanner(state, type.toUpperCase(), 1.1);
 }
 
-function inPenaltyArea(state, defendingTeamIdx, point) {
+function inPenaltyArea(state: MatchState, defendingTeamIdx: number, point: Vec2) {
   const defendingTeam = state.teams[defendingTeamIdx];
   const goalX = -HALF_L * defendingTeam.dir;
   return Math.abs(point.x - goalX) < BOX.depth && Math.abs(point.z) < BOX.width / 2;
 }
 
-function startPenalty(state, teamIdx) {
+function startPenalty(state: MatchState, teamIdx: number) {
   const team = state.teams[teamIdx];
   const opponent = state.teams[1 - teamIdx];
   const candidates = teamPlayers(state, teamIdx).filter((p) => p.onPitch && p.role !== 'GK' && !p.sentOff);
   const shooter = team.human && team.controlled && !team.controlled.sentOff && team.controlled.role !== 'GK'
     ? team.controlled
-    : candidates.reduce((best, p) => !best || p.stats.sho > best.stats.sho ? p : best, null)
+    : candidates.reduce<Player | null>((best, p) => !best || p.stats.sho > best.stats.sho ? p : best, null)
       || teamPlayers(state, teamIdx).find((p) => p.onPitch && p.role === 'GK' && !p.sentOff);
   const keeper = teamPlayers(state, opponent.index).find((p) => p.onPitch && p.role === 'GK' && !p.sentOff);
   if (!shooter) return;
@@ -627,7 +634,7 @@ function startPenalty(state, teamIdx) {
 }
 
 // ---------- ball actions ----------
-function attachBall(b, p) {
+function attachBall(b: Ball, p: Player) {
   b.pos.x = p.pos.x + p.face.x * DRIBBLE_OFFSET;
   b.pos.z = p.pos.z + p.face.z * DRIBBLE_OFFSET;
   b.pos.y = BALL_R;
@@ -640,9 +647,9 @@ function attachBall(b, p) {
 }
 // Each team's attacking direction, kept in sync for attachBall (changes at halftime).
 const teamDirCache = [1, -1];
-function syncDirs(state) { teamDirCache[0] = state.teams[0].dir; teamDirCache[1] = state.teams[1].dir; }
+function syncDirs(state: MatchState) { teamDirCache[0] = state.teams[0].dir; teamDirCache[1] = state.teams[1].dir; }
 
-function release(state, p) {
+function release(state: MatchState, p: Player) {
   const b = state.ball;
   b.owner = null;
   b.lastTouch = p;
@@ -657,7 +664,7 @@ function release(state, p) {
   state.events.push({ type: 'kick', player: p.id });
 }
 
-function segDist(px, pz, ax, az, bx, bz) {
+function segDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number) {
   const vx = bx - ax, vz = bz - az;
   const l2 = vx * vx + vz * vz || 1;
   const t = clamp(((px - ax) * vx + (pz - az) * vz) / l2, 0, 1);
@@ -665,7 +672,7 @@ function segDist(px, pz, ax, az, bx, bz) {
 }
 
 /** Is an opponent standing in the lane between two points? */
-function laneBlocked(state, from, to, team) {
+function laneBlocked(state: MatchState, from: Vec2, to: Vec2, team: number) {
   for (const o of state.players) {
     if (o.team === team) continue;
     if (dist(o.pos, from) < 1.2) continue;
@@ -675,7 +682,7 @@ function laneBlocked(state, from, to, team) {
 }
 
 /** Pick the best teammate in a direction (used by humans). */
-export function choosePassTarget(state, p, dx, dz, through = false) {
+export function choosePassTarget(state: MatchState, p: Player, dx: number, dz: number, through: boolean = false) {
   const l = len(dx, dz);
   if (l < 0.1) { dx = p.face.x; dz = p.face.z; } else { dx /= l; dz /= l; }
   let best = null, bestScore = Infinity;
@@ -708,7 +715,7 @@ export function choosePassTarget(state, p, dx, dz, through = false) {
   return best;
 }
 
-export function doPass(state, p, target, opts = {}) {
+export function doPass(state: MatchState, p: Player, target: Player | null, opts: { kind?: PassKind; driven?: boolean } = {}) {
   const b = state.ball;
   const team = state.teams[p.team];
   if (!target) return;
@@ -778,7 +785,7 @@ export function doPass(state, p, target, opts = {}) {
   state.events.push({ type: 'pass', from: p.id, to: target.id, human: byHuman, kind: plan.kind });
 }
 
-export function doShot(state, p, power, aimInput = 0, type = 'normal') {
+export function doShot(state: MatchState, p: Player, power: number, aimInput = 0, type: ShotType = 'normal') {
   const b = state.ball;
   const team = state.teams[p.team];
   const penaltyShot = state.penalty?.active && state.penalty.shooter === p;
@@ -807,9 +814,9 @@ export function doShot(state, p, power, aimInput = 0, type = 'normal') {
   b.shotDist = Math.hypot(goalX - p.pos.x, p.pos.z);
   b.shotLive = true;
   if (penaltyShot) {
-    state.penalty.active = false;
-    state.penalty.pending = true;
-    state.penalty.elapsed = 0;
+    state.penalty!.active = false;
+    state.penalty!.pending = true;
+    state.penalty!.elapsed = 0;
   }
   team.shots += 1;
   release(state, p);
@@ -818,7 +825,7 @@ export function doShot(state, p, power, aimInput = 0, type = 'normal') {
   state.events.push({ type: 'shot', player: p.id, power, human: !!p.human, shotType: plan.type });
 }
 
-function sendOff(state, p, secondYellow = false) {
+function sendOff(state: MatchState, p: Player, secondYellow: boolean = false) {
   const team = state.teams[p.team];
   p.sentOff = true;
   p.human = null;
@@ -833,7 +840,7 @@ function sendOff(state, p, secondYellow = false) {
   state.events.push({ type: 'card', team: team.index, player: p.id, color: 'red', secondYellow });
 }
 
-function issueCard(state, p, color) {
+function issueCard(state: MatchState, p: Player, color: 'yellow' | 'red') {
   const team = state.teams[p.team];
   if (color === 'red') {
     sendOff(state, p);
@@ -845,7 +852,7 @@ function issueCard(state, p, color) {
   else state.events.push({ type: 'card', team: team.index, player: p.id, color: 'yellow', secondYellow: false });
 }
 
-function injurePlayer(state, p) {
+function injurePlayer(state: MatchState, p: Player) {
   if (p.injured) return;
   p.injured = true;
   p.stun = Math.max(p.stun, 0.9);
@@ -853,14 +860,14 @@ function injurePlayer(state, p) {
   state.events.push({ type: 'injury', team: p.team, player: p.id });
 }
 
-function doTackle(state, p) {
+function doTackle(state: MatchState, p: Player) {
   const b = state.ball;
   const team = state.teams[p.team];
   p.tackleCd = 0.6;
   p.kickAnim = 0.35;
   const victim = b.owner;
   // Every tackle attempt reports what happened, so the HUD and tests can show it.
-  const report = (result) => {
+  const report = (result: string) => {
     if (p.human) {
       team.tackles.tries += result === 'won' || result === 'missed' || result === 'foul' ? 1 : 0;
       if (result === 'won') team.tackles.won += 1;
@@ -990,7 +997,7 @@ function doTackle(state, p) {
  * would go to (follows the stick); without it, the teammate a switch would
  * pick (nearest to the ball).
  */
-export function computeNext(state, team) {
+export function computeNext(state: MatchState, team: Team) {
   const p = team.controlled;
   if (!team.human || !p || p.sentOff) return null;
   const b = state.ball;
@@ -999,7 +1006,7 @@ export function computeNext(state, team) {
   return nearestTo(state, team.index, b.pos, p);
 }
 
-function updateNext(state) {
+function updateNext(state: MatchState) {
   const b = state.ball;
   for (const team of state.teams) {
     team.next = computeNext(state, team);
@@ -1017,7 +1024,7 @@ function updateNext(state) {
  * input = { mx, mz, sprint, passPressed, shootHeld, shootPressed }
  * mx/mz in [-1,1]: screen right = +x, screen up = -z.
  */
-function applyHumanInput(state, team, input, dt) {
+function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null | undefined, dt: number) {
   const b = state.ball;
   let p = team.controlled;
   if (!p || p.sentOff || (p.role === 'GK')) {
@@ -1048,7 +1055,7 @@ function applyHumanInput(state, team, input, dt) {
     team.seenOpponentOwner = null; // we have it again
   }
   // Fill in anything missing so a partial input never breaks aiming.
-  input = {
+  const frame: Required<InputFrame> = {
     mx: Number(input && input.mx) || 0,
     mz: Number(input && input.mz) || 0,
     sprint: !!(input && input.sprint),
@@ -1060,22 +1067,22 @@ function applyHumanInput(state, team, input, dt) {
     finesseHeld: !!(input && input.finesseHeld),
     chipHeld: !!(input && input.chipHeld),
   };
-  team.lastInput = { mx: input.mx || 0, mz: input.mz || 0 };
+  team.lastInput = { mx: frame.mx || 0, mz: frame.mz || 0 };
 
   const it = p.intent;
-  it.mx = input.mx; it.mz = input.mz; it.sprint = !!input.sprint; it.action = null;
+  it.mx = frame.mx; it.mz = frame.mz; it.sprint = !!frame.sprint; it.action = null;
   if (state.penalty?.active) {
     it.mx = it.mz = 0;
     it.sprint = false;
     if (p === state.penalty.shooter && b.owner === p) {
-      if (input.shootHeld) p.charge = Math.min(1, p.charge + dt / SHOT_CHARGE_TIME);
-      else if (p.charge > 0) it.action = { type: 'shoot', power: Math.max(0.25, p.charge), aim: input.mz };
+      if (frame.shootHeld) p.charge = Math.min(1, p.charge + dt / SHOT_CHARGE_TIME);
+      else if (p.charge > 0) it.action = { type: 'shoot', power: Math.max(0.25, p.charge), aim: frame.mz };
     } else {
       p.charge = 0;
     }
     return;
   }
-  const hasInput = len(input.mx, input.mz) > 0.15;
+  const hasInput = len(frame.mx, frame.mz) > 0.15;
 
   p.assisting = null;
   // Receiving a pass: run to meet it. With no input always; with assist on,
@@ -1084,8 +1091,8 @@ function applyHumanInput(state, team, input, dt) {
     const q = interceptPoint(p, b);
     const dx = q.x - p.pos.x, dz = q.z - p.pos.z;
     const l = len(dx, dz);
-    const il = len(input.mx, input.mz);
-    const cos = hasInput && l > 0 ? (input.mx * dx + input.mz * dz) / (il * l) : 1;
+    const il = len(frame.mx, frame.mz);
+    const cos = hasInput && l > 0 ? (frame.mx * dx + frame.mz * dz) / (il * l) : 1;
     const meet = !hasInput || (state.assistName !== 'off' && cos > -0.3);
     if (meet && l > 0.3) {
       it.mx = dx / l; it.mz = dz / l;
@@ -1107,8 +1114,8 @@ function applyHumanInput(state, team, input, dt) {
       const dx = target.x - p.pos.x, dz = target.z - p.pos.z;
       const d = len(dx, dz);
       if (d > 0.3) {
-        const il = len(input.mx, input.mz);
-        const cos = hasInput ? (input.mx * dx + input.mz * dz) / (il * d) : -1;
+        const il = len(frame.mx, frame.mz);
+        const cos = hasInput ? (frame.mx * dx + frame.mz * dz) / (il * d) : -1;
         if (hasInput && cos > as.steerCos) {
           it.mx = dx / d; it.mz = dz / d; p.assisting = 'steer';
         } else if (!hasInput && as.auto && !b.owner) {
@@ -1119,25 +1126,25 @@ function applyHumanInput(state, team, input, dt) {
   }
 
   if (b.owner === p) {
-    const anyPass = input.passPressed || input.loftPressed || input.throughPressed;
+    const anyPass = frame.passPressed || frame.loftPressed || frame.throughPressed;
     if (anyPass) {
-      const kind = input.throughPressed ? 'through' : input.loftPressed ? 'lofted' : undefined;
+      const kind = frame.throughPressed ? 'through' : frame.loftPressed ? 'lofted' : undefined;
       it.action = {
         type: 'pass',
-        target: choosePassTarget(state, p, input.mx, input.mz, kind === 'through'),
+        target: choosePassTarget(state, p, frame.mx, frame.mz, kind === 'through'),
         kind,
-        driven: input.sprint && !kind,
+        driven: frame.sprint && !kind,
       };
-    } else if (input.shootHeld) {
+    } else if (frame.shootHeld) {
       if (p.charge === 0) p.chargeType = null;
-      if (input.chipHeld) p.chargeType = 'chip';
-      else if (input.finesseHeld && p.chargeType !== 'chip') p.chargeType = 'finesse';
+      if (frame.chipHeld) p.chargeType = 'chip';
+      else if (frame.finesseHeld && p.chargeType !== 'chip') p.chargeType = 'finesse';
       p.charge = Math.min(1, p.charge + dt / SHOT_CHARGE_TIME);
     } else if (p.charge > 0) {
       it.action = {
         type: 'shoot',
         power: Math.max(0.25, p.charge),
-        aim: input.mz,
+        aim: frame.mz,
         shotType: shotTypeFromCharge(p.charge, p.chargeType),
       };
       // The release is the decision: if the ball is not in reach yet the
@@ -1147,18 +1154,18 @@ function applyHumanInput(state, team, input, dt) {
     }
   } else {
     p.charge = 0;
-    if (input.passPressed || input.loftPressed || input.throughPressed) {
+    if (frame.passPressed || frame.loftPressed || frame.throughPressed) {
       // Switch to the teammate nearest the ball.
       const next = nearestTo(state, team.index, b.pos, p);
       if (next) { setControlled(state, team, next); state.events.push({ type: 'manualSwitch', team: team.index }); }
-    } else if (input.shootPressed && p.tackleCd <= 0) {
+    } else if (frame.shootPressed && p.tackleCd <= 0) {
       it.action = { type: 'tackle' };
     }
   }
 }
 
 // ---------- movement ----------
-function movePlayer(state, p, dt) {
+function movePlayer(state: MatchState, p: Player, dt: number) {
   if (!p.onPitch || p.sentOff) {
     p.vel.x = p.vel.z = 0;
     p.intent.mx = p.intent.mz = 0;
@@ -1207,13 +1214,13 @@ function movePlayer(state, p, dt) {
   else p.stamina = Math.min(1, p.stamina + dt * prof.staminaRecover);
 }
 
-function separatePlayers(state) {
+function separatePlayers(state: MatchState) {
   resolvePlayerContacts(state.players, PLAYER_RADIUS, (p) => isHolding(state, p));
   for (const p of state.players) if (p.onPitch) clampPlayer(p);
 }
 
 // ---------- ball physics ----------
-function collidePosts(b) {
+function collidePosts(b: Ball) {
   const r = BALL_R + 0.06;
   for (const sx of [-1, 1]) {
     const gx = sx * HALF_L;
@@ -1258,12 +1265,12 @@ function collidePosts(b) {
  * on cooldown - is a solid body the ball deflects off.
  */
 /** Close control keeps the ball inside the field (and out of your own net). */
-function ownerBounds(state, p) {
+function ownerBounds(state: MatchState, p: Player) {
   if (Math.abs(p.pos.x) > HALF_L - 0.2 || Math.abs(p.pos.z) > HALF_W - 0.2) return null;
   return { x: HALF_L - 0.45, z: HALF_W - 0.35 };
 }
 
-function collideBodies(state, b) {
+function collideBodies(state: MatchState, b: Ball) {
   for (const p of state.players) {
     if (!p.onPitch || p.sentOff || p === b.owner) continue;
     if (Math.abs(p.pos.x - b.pos.x) > 1 || Math.abs(p.pos.z - b.pos.z) > 1) continue;
@@ -1287,7 +1294,7 @@ function collideBodies(state, b) {
   }
 }
 
-function updateBall(state, dt) {
+function updateBall(state: MatchState, dt: number) {
   const b = state.ball;
   const owner = b.owner;
   const penaltyTaker = state.penalty?.active && state.penalty.shooter === owner;
@@ -1296,6 +1303,12 @@ function updateBall(state, dt) {
     attachBall(b, owner);
     b.vel.x = owner.vel.x; b.vel.z = owner.vel.z; b.vel.y = 0;
     setRollingSpin(b);
+    return;
+  }
+  if (owner && state.dribbleStyle === 'sticky') {
+    if (updateStickyDribble(owner, b, dt, ownerBounds(state, owner)) === 'touch') {
+      state.events.push({ type: 'touch', player: owner.id });
+    }
     return;
   }
   const n = substepsFor(b, dt);
@@ -1328,13 +1341,13 @@ function updateBall(state, dt) {
 }
 
 // ---------- possession ----------
-function inOwnBox(state, p) {
+function inOwnBox(state: MatchState, p: Player) {
   const team = state.teams[p.team];
   const gx = -HALF_L * team.dir;
   return Math.abs(p.pos.x - gx) < BOX.depth && Math.abs(p.pos.z) < BOX.width / 2;
 }
 
-function checkOffsideChallenge(state) {
+function checkOffsideChallenge(state: MatchState) {
   const b = state.ball;
   if (state.indoor) return false;
   if (b.owner || b.pos.y > 2.2 || !b.offsidePlayers.length) return false;
@@ -1361,7 +1374,7 @@ function checkOffsideChallenge(state) {
   return false;
 }
 
-function keeperSave(state, gk) {
+function keeperSave(state: MatchState, gk: Player) {
   const b = state.ball;
   const team = state.teams[gk.team];
   if (gk.lastShotChecked === b.shotId) return false;
@@ -1410,7 +1423,7 @@ function keeperSave(state, gk) {
 }
 
 /** Chance that a player fails to control the ball as it arrives. */
-function firstTouchFails(state, p, b, speed) {
+function firstTouchFails(state: MatchState, p: Player, b: Ball, speed: number) {
   const rel = Math.hypot(b.vel.x - p.vel.x, b.vel.z - p.vel.z);
   const height = b.pos.y - BALL_R;
   const control = p.phys.control;
@@ -1427,7 +1440,7 @@ function firstTouchFails(state, p, b, speed) {
  * front of the receiver, keeping part of its momentum. No teleporting: the
  * ball keeps its position and only its velocity changes.
  */
-function cushionBall(p, b) {
+function cushionBall(p: Player, b: Ball) {
   const it = p.intent;
   const il = len(it.mx, it.mz);
   const s = len(p.vel.x, p.vel.z);
@@ -1443,9 +1456,9 @@ function cushionBall(p, b) {
   setRollingSpin(b);
 }
 
-function updatePossession(state, dt) {
+function updatePossession(state: MatchState, dt: number) {
   const b = state.ball;
-  if (b.passGrace > 0) b.passGrace -= dt;
+  if (b.passGrace && b.passGrace > 0) b.passGrace -= dt;
   // While dribbling, the ball can be nicked by an opponent only when it is
   // away from the owner's feet (between touches).
   const contestedBy = b.owner && !b.owner.mustPass && !b.owner.holding
@@ -1467,7 +1480,7 @@ function updatePossession(state, dt) {
     // Reading a pass: better interceptors reach further for the opponents' ball.
     if (!isGK && b.intended && b.intended.team !== p.team) r *= 0.82 + p.phys.interceptions * 0.3;
     const d = dist(p.pos, b.pos);
-    if (b.passGrace > 0 && b.intended && p.team !== b.intended.team && dist(p.pos, b.passFrom) < 2.2) continue;
+    if (b.passGrace && b.passGrace > 0 && b.intended && b.passFrom && p.team !== b.intended.team && dist(p.pos, b.passFrom) < 2.2) continue;
     if (d < r && d < bd) { bd = d; best = p; }
   }
   if (!best) return;
@@ -1587,7 +1600,7 @@ function updatePossession(state, dt) {
 }
 
 // ---------- rules: goals and out of play ----------
-function checkOutOfPlay(state) {
+function checkOutOfPlay(state: MatchState) {
   const b = state.ball;
   if (state.phase !== 'play') return;
   const x = b.pos.x, z = b.pos.z;
@@ -1626,7 +1639,7 @@ function checkOutOfPlay(state) {
         });
         return;
       }
-      const scorer = state.teams.find((t) => t.dir === endSign);
+      const scorer = state.teams.find((t) => t.dir === endSign)!; // one team attacks each end
       scoreGoal(state, scorer.index);
       return;
     }
@@ -1643,7 +1656,7 @@ function checkOutOfPlay(state) {
       state.penalty = null;
       if (expired) { endMatch(state); return; }
     }
-    const defending = state.teams.find((t) => t.dir === -endSign);
+    const defending = state.teams.find((t) => t.dir === -endSign)!;
     const lastTeam = b.lastTouch ? b.lastTouch.team : -1;
     if (lastTeam === defending.index) {
       const attacker = 1 - defending.index;
@@ -1678,7 +1691,7 @@ function checkOutOfPlay(state) {
   }
 }
 
-function scoreGoal(state, teamIdx) {
+function scoreGoal(state: MatchState, teamIdx: number) {
   const b = state.ball;
   const team = state.teams[teamIdx];
   team.score += 1;
@@ -1695,7 +1708,7 @@ function scoreGoal(state, teamIdx) {
     type: 'goal', team: teamIdx, scorer: scorer ? scorer.name : '', scorerId: scorer ? scorer.id : null, ownGoal: own,
   });
   state.lastGoal = {
-    team: teamIdx, scorer: scorer ? scorer.name : '', scorerId: scorer ? scorer.id : null, ownGoal: own, clock: state.clock,
+    team: teamIdx, scorer: scorer ? scorer.name : '', scorerId: scorer ? scorer.id : null, ownGoal: !!own, clock: state.clock,
     // Where the scorer runs to celebrate: towards the nearest corner flag.
     runTo: scorer ? {
       x: clamp(scorer.pos.x, -HALF_L + 8, HALF_L - 8) * 0.9 + Math.sign(scorer.pos.x || 1) * 4,
@@ -1720,17 +1733,18 @@ export const GOAL_PAUSE = 4.2;
  * join him; the other team stops. Uses the normal locomotion, so the
  * celebration has real running and stopping.
  */
-function celebrationIntents(state) {
+function celebrationIntents(state: MatchState) {
   const g = state.lastGoal;
   const elapsed = GOAL_PAUSE - state.phaseTimer;
   const scorer = g && g.scorerId != null && !g.ownGoal ? state.players[g.scorerId] : null;
   for (const p of state.players) {
     const it = p.intent;
     it.mx = 0; it.mz = 0; it.sprint = false; it.action = null;
-    if (!scorer || !p.onPitch || p.sentOff || p.team !== g.team) continue;
+    if (!g || !scorer || !p.onPitch || p.sentOff || p.team !== g.team) continue;
     let tx, tz, stop;
     if (p === scorer) {
       if (elapsed > 2.6) continue;
+      if (!g.runTo) continue;
       tx = g.runTo.x; tz = g.runTo.z; stop = 0.5;
     } else {
       if (p.role === 'GK' || elapsed < 0.5 || dist(p.pos, scorer.pos) > 32) continue;
@@ -1750,7 +1764,7 @@ function celebrationIntents(state) {
  * Advance the match by dt seconds.
  * inputs = { p1: input|null, p2: input|null }
  */
-export function stepMatch(state, inputs, dt) {
+export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
   if (state.phase === 'fulltime') return;
   syncDirs(state);
   const b = state.ball;
@@ -1784,7 +1798,7 @@ export function stepMatch(state, inputs, dt) {
     separatePlayers(state);
     if (state.phaseTimer <= 0) {
       if (!state.practice && state.clock >= state.duration) endMatch(state);
-      else setupKickoff(state, state.practice ? 0 : state.kickoffNext);
+      else setupKickoff(state, state.practice ? 0 : state.kickoffNext ?? 0);
     }
     return;
   }
@@ -1922,11 +1936,11 @@ export function stepMatch(state, inputs, dt) {
       && !state.penalty?.active && !state.penalty?.pending) endMatch(state);
 }
 
-function endMatch(state) {
+function endMatch(state: MatchState) {
   if (state.extraTimeAllowed && !state.extraTimeStarted && state.teams[0].score === state.teams[1].score) {
     state.extraTimeStarted = true;
     state.duration += state.extraTimeDuration;
-    setupKickoff(state, 1 - state.kickoffNext);
+    setupKickoff(state, 1 - (state.kickoffNext ?? 1));
     setBanner(state, 'EXTRA TIME', 2.4);
     state.events.push({ type: 'extraTime' });
     return;
@@ -1938,7 +1952,7 @@ function endMatch(state) {
 }
 
 /** Match clock shown as 0-90 minutes. */
-export function displayMinute(state) {
+export function displayMinute(state: MatchState) {
   if (!Number.isFinite(state.duration)) return 0;
   return Math.min(90, Math.floor((state.clock / state.duration) * 90));
 }
