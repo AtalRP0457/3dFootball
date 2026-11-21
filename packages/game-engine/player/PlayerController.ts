@@ -134,7 +134,9 @@ export class PlayerController implements InteractionActor {
   get actionName(): string { return this.sm.current; }
   /** In possession (owned by the central interaction system). */
   get hasBall(): boolean { return this.ix.has(this.id); }
-  stick(): Vec2 { return this.input.move; }
+  // Lining up a kick with the ball at his feet: settle it (no stick-driven
+  // touches), or the touches push it away and the foot never reaches it.
+  stick(): Vec2 { return this.buffered && this.hasBall ? { x: 0, z: 0 } : this.input.move; }
   intendedSpeed(): number { return targetSpeedFor(this.input, this.tuning, this.stamina); }
 
   /** Simulate the movement model forward under the current input (dribble prediction). */

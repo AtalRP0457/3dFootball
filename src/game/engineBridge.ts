@@ -84,6 +84,8 @@ export function shotKind(type: string): KickKind {
   }
 }
 
+interface KickRequestArgs { command: KickCommand; kind: KickKind; vel: Vec3; commit: () => void }
+
 export class MatchPhysics {
   readonly sim: Simulation;
   private readonly ctrl = new Map<Player, PlayerController>();
@@ -96,6 +98,12 @@ export class MatchPhysics {
   private readonly tackling = new Set<Player>();
   /** A throw from the hands is on its way this step: don't re-hold the ball. */
   private readonly throwing = new Set<Player>();
+  /**
+   * Human kicks still waiting for the ball to leave the foot. If the swing
+   * misses or the run-up expires while he keeps the ball, the press is
+   * retried (twice at most) instead of being lost.
+   */
+  private readonly humanKicks = new Map<Player, { req: KickRequestArgs; tries: number; retry: boolean }>();
 
   constructor(state: MatchState) {
     this.sim = new Simulation(createCalibration({
@@ -204,6 +212,7 @@ export class MatchPhysics {
       input.noBall = b.owner !== p && (p.kickCd > 0 || p.stun > 0);
       c.input = input;
     }
+    this.retryHumanKicks(state);
     // Who the pass is for (match rules): he gets priority to receive it.
     const ic = b.intended ? this.ctrl.get(b.intended) : undefined;
     this.sim.interaction.intendedFor = ic ? ic.id : null;
@@ -249,6 +258,7 @@ export class MatchPhysics {
       const p = 'playerId' in e && e.playerId ? this.byId.get(e.playerId) ?? null : null;
       switch (e.type) {
         case 'BallRelease': {
+          if (p) this.humanKicks.delete(p);
           const commit = this.releases.get(e.playerId);
           this.releases.delete(e.playerId);
           if (commit) commit();
@@ -257,6 +267,10 @@ export class MatchPhysics {
         }
         case 'PassCommand': case 'ShotCommand':
           if (e.phase === 'rejected' || e.phase === 'expired') this.releases.delete(e.playerId);
+          if (e.phase === 'expired' && p) this.markRetry(p);
+          break;
+        case 'BallContact':
+          if (!e.hit && p) this.markRetry(p);
           break;
         case 'BallPossession': {
           const owner = e.owner ? this.byId.get(e.owner) ?? null : null;
@@ -303,12 +317,48 @@ export class MatchPhysics {
   kick(p: Player, command: KickCommand, kind: KickKind, vel: Vec3, commit: () => void): boolean {
     const c = this.ctrl.get(p);
     if (!c) return false;
-    const ve = toE3(vel);
-    const h = Math.hypot(ve.x, ve.z) || 1;
-    const r = c.commandKick({ command, kind, power: 0.6, aim: { x: ve.x / h, z: ve.z / h }, velocity: ve }, this.sim.time);
+    const r = this.commandKick(p, c, command, kind, toE3(vel));
     if (r === 'rejected') return false;
     this.releases.set(c.id, commit);
+    if (p.human) this.humanKicks.set(p, { req: { command, kind, vel, commit }, tries: 0, retry: false });
     return true;
+  }
+
+  /**
+   * Start an engine kick. A human's pass or shot cuts a stumble short (he
+   * keeps his feet and plays it), so a bump doesn't swallow the button press;
+   * a real fall still has to finish.
+   */
+  private commandKick(p: Player, c: PlayerController, command: KickCommand, kind: KickKind, ve: Vec3) {
+    const h = Math.hypot(ve.x, ve.z) || 1;
+    const req = { command, kind, power: 0.6, aim: { x: ve.x / h, z: ve.z / h }, velocity: ve };
+    let r = c.commandKick(req, this.sim.time);
+    if (r === 'rejected' && p.human && c.sm.action?.clip.name === 'stumble') {
+      c.sm.action = null;
+      r = c.commandKick(req, this.sim.time);
+    }
+    return r;
+  }
+
+  private markRetry(p: Player): void {
+    const k = this.humanKicks.get(p);
+    if (k) k.retry = true;
+  }
+
+  /** Re-issue a human kick that missed or expired, while he still has the ball. */
+  private retryHumanKicks(state: MatchState): void {
+    for (const [p, k] of this.humanKicks) {
+      const c = this.ctrl.get(p);
+      if (!c || state.ball.owner !== p || !p.human || k.tries >= 2) { this.humanKicks.delete(p); continue; }
+      if (!k.retry || c.kicking) continue;
+      if (c.sm.busy && c.sm.action?.clip.name !== 'stumble') continue; // down after a fall: wait
+      const { command, kind, vel, commit } = k.req;
+      const r = this.commandKick(p, c, command, kind, toE3(vel));
+      if (r === 'rejected') continue; // not possible yet: try again next step
+      k.retry = false;
+      k.tries++;
+      this.releases.set(c.id, commit);
+    }
   }
 
   /** Hands: throw-in, keeper throw/drop-kick, keeper parry. Applied this step. */
@@ -341,6 +391,7 @@ export class MatchPhysics {
     if (!c) return;
     c.cancelKick();
     this.releases.delete(c.id);
+    this.humanKicks.delete(p);
   }
 
   // ============================================================ planning
