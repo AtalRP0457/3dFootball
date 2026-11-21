@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { createCharacter } from './character/character.js';
+import { applyEnginePose } from '../../packages/game-engine/player/applyPose.ts';
 import { playerIdentity } from '../game/players/identity.ts';
 import { buildPitch } from './stadium/pitch.js';
 import { buildStadium as buildArena } from './stadium/stadium.js';
@@ -221,7 +222,7 @@ export function createRenderer(canvasEl) {
         crestUrl: team.data?.crest,
         teamKey: `t${team.index}|${team.kit.shirt}|${team.kit.secondary}|${team.kit.design}`,
       });
-      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z } };
+      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z }, hipsBindY: character.bones.hips?.position.y ?? 0.93, posed: false };
       m.ring = new THREE.Mesh(
         ringGeo,
         new THREE.MeshBasicMaterial({ color: RING.other, transparent: true, opacity: 0.85, depthWrite: false }),
@@ -358,6 +359,18 @@ export function createRenderer(canvasEl) {
         else celebration = 'beaten';
       }
       const own = -HALF_L * state.teams[p.team].dir;
+      // Gold Standard engine pose (stride-synced IK, kicks at the contact frame).
+      // Keeper dives/holds, throw-ins and celebrations keep their own clips.
+      const usePose = p.pose && !(p.dive > 0 || p.holding || (p.throwIn && p.mustPass) || celebration);
+      if (usePose) {
+        const r = applyEnginePose(m.character, p.posePrev || p.pose, p.pose, pa, m.hipsBindY);
+        m.root.rotation.set(r.pitch, yaw + r.yawOffset, r.roll, 'YXZ');
+        m.root.position.y = r.lift;
+        mesh.rotation.x = 0; mesh.rotation.z = 0;
+        m.posed = true;
+        return;
+      }
+      if (m.posed) { m.root.rotation.set(0, yaw, 0); m.root.position.y = 0; m.posed = false; }
       if (gdt > 0 && m.root.visible) {
         m.character.update(gdt, p, {
           owner: state.ball.owner === p,

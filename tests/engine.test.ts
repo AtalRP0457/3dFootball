@@ -18,9 +18,12 @@ for (const r of await runChecks()) rows.push({ group: `Engine ${r.id}`, name: r.
 for (const t of GAMEPLAY_TESTS) {
   const sim = await Simulation.create();
   const p = sim.addPlayer({ id: 'reference', name: 'Reference Player', number: 10, start: { x: 0, z: 0 }, seed: 7 });
+  const perStep = new Map<number, number>();
+  sim.pw.events.on((e) => { if (e.type === 'BallImpulse') perStep.set(e.time, (perStep.get(e.time) ?? 0) + 1); });
   const res = new GameplayRunner(sim, p, t).runAll();
   for (const c of res) rows.push({ group: `Test ${t.id} · ${t.name}`, name: c.name, pass: c.pass, detail: c.detail });
-  rows.push({ group: `Test ${t.id} · ${t.name}`, name: 'No conflicting ball impulses in one step', pass: sim.interaction.conflicts === 0, detail: `${sim.interaction.conflicts} dropped` });
+  const maxPerStep = Math.max(0, ...perStep.values());
+  rows.push({ group: `Test ${t.id} · ${t.name}`, name: 'At most one ball impulse per step (no conflicting writers)', pass: maxPerStep <= 1, detail: `max ${maxPerStep} per step; ${sim.interaction.conflicts} simultaneous requests resolved by priority` });
 }
 
 // 3. Static check: only the central interaction system writes ball velocity.

@@ -100,6 +100,10 @@ export interface PlayerInput {
   skillMove: SkillKind | null;
   /** Optional aim direction (defaults to move/facing). */
   aim?: Vec2;
+  /** Multiplier on the target speed (difficulty, injury, stun); default 1. */
+  speedScale?: number;
+  /** Match rules: this player may not play the ball this step (cooldown, stunned). */
+  noBall?: boolean;
 }
 
 export const emptyInput = (): PlayerInput => ({

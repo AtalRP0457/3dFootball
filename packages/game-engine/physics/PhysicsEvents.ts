@@ -11,7 +11,7 @@ export type PossessionState =
   | 'Passing' | 'Shooting' | 'BallReleased' | 'PossessionLost';
 
 export type CommandPhase = 'requested' | 'accepted' | 'buffered' | 'rejected' | 'expired';
-export type ImpulseSource = 'pass' | 'shot' | 'dribble' | 'stop' | 'control' | 'block' | 'skill' | 'tackle' | 'header';
+export type ImpulseSource = 'pass' | 'shot' | 'dribble' | 'stop' | 'control' | 'block' | 'skill' | 'tackle' | 'header' | 'save' | 'throw';
 export type TouchSurface = 'inside' | 'outside' | 'sole' | 'laces';
 export type TouchKind = 'slow' | 'normal' | 'sprint' | 'directional' | 'stop';
 

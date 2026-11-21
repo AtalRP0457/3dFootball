@@ -6,6 +6,32 @@ Strict TypeScript (`strict`, `noImplicitAny`, `strictNullChecks`,
 rendering, Zustand UI state. It is **not yet wired into the match**: by
 request, the reference player is approved in the Lab first.
 
+## In the match
+
+`src/game/engineBridge.ts` runs every outdoor match on this engine (setting
+**Physics: Gold Standard engine**, the default; **Classic** keeps the old
+physics). The match keeps the football – rules, restarts, offside, cards, AI
+and human decisions, pass targeting, keeper judgement – and the engine does
+the physics:
+
+- every player on the pitch is a Rapier body on the shared PlayerController
+  (intents become PlayerInput; difficulty, stuns and injuries scale speed);
+- match pass/shot decisions become engine kicks: the planner still picks the
+  receiver and lead point or the corner, the speed is re-solved for the real
+  rolling ball (ground passes) or with the engine's trajectory predictor
+  (lofted passes), and the match bookkeeping (offside, shot stats, control
+  switch) runs when the foot actually releases the ball;
+- tackles are physical: won (foot reaches the ball), missed, or a foul when
+  the foot catches the dribbler's legs (free kick / penalty / cards);
+- possession changes from the engine go through the match rules (double
+  touch, offside on receiving, back-pass, keeper picking up);
+- the scene draws engine poses (interpolated); keeper dives/holds, throw-ins
+  and goal celebrations keep their existing clips.
+
+The match pitch runs along x and the engine's along z; the bridge rotates
+between them. `npm run test:match-engine` plays the staged checks (1, 2, 5 and
+22 players, plus human pass/shot) through the real match code.
+
 ## Run it
 
 ```bash
@@ -159,5 +185,8 @@ floodlit, one reference player and one ball.
 - **Animation** is procedural (IK gait + authored keyframe clips), not mocap.
 - **Jumps** are animated root lift; the physics capsule stays on the ground
   plane (headers use the animated head position).
-- **Not integrated** into the main match yet: the match still runs its own
-  ball and player code (`src/game/match.ts`). Integration is the next step.
+- **Keepers** still use the match's save model and their own animations
+  (dives, catches, holding); the engine has no goalkeeper hands yet. Their
+  saves and throws go through the interaction authority as rules impulses.
+- **Indoor fives** (rebound boards) and the **penalty shoot-out** mode still
+  run on classic physics.

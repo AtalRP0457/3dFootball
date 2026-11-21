@@ -43,6 +43,9 @@ export interface MoveResult {
 const D2R = Math.PI / 180;
 
 export function targetSpeedFor(input: PlayerInput, t: PlayerTuning, stamina: number): number {
+  return baseTargetSpeed(input, t, stamina) * (input.speedScale ?? 1);
+}
+function baseTargetSpeed(input: PlayerInput, t: PlayerTuning, stamina: number): number {
   const mag = clamp(Math.hypot(input.move.x, input.move.z), 0, 1);
   if (mag < 0.08) return 0;
   const f = fatigueFactor(stamina);

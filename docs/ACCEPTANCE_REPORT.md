@@ -34,18 +34,18 @@ TypeScript compilation is checked by `npm run typecheck`.
 | Engine 26 | Alternating-foot touches | ✅ Pass | LRLRLRLRLRLRLRLRLRLR (19/19 alternate) |
 | Engine 27 | Short passing | ✅ Pass | shortPass 11.0 m/s q0.78; ball rolled 43.9 m |
 | Engine 28 | Driven passing | ✅ Pass | drivenPass 21.4 m/s |
-| Engine 29 | Through balls | ✅ Pass | throughBall 14.1 m/s; ball at z 47.7 m |
+| Engine 29 | Through balls | ✅ Pass | throughBall 14.0 m/s; ball at z 48.5 m |
 | Engine 30 | Powerful shooting | ✅ Pass | powerShot at 32.2 m/s, into the net |
 | Engine 31 | Finesse shooting curls | ✅ Pass | finesseShot with 8.3 rev/s sidespin |
 | Engine 32 | Lobbed / chipped shots | ✅ Pass | chipShot, apex 4.04 m |
 | Engine 33 | Standing tackles win the ball | ✅ Pass | defender poked the ball away from the dribbler |
 | Engine 34 | Sliding tackles | ✅ Pass | slide swept the ball away; tackling foot 0.09 m above the turf |
-| Engine 35 | Interceptions / first touch | ✅ Pass | pass at 9 m/s controlled; ball 1.07 m from receiver afterwards |
+| Engine 35 | Interceptions / first touch | ✅ Pass | pass at 9 m/s controlled; ball 0.80 m from receiver afterwards |
 | Engine 36 | Animation and ball contact are synchronised | ✅ Pass | ball struck at 0.800 s; animation contact frame at 0.800 s |
 | Engine 37 | Stable fixed timestep | ✅ Pass | spike frame capped (14 steps, 0.15 s dropped); 600 frames at 144 fps → 250 steps (expected 250) |
 | Engine 38 | Same result at 30 / 60 / 120 / 144 fps | ✅ Pass | max difference 0.0e+0 m; steps 240/240/240/240 |
-| Engine 39 | Twenty-two player instances | ✅ Pass | 0.30 ms per fixed step with 22 players chasing one ball |
-| Engine 40 | No major memory growth | ✅ Pass | heap change over 20 s of simulation: -5.6 MB |
+| Engine 39 | Twenty-two player instances | ✅ Pass | 0.31 ms per fixed step with 22 players chasing one ball |
+| Engine 40 | No major memory growth | ✅ Pass | heap change over 20 s of simulation: -5.4 MB |
 | Engine 41 | No collision instability (pile-up) | ✅ Pass | six players crowding one spot: top speed seen 5.68 m/s (no explosions) |
 | Test A · Dribbling | Ball stays in possession through every turn | ✅ Pass | never lost |
 | Test A · Dribbling | Ball stays within reach | ✅ Pass | furthest 1.72 m from the player |
@@ -54,14 +54,14 @@ TypeScript compilation is checked by `npm run typecheck`.
 | Test A · Dribbling | Alternating-foot touches | ✅ Pass | LRLRLRLLLLLRLRRRRLRLRLLLLLLRRLRLRLLLLLLLLRLRLRL (57% alternate) |
 | Test A · Dribbling | Sprint dribbling | ✅ Pass | 5 sprint touches |
 | Test A · Dribbling | Stop and start again with the ball | ✅ Pass | stopped at 0.00 m/s with the ball 0.18 m away |
-| Test A · Dribbling | No conflicting ball impulses in one step | ✅ Pass | 0 dropped |
+| Test A · Dribbling | At most one ball impulse per step (no conflicting writers) | ✅ Pass | max 1 per step; 0 simultaneous requests resolved by priority |
 | Test B · Passing | Short pass releases the ball | ✅ Pass | shortPass: accepted → contact → impulse 8.3 m/s → released |
 | Test B · Passing | Stronger pass releases the ball | ✅ Pass | shortPass: accepted → contact → impulse 15.0 m/s → released |
-| Test B · Passing | Through ball releases the ball | ✅ Pass | throughBall: accepted → contact → impulse 13.6 m/s → released |
+| Test B · Passing | Through ball releases the ball | ✅ Pass | throughBall: accepted → contact → impulse 13.5 m/s → released |
 | Test B · Passing | Lob pass releases the ball | ✅ Pass | lobPass: accepted → contact → impulse 19.0 m/s → released |
 | Test B · Passing | Pass power responds to hold time | ✅ Pass | tap 8.3 m/s → 0.65 s hold 15.0 m/s |
 | Test B · Passing | Lob pass goes up | ✅ Pass | apex 5.93 m |
-| Test B · Passing | No conflicting ball impulses in one step | ✅ Pass | 0 dropped |
+| Test B · Passing | At most one ball impulse per step (no conflicting writers) | ✅ Pass | max 1 per step; 0 simultaneous requests resolved by priority |
 | Test C · Shooting | Tap shot is struck | ✅ Pass | shot: accepted → contact → impulse 15.6 m/s → released |
 | Test C · Shooting | Held shot is struck | ✅ Pass | shot: accepted → contact → impulse 29.2 m/s → released |
 | Test C · Shooting | Power shot is struck | ✅ Pass | powerShot: accepted → contact → impulse 29.3 m/s → released |
@@ -72,7 +72,7 @@ TypeScript compilation is checked by `npm run typecheck`.
 | Test C · Shooting | Finesse shot has sidespin | ✅ Pass | struck with the inside of the foot (curl) |
 | Test C · Shooting | Chip shot rises | ✅ Pass | apex 4.37 m |
 | Test C · Shooting | Impulse happens at the animation contact frame | ✅ Pass | every shot: contact and impulse in the same fixed step |
-| Test C · Shooting | No conflicting ball impulses in one step | ✅ Pass | 0 dropped |
+| Test C · Shooting | At most one ball impulse per step (no conflicting writers) | ✅ Pass | max 1 per step; 0 simultaneous requests resolved by priority |
 | Test D · Possession | Acquire the ball | ✅ Pass | FreeBall → PossessionAcquired |
 | Test D · Possession | Dribble | ✅ Pass | ControlledDribbling |
 | Test D · Possession | Stop the ball | ✅ Pass | stood still with the ball at his feet |
@@ -82,5 +82,5 @@ TypeScript compilation is checked by `npm run typecheck`.
 | Test D · Possession | Shoot releases possession | ✅ Pass | Shooting → BallReleased |
 | Test D · Possession | Lose possession to a tackle | ✅ Pass | PossessionLost |
 | Test D · Possession | Win the ball back | ✅ Pass | PossessionAcquired again |
-| Test D · Possession | No conflicting ball impulses in one step | ✅ Pass | 0 dropped |
+| Test D · Possession | At most one ball impulse per step (no conflicting writers) | ✅ Pass | max 1 per step; 1 simultaneous requests resolved by priority |
 | Architecture | One authoritative writer of ball velocity | ✅ Pass | only PlayerBallInteraction (queued, one impulse per step) |

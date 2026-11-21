@@ -72,6 +72,12 @@ export class Simulation {
     this.ball.touched(p.id, 'touch');
     this.interaction.grant(p.id, this.time);
   }
+  /** Match rules: the ball is held by a player at a spot (set piece, keeper's hands). */
+  holdBall(p: PlayerController, pos: { x: number; y: number; z: number }, vel: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 }): void {
+    this.ball.reset(pos, vel);
+    this.ball.touched(p.id, 'touch');
+    this.interaction.holdBy(p.id, this.time);
+  }
   /** Development tools: place the ball (free) with a velocity and spin. */
   placeBall(pos: { x: number; y: number; z: number }, v?: { x: number; y: number; z: number }, w?: { x: number; y: number; z: number }): void {
     this.ball.reset(pos, v, w);

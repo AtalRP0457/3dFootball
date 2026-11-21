@@ -47,6 +47,12 @@ export interface KickRequest {
   /** 0.25 (tap) … 1 (full hold). */
   power: number;
   aim: Vec2;
+  /**
+   * Planned exit velocity (world, m/s) from a match planner (receiver lead,
+   * aim at goal). The strike still happens at the contact frame and scales
+   * with contact quality; only its target changes.
+   */
+  velocity?: Vec3;
 }
 
 export interface KickPlan extends KickRequest {
@@ -114,6 +120,8 @@ export class PlayerBallInteraction {
   lastContact: { playerId: string; action: string; hit: boolean; gap: number; quality: number; time: number } | null = null;
   /** Impulses dropped because a higher-priority one won the same step. */
   conflicts = 0;
+  /** Player a pass is meant for (match rules): wins ties, others reach less far. */
+  intendedFor: string | null = null;
   private queue: QueuedImpulse[] = [];
   private contactCache = new Map<string, { left: number; fwd: number }>();
 
@@ -216,7 +224,7 @@ export class PlayerBallInteraction {
       const tc = (clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55) * clip.duration;
       const sp = this.setupPoint(a, req.aim, kind, a.preferredFoot, tc);
       const miss = Math.hypot(sp.x - (a.pos.x + a.vel.x * tc), sp.z - (a.pos.z + a.vel.z * tc));
-      if (miss > 0.75) {
+      if (miss > 1.1) {
         emit('buffered', kind, `lining up (${miss.toFixed(2)} m off)`);
         return { result: 'buffered' };
       }
@@ -295,7 +303,8 @@ export class PlayerBallInteraction {
    * The contact frame: if the striking foot (forward kinematics of the
    * current pose) reaches the ball, compute and queue the impulse.
    */
-  resolveKick(a: InteractionActor, plan: KickPlan, time: number): boolean {
+  resolveKick(a: InteractionActor, planIn: KickPlan, time: number): boolean {
+    let plan = planIn;
     const b = this.ball.curr.position;
     const header = plan.kind === 'header';
     const pt = header ? headWorld(a.pose, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims) : footWorld(a.pose, plan.foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
@@ -351,15 +360,23 @@ export class PlayerBallInteraction {
       case 'header': foot = (6 + 8 * p) * (0.7 + 0.3 * t.heading) + len3(ballV) * 0.3; elev = -6 + 10 * p; break;
     }
     const technique = (0.86 + 0.14 * skill) * (0.85 + 0.15 * a.balance);
-    const exit = foot * transfer * technique * (0.78 + 0.22 * q);
+    let exit = foot * transfer * technique * (0.78 + 0.22 * q);
+    if (plan.velocity) {
+      // A planned strike: the planner chose speed and direction; contact quality still matters.
+      const v = plan.velocity;
+      const h = Math.hypot(v.x, v.z);
+      exit = len3(v) * (0.9 + 0.1 * q);
+      elev = Math.atan2(v.y, h) / D2R;
+      plan = { ...plan, aim: h > 1e-6 ? { x: v.x / h, z: v.z / h } : plan.aim };
+    }
     // Direction: a small error from skill and contact quality (never the strength).
     const runSpeed = Math.hypot(a.vel.x, a.vel.z);
-    const spread = (0.6 + (1 - skill) * 4 + (1 - q) * 5 + (shot ? p * 1.2 + runSpeed * 0.12 : 0)) * D2R;
+    const spread = plan.velocity ? (1 - q) * 3 * D2R : (0.6 + (1 - skill) * 4 + (1 - q) * 5 + (shot ? p * 1.2 + runSpeed * 0.12 : 0)) * D2R;
     const noise = gauss(a);
     const dir = rot(plan.aim, noise * spread);
     elev += noise * (spread / D2R) * 0.3;
     const ce = Math.cos(elev * D2R), se = Math.sin(elev * D2R);
-    const carry = shot ? 0.2 : 0.08;
+    const carry = plan.velocity ? 0 : shot ? 0.2 : 0.08;
     const vel: Vec3 = { x: dir.x * exit * ce + a.vel.x * carry, y: exit * se, z: dir.z * exit * ce + a.vel.z * carry };
     let spin = spinFromComponents(vel, { top, side: side + (1 - q) * noise * 18 });
     if (elev < 4 && passing) {
@@ -381,6 +398,28 @@ export class PlayerBallInteraction {
       },
     });
     return true;
+  }
+
+  // ============================================================== rules
+  /**
+   * A touch decided by match rules rather than a foot (keeper saves and
+   * parries, throw-ins, throws from the keeper's hands). Still queued here, so
+   * the ball has exactly one writer.
+   */
+  rulesImpulse(playerId: string, vel: Vec3, spin: Vec3, source: ImpulseSource, kind: string, foot: Foot, time: number, after?: () => void): void {
+    this.enqueue({ playerId, priority: 4, vel, spin, touchKind: source === 'save' ? 'touch' : 'kick', source, kind, foot, quality: 1, footSpeed: 0,
+      after: () => {
+        if (source === 'save') this.setState('PossessionLost', null, `${kind} by ${playerId}`, time);
+        else { this.releasedBy = playerId; this.releasedAt = time; this.setState('BallReleased', null, `${kind} by ${playerId}`, time); this.events.emit({ type: 'BallRelease', playerId, kind, time }); }
+        after?.();
+      } });
+  }
+  /** Match rules give a player the ball (kick-off taker, keeper's hands, set piece). */
+  holdBy(playerId: string, time: number): void {
+    // Drop dribble touches, but never a throw or save already queued.
+    this.queue = this.queue.filter((q) => q.priority >= 4);
+    this.lastTouchAt = time;
+    if (this.owner !== playerId || (this.state !== 'ControlledDribbling' && this.state !== 'PossessionAcquired')) this.setState('PossessionAcquired', playerId, 'rules: ball held', time);
   }
 
   // ============================================================ dribbling
@@ -515,7 +554,12 @@ export class PlayerBallInteraction {
     if (this.releasedBy === a.id && time - this.releasedAt < 0.45) return null;
     const b = this.ball.curr;
     const L = ballLocal(a, b.position);
-    const reach = a.tuning.interceptReach + (defending ? 0.25 : 0);
+    // A fast ball is hard to reach for: the reach shrinks with its pace
+    // (except for the player it was meant for).
+    const relPace = Math.hypot(b.velocity.x - a.vel.x, b.velocity.z - a.vel.z);
+    const meant = this.intendedFor === a.id;
+    const paceFactor = meant ? 1 : clamp(1.15 - relPace / 22, 0.45, 1);
+    const reach = (a.tuning.interceptReach + (defending ? 0.25 : 0)) * paceFactor * (this.intendedFor && !meant ? 0.85 : 1) + (meant ? 0.25 : 0);
     if (L.dist > reach || b.position.y > 1.7) return null;
     if (this.owner) {
       // Someone is dribbling: only a ball knocked away from him can be taken.

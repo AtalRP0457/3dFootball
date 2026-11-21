@@ -334,6 +334,35 @@ export class PlayerController implements InteractionActor {
     this.curr = this.snapshot(); this.prev = this.curr;
   }
 
+  /**
+   * Programmatic kick (AI / match rules): same pipeline as a button release.
+   * Returns the decision ('accepted' starts the swing, 'buffered' runs onto
+   * the ball first).
+   */
+  commandKick(req: KickRequest, now: number): 'accepted' | 'buffered' | 'rejected' {
+    if (this.kick || this.buffered) return 'rejected';
+    const d = this.ix.requestKick(this, req, this.sm.busy, now);
+    if (d.result === 'accepted') this.startKick(d.plan);
+    else if (d.result === 'buffered') this.buffered = { req, since: now };
+    return d.result;
+  }
+  /** Programmatic tackle towards a heading (AI / match). */
+  commandTackle(kind: 'standing' | 'sliding', yaw: number): boolean {
+    if (this.sm.busy) return false;
+    this.yaw = yaw;
+    if (kind === 'sliding') {
+      this.startAction('slidingTackle', this.preferredFoot);
+      const f = dirOf(this.yaw), s = Math.max(this.speed, 5 + 2 * this.tuning.tackleSkill);
+      this.vel = { x: f.x * s, z: f.z * s };
+      this.physics.setVelocity(this.vel);
+    } else this.startAction('standingTackle', this.preferredFoot);
+    return true;
+  }
+  /** Is a kick in progress or waiting for the ball? */
+  get kicking(): boolean { return !!(this.kick || this.buffered); }
+  /** Drop any kick in progress (possession changed hands, restart). */
+  cancelKick(): void { this.kick = null; this.buffered = null; }
+
   /** Charge level 0.25..1 for a held kick button (for the HUD), 0 when not held. */
   charge(k: ChargeKey, now: number): number {
     const s = this.charges.get(k);
@@ -505,8 +534,11 @@ export class PlayerController implements InteractionActor {
       return;
     }
     if (a && a.clip.interruptible === false) return;
-    if (this.kick || this.buffered) return;
+    if (this.kick) return;
+    // Lining up a kick keeps the ball under control (touches continue).
     if (this.hasBall) { this.ix.dribble(this, this.contact.struck, this.input.defend, now); return; }
+    if (this.buffered) return;
+    if (this.input.noBall) return;
     const foot = this.ix.receive(this, ctx.others, this.input.defend, now);
     if (foot) this.sm.start('trap', { foot, force: true });
   }

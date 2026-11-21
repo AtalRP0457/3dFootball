@@ -21,7 +21,12 @@ export interface CollisionBody {
   setColliding(on: boolean): void;
 }
 
+/** Last counted impact per pair (per simulation): pressing contact is continuous, an impact is not. */
+const impactsBySim = new WeakMap<PhysicsEvents, Map<string, number>>();
+
 export function resolvePlayerContacts(bodies: CollisionBody[], events: PhysicsEvents, time: number): void {
+  let lastImpact = impactsBySim.get(events);
+  if (!lastImpact) { lastImpact = new Map(); impactsBySim.set(events, lastImpact); }
   for (const b of bodies) b.setColliding(false);
   for (let i = 0; i < bodies.length; i++) {
     for (let j = i + 1; j < bodies.length; j++) {
@@ -34,6 +39,11 @@ export function resolvePlayerContacts(bodies: CollisionBody[], events: PhysicsEv
       // Closing speed along the contact normal (positive = approaching).
       const closing = (a.velBefore.x - b.velBefore.x) * nx + (a.velBefore.z - b.velBefore.z) * nz;
       if (closing <= 1.0) continue;
+      const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+      const last = lastImpact.get(key);
+      if (last !== undefined && time - last < 0.6) continue;
+      lastImpact.set(key, time);
+      if (lastImpact.size > 2000) lastImpact.clear();
       const mu = (a.massKg * b.massKg) / (a.massKg + b.massKg);
       const impulse = mu * closing; // N·s
       events.emit({ type: 'playerCollision', a: a.id, b: b.id, impulse, time });
