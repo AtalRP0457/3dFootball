@@ -3,7 +3,7 @@ import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRatin
 import { teamRecord, ERAS } from './db/index.js';
 import { migrate, ls } from './state/store.js';
 import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.js';
-import { FIXED_DT, FORMATIONS, INDOOR_FORMATION } from './game/constants.js';
+import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.js';
 import { createFrontend } from './ui/frontend.js';
 import { Input } from './game/input.js';
 import { createRenderer } from './render/scene.js';
@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
   duration: 240,
   era: 'on', // era colour grading for the decade teams
   assist: 'assisted',
+  dribbleStyle: 'sticky',
 };
 const SETTINGS_KEY = 'legends-settings';
 const dataMigration = migrate();
@@ -534,7 +535,7 @@ function startTutorialState() {
   match.banner = null;
   for (const p of match.players) p.mustPass = false;
   b.owner = null;
-  b.pos.x = 8; b.pos.z = 7; b.pos.y = 0.22;
+  b.pos.x = 8; b.pos.z = 7; b.pos.y = BALL_R;
   stopBall(b);
   renderTutorial();
 }
@@ -627,7 +628,7 @@ function setupDrillRound() {
   victim.drillNoPass = true;
   b.owner = victim; b.lastTouch = victim; b.intended = null; b.shotLive = false;
   stopBall(b);
-  b.pos.x = victim.pos.x - 0.75; b.pos.z = victim.pos.z; b.pos.y = 0.22;
+  b.pos.x = victim.pos.x - DRIBBLE_OFFSET; b.pos.z = victim.pos.z; b.pos.y = BALL_R;
   setControlled(match, me, mine);
   me.seenOpponentOwner = victim; // don't auto-switch away from your defender
   drill.timer = 0;
@@ -1027,6 +1028,7 @@ function startMatch() {
     extraTime: settings.mode === 'cup', extraTimeDuration: Math.max(30, Math.round(settings.duration / 4)),
     timeScale: dev.speed / 100,
     assist: settings.assist,
+    dribbleStyle: settings.dribbleStyle,
   });
   [home, away].forEach((team, i) => {
     const setup = frontend.squadSetup(team);

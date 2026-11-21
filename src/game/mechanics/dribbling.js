@@ -151,3 +151,59 @@ export function updateDribble(p, b, dt, bounds) {
   p.touchAnim = 0.22;
   return 'touch';
 }
+
+// ---------------------------------------------------------------------------
+// Sticky (arcade) dribbling: the default.
+//
+// The ball stays at the dribbler's feet until he passes, shoots or is
+// tackled. It sits just in front of the leading foot along his body
+// direction, so it swings round with him when he turns, and pulses forward
+// in small touches in rhythm with his stride (the leg animation is cued by
+// touchAnim). Better dribblers keep it a little tighter. The ball's
+// velocity is derived from its movement so spin and rendering stay right.
+// ---------------------------------------------------------------------------
+const STICKY_TOUCH_EVERY = 1.25; // metres of running per visible touch
+
+export function stickyLead(p, speed) {
+  const skill = 1.15 - p.phys.dribbling * 0.3; // 0.85 (elite) .. 1.09 (poor)
+  return (0.42 + Math.min(speed, 9) * 0.035) * skill;
+}
+
+export function updateStickyDribble(p, b, dt, bounds) {
+  const s = Math.hypot(p.vel.x, p.vel.z);
+  p.touchCd = 0;
+  // Touch rhythm: one touch every ~1.25 m covered.
+  const prev = p.dribblePhase || 0;
+  p.dribblePhase = prev + (s * dt) / STICKY_TOUCH_EVERY;
+  let touched = false;
+  if (Math.floor(p.dribblePhase) !== Math.floor(prev) && s > 1.2) {
+    p.touchAnim = 0.22;
+    touched = true;
+  }
+  // Forward pulse after each touch: the ball runs a few centimetres ahead
+  // and is gathered again.
+  const frac = p.dribblePhase % 1;
+  const pulse = s > 1.2 ? Math.sin(Math.PI * frac) * (0.06 + s * 0.012) : 0;
+  const lead = stickyLead(p, s) + pulse;
+  // Slightly towards the kicking foot (right foot unless left-footed).
+  const side = (p.identity?.foot === 'Left' ? 1 : -1) * 0.06;
+  const fx = p.face.x, fz = p.face.z;
+  // Left of the facing direction is (fz, -fx); a negative side means right.
+  let tx = p.pos.x + fx * lead + fz * side;
+  let tz = p.pos.z + fz * lead - fx * side;
+  if (bounds) {
+    tx = clamp(tx, -bounds.x, bounds.x);
+    tz = clamp(tz, -bounds.z, bounds.z);
+  }
+  // Follow the anchor quickly (stays glued, but turns read as a swing).
+  const k = 1 - Math.exp(-dt * (20 + p.phys.dribbling * 12));
+  const nx = b.pos.x + (tx - b.pos.x) * k;
+  const nz = b.pos.z + (tz - b.pos.z) * k;
+  b.vel.x = (nx - b.pos.x) / dt;
+  b.vel.z = (nz - b.pos.z) / dt;
+  b.vel.y = 0;
+  b.pos.x = nx; b.pos.z = nz;
+  b.pos.y = BALL_R;
+  setRollingSpin(b);
+  return touched ? 'touch' : null;
+}

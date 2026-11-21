@@ -128,8 +128,11 @@ console.log('Passing');
 }
 
 console.log('Dribbling');
+// The touch-dribbling tests below exercise the optional 'touch' style;
+// sticky (default) dribbling has its own section further down.
+let dribbleStyle = 'touch';
 function dribbleRun(mx, mz, sprint, steps, team = TEAMS[0], setup) {
-  const s = createMatch({ home: team, away: TEAMS[1], controllers: ['p1', 'ai'], duration: 600 });
+  const s = createMatch({ home: team, away: TEAMS[1], controllers: ['p1', 'ai'], duration: 600, dribbleStyle });
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
   for (const p of s.players) { p.mustPass = false; p.pos.x = p.team ? 45 : -45; p.pos.z = -30 + p.id * 2; p.vel.x = p.vel.z = 0; }
   const me = s.players.find((p) => p.team === 0 && p.role === 'MID');
@@ -219,6 +222,33 @@ console.log('Reach and queued actions');
     }
     check(shot >= 0, `shot taken from a sprint dribble (${release ? 'stick released' : 'still running'})`);
   }
+}
+
+console.log('Sticky dribbling (default)');
+{
+  dribbleStyle = 'sticky';
+  const sprint = dribbleRun(1, 0, true, 240);
+  check(!sprint.lost, 'sticky: never loses the ball on a straight sprint');
+  check(Math.max(...sprint.dists.slice(30)) < 0.95, `sticky: ball stays at the feet (max ${Math.max(...sprint.dists.slice(30)).toFixed(2)} m)`);
+  check(sprint.touches >= 3, `sticky: visible touches in stride (${sprint.touches})`);
+  // Sprint U-turns and zig-zags keep the ball for every dribbler.
+  let lost = 0;
+  for (let i = 0; i < 20; i++) {
+    const r = dribbleRun((k) => (k < 120 ? { mx: 1, mz: 0, sprint: true } : { mx: Math.sign(Math.sin(k / 9)), mz: Math.cos(k / 7), sprint: true }), 0, 0, 260, TEAMS[0],
+      (me) => { me.phys = { ...me.phys, dribbling: 0.35, control: 0.35 }; });
+    if (r.lost) lost++;
+  }
+  check(lost === 0, `sticky: even a poor dribbler keeps the ball through turns (${lost}/20 lost)`);
+  // The ball is in front of the player along his body direction.
+  const r2 = dribbleRun(0.4, 0, false, 120);
+  const { me, s } = r2;
+  const ahead = (s.ball.pos.x - me.pos.x) * me.face.x + (s.ball.pos.z - me.pos.z) * me.face.z;
+  check(ahead > 0.3, `sticky: ball sits in front of the feet (${ahead.toFixed(2)} m)`);
+  // It only leaves through a pass, a shot or a tackle: a pass releases it.
+  const passer = dribbleRun(1, 0, false, 60);
+  stepMatch(passer.s, { p1: { mx: 1, mz: 0, passPressed: true } }, FIXED_DT);
+  check(passer.s.ball.owner !== passer.me, 'sticky: a pass releases the ball');
+  dribbleStyle = 'touch';
 }
 
 console.log(failures ? `\n${failures} mechanics check(s) failed` : '\nall mechanics checks passed');

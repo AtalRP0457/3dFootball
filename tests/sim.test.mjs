@@ -8,7 +8,7 @@ if (!globalThis.navigator || !('getGamepads' in globalThis.navigator)) {
 }
 const { normalizeKey, Input } = await import('../src/game/input.js');
 import { TEAMS } from '../src/data/teams.js';
-import { FIXED_DT, HALF_L, HALF_W } from '../src/game/constants.js';
+import { FIXED_DT, HALF_L, HALF_W, BALL_R } from '../src/game/constants.js';
 
 let failures = 0;
 function check(cond, msg) {
@@ -93,7 +93,7 @@ console.log('Restarts');
   for (const [x, z, lt, type, team] of cases) {
     const s = createMatch({ home: TEAMS[0], away: TEAMS[1], controllers: ['ai', 'ai'], duration: 120 });
     while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
-    s.ball.owner = null; s.ball.pos.x = x; s.ball.pos.z = z; s.ball.pos.y = 0.22;
+    s.ball.owner = null; s.ball.pos.x = x; s.ball.pos.z = z; s.ball.pos.y = BALL_R;
     s.ball.vel.x = Math.sign(x) * 2; s.ball.vel.z = 0; s.ball.vel.y = 0;
     s.ball.lastTouch = s.players.find((p) => p.team === lt && p.role === 'MID');
     stepMatch(s, {}, FIXED_DT);

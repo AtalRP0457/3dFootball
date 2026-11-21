@@ -12,14 +12,14 @@ export const GOAL_AREA = { depth: 5.5, width: 18.32 };
 export const PENALTY_SPOT = 11;
 export const PENALTY_ARC_RADIUS = 9.15;
 
-export const BALL_R = 0.22;
+export const BALL_R = 0.11; // a real size-5 ball (22 cm across)
 export const GRAVITY = 9.81;
 export const ROLL_DECEL = 3.4; // rolling deceleration on grass
 export const AIR_DRAG = 0.08;
 export const BOUNCE = 0.5;
 
 export const CONTROL_RADIUS = 0.95; // how close a player must be to take the ball
-export const DRIBBLE_OFFSET = 0.75; // ball distance in front of the dribbler
+export const DRIBBLE_OFFSET = 0.5; // ball distance in front of the dribbler
 export const PLAYER_RADIUS = 0.45;
 
 export const FIXED_DT = 1 / 60;

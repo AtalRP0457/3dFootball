@@ -14,7 +14,7 @@ import {
   integrateBall, substepsFor, collideBallWithBody, setRollingSpin, setKickSpin,
   stopBall, ensureSpin, computeBallPath,
 } from './physics/ballPhysics.js';
-import { updateDribble, canKick } from './mechanics/dribbling.js';
+import { updateDribble, updateStickyDribble, canKick } from './mechanics/dribbling.js';
 import { planShot, shotTypeFromCharge } from './mechanics/shooting.js';
 import { planPass } from './mechanics/passing.js';
 
@@ -164,6 +164,10 @@ export function createMatch(cfg) {
     teams,
     players,
     timeScale: cfg.timeScale || 1,
+    // 'sticky' (arcade default): the ball stays at the feet until a pass,
+    // shot or tackle. 'touch' (realistic): touch-based dribbling where the
+    // ball can run away from you.
+    dribbleStyle: cfg.dribbleStyle === 'touch' ? 'touch' : 'sticky',
     assistName: cfg.assist || 'assisted',
     assist: ASSIST[cfg.assist || 'assisted'],
     ball: {
@@ -1296,6 +1300,12 @@ function updateBall(state, dt) {
     attachBall(b, owner);
     b.vel.x = owner.vel.x; b.vel.z = owner.vel.z; b.vel.y = 0;
     setRollingSpin(b);
+    return;
+  }
+  if (owner && state.dribbleStyle === 'sticky') {
+    if (updateStickyDribble(owner, b, dt, ownerBounds(state, owner)) === 'touch') {
+      state.events.push({ type: 'touch', player: owner.id });
+    }
     return;
   }
   const n = substepsFor(b, dt);
