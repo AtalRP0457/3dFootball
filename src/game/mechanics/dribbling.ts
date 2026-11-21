@@ -8,16 +8,21 @@
 // - A ball that gets too far from its owner (a heavy touch, a sharp turn at
 //   full speed) is lost and becomes a loose ball anyone can win.
 
-import { BALL, setRollingSpin, gauss } from '../physics/ballPhysics.js';
-import { BALL_R } from '../constants.js';
+import { BALL, setRollingSpin, gauss } from '../physics/ballPhysics.ts';
+import type { BallBody } from '../physics/ballPhysics.ts';
+import type { Player, Vec2 } from '../../types/game.ts';
+import { BALL_R } from '../constants.ts';
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
+/** Pitch half-extents the close-control spot is kept inside. */
+export interface Bounds { x: number; z: number }
 
 /** Speed below which the dribbler uses continuous close control. */
 export const CLOSE_CONTROL_SPEED = 2.6;
 
 /** How far in front of the body the ball sits/leads at a given speed. */
-export function touchLead(p, speed) {
+export function touchLead(p: Pick<Player, 'phys'>, speed: number): number {
   const prof = p.phys;
   const run = prof.runSpeed;
   const sprintExtra = Math.max(0, speed - run * 1.02) * 0.4;
@@ -26,18 +31,18 @@ export function touchLead(p, speed) {
 }
 
 /** Distance from the body within which the player can strike the ball. */
-export function kickReach(p) {
+export function kickReach(p: Pick<Player, 'phys'>): number {
   return 1.25 + p.phys.control * 0.35;
 }
 
-export function canKick(p, b) {
+export function canKick(p: Player, b: BallBody): boolean {
   if (p.mustPass || p.holding) return true;
   const d = Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z);
   return d <= kickReach(p) && b.pos.y < 0.9;
 }
 
 /** The direction the dribbler wants to take the ball. */
-function wantedDirection(p) {
+function wantedDirection(p: Player): Vec2 {
   const it = p.intent;
   const il = Math.hypot(it.mx, it.mz);
   if (il > 0.2) return { x: it.mx / il, z: it.mz / il };
@@ -51,7 +56,7 @@ function wantedDirection(p) {
  * this step. Returns 'lost' when the dribbler has lost it, 'touch' on a
  * touch, or null.
  */
-export function updateDribble(p, b, dt, bounds) {
+export function updateDribble(p: Player, b: BallBody, dt: number, bounds: Bounds | null): 'lost' | 'touch' | null {
   const prof = p.phys;
   p.touchCd = Math.max(0, (p.touchCd || 0) - dt);
   const s = Math.hypot(p.vel.x, p.vel.z);
@@ -164,12 +169,12 @@ export function updateDribble(p, b, dt, bounds) {
 // ---------------------------------------------------------------------------
 const STICKY_TOUCH_EVERY = 1.25; // metres of running per visible touch
 
-export function stickyLead(p, speed) {
+export function stickyLead(p: Pick<Player, 'phys'>, speed: number): number {
   const skill = 1.15 - p.phys.dribbling * 0.3; // 0.85 (elite) .. 1.09 (poor)
   return (0.42 + Math.min(speed, 9) * 0.035) * skill;
 }
 
-export function updateStickyDribble(p, b, dt, bounds) {
+export function updateStickyDribble(p: Player, b: BallBody, dt: number, bounds: Bounds | null): 'touch' | null {
   const s = Math.hypot(p.vel.x, p.vel.z);
   p.touchCd = 0;
   // Touch rhythm: one touch every ~1.25 m covered.

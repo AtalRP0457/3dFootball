@@ -9,7 +9,7 @@
 // GLB pipeline (assets.js) maps Mixamo / common rig names onto these.
 
 import * as THREE from 'three';
-import { BODY_TYPES } from '../../game/players/identity.js';
+import { BODY_TYPES } from '../../game/players/identity.ts';
 
 export const BONE_NAMES = [
   'root', 'hips', 'spine', 'chest', 'neck', 'head',

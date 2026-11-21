@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import {
   PITCH, HALF_L, HALF_W, BOX, GOAL_AREA, PENALTY_SPOT, PENALTY_ARC_RADIUS,
-} from '../../game/constants.js';
+} from '../../game/constants.ts';
 
 export const MARGIN = 6; // grass beyond the lines (metres)
 const LINE_W = 0.12;

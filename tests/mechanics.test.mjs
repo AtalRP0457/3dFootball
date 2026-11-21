@@ -1,12 +1,12 @@
 // Tests for dribbling, passing and shooting mechanics. Run with: npm test
-import { planShot } from '../src/game/mechanics/shooting.js';
-import { planPass } from '../src/game/mechanics/passing.js';
-import { touchLead, kickReach } from '../src/game/mechanics/dribbling.js';
-import { physicalProfile } from '../src/game/physics/attributes.js';
-import { integrateBall, substepsFor, setKickSpin, setRollingSpin } from '../src/game/physics/ballPhysics.js';
-import { createMatch, stepMatch, setControlled } from '../src/game/match.js';
+import { planShot } from '../src/game/mechanics/shooting.ts';
+import { planPass } from '../src/game/mechanics/passing.ts';
+import { touchLead, kickReach } from '../src/game/mechanics/dribbling.ts';
+import { physicalProfile } from '../src/game/physics/attributes.ts';
+import { integrateBall, substepsFor, setKickSpin, setRollingSpin } from '../src/game/physics/ballPhysics.ts';
+import { createMatch, stepMatch, setControlled } from '../src/game/match.ts';
 import { TEAMS } from '../src/data/teams.js';
-import { FIXED_DT, HALF_L, BALL_R, GOAL } from '../src/game/constants.js';
+import { FIXED_DT, HALF_L, BALL_R, GOAL } from '../src/game/constants.ts';
 
 let failures = 0;
 function check(cond, msg) {

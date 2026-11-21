@@ -8,7 +8,7 @@
 // Sponsors on the boards are invented names, not real brands.
 
 import * as THREE from 'three';
-import { PITCH, HALF_L, HALF_W } from '../../game/constants.js';
+import { PITCH, HALF_L, HALF_W } from '../../game/constants.ts';
 import { MARGIN } from './pitch.js';
 
 function canvas(w, h) {

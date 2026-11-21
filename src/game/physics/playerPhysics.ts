@@ -7,10 +7,24 @@
 // speed. Everything is integrated per fixed step with dt, so results do not
 // depend on the frame rate.
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+import type { Vec2, PhysicalProfile } from '../../types/game.ts';
+
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
+/** Anything that moves like a player. */
+export interface Mover { pos: Vec2; vel: Vec2; face: Vec2; acc?: Vec2 }
+/** Movement command for one step. */
+export interface MoveCommand { dx: number; dz: number; top: number; accelMul?: number; turnMul?: number }
+/** A body taking part in player-player contacts. */
+export interface ContactBody {
+  onPitch: boolean; sentOff: boolean; pos: Vec2; vel: Vec2; stagger?: number;
+  phys?: { mass: number; balance: number } | null;
+}
+type Turning = Pick<PhysicalProfile, 'turnBase' | 'turnFalloff'>;
+type Locomotion = Pick<PhysicalProfile, 'accel' | 'brake' | 'coast' | 'turnBase' | 'turnFalloff' | 'grip' | 'yawRate'>;
 const TAU = Math.PI * 2;
 
-function wrapAngle(a) {
+function wrapAngle(a: number): number {
   a = (a + Math.PI) % TAU;
   if (a < 0) a += TAU;
   return a - Math.PI;
@@ -20,12 +34,12 @@ function wrapAngle(a) {
 export const PIVOT_SPEED = 0.6;
 
 /** Max rate the running line can bend at a given speed (rad/s). */
-export function turnRate(prof, speed) {
+export function turnRate(prof: Turning, speed: number): number {
   return prof.turnBase / (1 + speed * prof.turnFalloff);
 }
 
 /** Forward acceleration available at the current speed (fades near top speed). */
-export function accelAt(prof, speed, top) {
+export function accelAt(prof: Pick<PhysicalProfile, 'accel'>, speed: number, top: number): number {
   if (top <= 0) return 0;
   return prof.accel * Math.max(0.22, 1 - speed / (top * 1.12));
 }
@@ -40,7 +54,7 @@ export function accelAt(prof, speed, top) {
  * }
  * Mutates p.vel, p.pos, p.face and writes p.acc (for body lean in rendering).
  */
-export function stepLocomotion(p, prof, cmd, dt) {
+export function stepLocomotion(p: Mover, prof: Locomotion, cmd: MoveCommand, dt: number): void {
   const vx0 = p.vel.x, vz0 = p.vel.z;
   let s = Math.hypot(vx0, vz0);
   let mag = Math.hypot(cmd.dx, cmd.dz);
@@ -106,7 +120,7 @@ export function stepLocomotion(p, prof, cmd, dt) {
 }
 
 /** Rotate the body towards the running line (or the stick when standing). */
-function turnBody(p, prof, ddx, ddz, hasInput, dt, turnMul) {
+function turnBody(p: Mover, prof: Pick<PhysicalProfile, 'yawRate'>, ddx: number, ddz: number, hasInput: boolean, dt: number, turnMul: number): void {
   const sp = Math.hypot(p.vel.x, p.vel.z);
   let tx, tz;
   if (sp > PIVOT_SPEED) { tx = p.vel.x / sp; tz = p.vel.z / sp; }
@@ -127,7 +141,10 @@ function turnBody(p, prof, ddx, ddz, hasInput, dt, turnMul) {
  * `fixed(p)` marks players that cannot be moved (keeper holding the ball).
  * Returns the number of heavy contacts (for events/tests).
  */
-export function resolvePlayerContacts(players, radius, fixed, onHeavy) {
+export function resolvePlayerContacts<T extends ContactBody>(
+  players: T[], radius: number, fixed: (p: T) => boolean,
+  onHeavy?: (loser: T, other: T, closingSpeed: number) => void,
+): number {
   const min = radius * 2;
   let heavy = 0;
   for (let i = 0; i < players.length; i++) {

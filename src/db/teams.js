@@ -4,7 +4,7 @@
 // the underlying records; it only changes what is displayed.
 import { TEAMS as DECADE_TEAMS } from '../data/teams.js';
 import { DB, IDX, POSITIONS, deriveAttributes, computeOverall, teamRecord, hasRoster, ERAS } from './index.js';
-import { playerIdentity, chooseCaptain } from '../game/players/identity.js';
+import { playerIdentity, chooseCaptain } from '../game/players/identity.ts';
 
 const BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL) || '/';
 function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }

@@ -1,14 +1,14 @@
 // Headless tests for the match engine. Run with: npm test
-import { createMatch, stepMatch, teamPlayers, choosePassTarget, setControlled, isHolding, doPass, doShot } from '../src/game/match.js';
+import { createMatch, stepMatch, teamPlayers, choosePassTarget, setControlled, isHolding, doPass, doShot } from '../src/game/match.ts';
 // Minimal browser stand-ins so the real Input class can be tested.
 const winListeners = {};
 globalThis.window = globalThis.window || { addEventListener: (t, f) => (winListeners[t] ||= []).push(f) };
 if (!globalThis.navigator || !('getGamepads' in globalThis.navigator)) {
   Object.defineProperty(globalThis, 'navigator', { value: { getGamepads: () => [] }, configurable: true });
 }
-const { normalizeKey, Input } = await import('../src/game/input.js');
+const { normalizeKey, Input } = await import('../src/game/input.ts');
 import { TEAMS } from '../src/data/teams.js';
-import { FIXED_DT, HALF_L, HALF_W, BALL_R } from '../src/game/constants.js';
+import { FIXED_DT, HALF_L, HALF_W, BALL_R } from '../src/game/constants.ts';
 
 let failures = 0;
 function check(cond, msg) {

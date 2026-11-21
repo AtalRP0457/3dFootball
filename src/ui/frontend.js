@@ -9,7 +9,7 @@ import './frontend.css';
 import { trophySVG, ballSVG, esc, shade } from './art.js';
 import { playerSVG, coverSVG, customCoverUrls, loadUserImages } from './hero.js';
 import { DB, IDX, ATTRIBUTE_KEYS, ATTRIBUTE_GROUPS, POSITIONS, eraLabel, ERAS } from '../db/index.js';
-import { playerIdentity } from '../game/players/identity.js';
+import { playerIdentity } from '../game/players/identity.ts';
 import { sharedPlayerViewer, PlayerViewer, VIEWER_ANIMS } from '../render/playerViewer.js';
 import { playerCard, kitUrl, kitTypes, kitFor, crestUrl, teamDisplayName } from '../db/teams.js';
 import { kitSVG } from '../db/crests.js';

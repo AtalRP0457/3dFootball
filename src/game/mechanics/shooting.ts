@@ -12,15 +12,27 @@
 // away from the target, the ball being far from the foot, fatigue/injury,
 // and AI difficulty. A powerful shot is fast, not automatically accurate.
 
-import { GOAL } from '../constants.js';
-import { solveKickToPoint, solveLoftedKick, gauss } from '../physics/ballPhysics.js';
+import { GOAL } from '../constants.ts';
+import type { Vec2, Vec3, ShotType, PhysicalProfile } from '../../types/game.ts';
+import { solveKickToPoint, solveLoftedKick, gauss } from '../physics/ballPhysics.ts';
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
-export const SHOT_TYPES = ['normal', 'power', 'low', 'finesse', 'chip'];
+/** The shooter as the planner needs him (a match Player satisfies this). */
+export interface Shooter {
+  pos: Vec2; vel: Vec2; face: Vec2; stamina?: number; injured?: boolean;
+  phys: Pick<PhysicalProfile, 'runSpeed' | 'sprintMul' | 'shotAccuracy' | 'shotPower' | 'curve'>;
+}
+export interface ShotInput {
+  p: Shooter; ball: { pos: Vec3 }; goalX: number; aimZ: number; power: number; type?: ShotType;
+  errMul?: number; keeper?: Vec2 | null; penalty?: boolean; rng?: () => number;
+}
+export interface ShotPlan { vel: Vec3; top: number; side: number; sigma: number; type: ShotType; dir: number }
+
+export const SHOT_TYPES: ShotType[] = ['normal', 'power', 'low', 'finesse', 'chip'];
 
 /** Pick the type a human's release means: modifiers first, then charge. */
-export function shotTypeFromCharge(charge, modifier) {
+export function shotTypeFromCharge(charge: number, modifier?: ShotType | null): ShotType {
   if (modifier === 'finesse' || modifier === 'chip') return modifier;
   if (charge < 0.3) return 'low';
   if (charge > 0.88) return 'power';
@@ -42,10 +54,10 @@ export function shotTypeFromCharge(charge, modifier) {
  * }
  * @returns { vel:{x,y,z}, top, side, sigma, type }
  */
-export function planShot(o) {
+export function planShot(o: ShotInput): ShotPlan {
   const { p, ball, goalX, power, errMul = 1 } = o;
   const rng = o.rng || Math.random;
-  const type = SHOT_TYPES.includes(o.type) ? o.type : 'normal';
+  const type: ShotType = o.type && SHOT_TYPES.includes(o.type) ? o.type : 'normal';
   const prof = p.phys;
   const dir = Math.sign(goalX) || 1;
   const half = GOAL.width / 2;
@@ -70,7 +82,7 @@ export function planShot(o) {
   const fatigue = (1 + (1 - (p.stamina ?? 1)) * 0.25) * (p.injured ? 1.3 : 1);
   const curve = prof.curve ?? 0.7;
   // Finesse accuracy depends on the curve attribute.
-  const typeMul = { normal: 1, power: 1.7, low: 1.05, finesse: 0.8 * (1.35 - curve * 0.5), chip: 1.2 }[type];
+  const typeMul = ({ normal: 1, power: 1.7, low: 1.05, finesse: 0.8 * (1.35 - curve * 0.5), chip: 1.2 } as Record<ShotType, number>)[type];
   const sigma = (0.012 + (1 - prof.shotAccuracy) * 0.075)
     * (1 + power * power * 0.6) * typeMul
     * (1 + runFactor * 0.8)

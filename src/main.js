@@ -2,13 +2,13 @@ import './style.css';
 import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.js';
 import { teamRecord, ERAS } from './db/index.js';
 import { migrate, ls } from './state/store.js';
-import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.js';
-import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.js';
+import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.ts';
+import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.ts';
 import { createFrontend } from './ui/frontend.js';
-import { Input } from './game/input.js';
+import { Input } from './game/input.ts';
 import { createRenderer } from './render/scene.js';
 import { MatchAudio } from './render/audio.js';
-import { stopBall } from './game/physics/ballPhysics.js';
+import { stopBall } from './game/physics/ballPhysics.ts';
 
 const $ = (id) => document.getElementById(id);
 

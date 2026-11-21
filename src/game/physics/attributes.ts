@@ -27,16 +27,22 @@
 //   gkKicking (distrib.)   keeper passing accuracy          passing
 //   height                 keeper reach, stride length      match, animation
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
-const n = (v, fallback) => (Number.isFinite(v) ? v : fallback);
-const u = (v) => clamp(v / 100, 0.2, 1);
+import type { PhysicalProfile, EngineStats, Attributes } from '../../types/game.ts';
+
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+const n = (v: number | undefined, fallback: number): number => (Number.isFinite(v) ? (v as number) : fallback);
+const u = (v: number) => clamp(v / 100, 0.2, 1);
 
 /**
  * @param stats    legacy six stats (may be partial)
  * @param attrs    full attribute set (0-99), optional
  * @param identity { heightCm, weightKg } from players/identity.js, optional
  */
-export function physicalProfile(stats, attrs, identity) {
+export function physicalProfile(
+  stats: Partial<EngineStats> | null | undefined,
+  attrs?: Attributes | null,
+  identity?: { heightCm?: number; weightKg?: number } | null,
+): PhysicalProfile {
   const s = stats || {};
   const a = attrs || {};
   const pace = n(a.pace, n(s.spd, 70));

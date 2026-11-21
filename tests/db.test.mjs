@@ -2,8 +2,8 @@
 import { DB } from '../src/db/index.js';
 import { validateDatabase } from '../src/db/validate.js';
 import { buildTeam, configure, isPlayable, resolveKitClash } from '../src/db/teams.js';
-import { createMatch, stepMatch } from '../src/game/match.js';
-import { FIXED_DT } from '../src/game/constants.js';
+import { createMatch, stepMatch } from '../src/game/match.ts';
+import { FIXED_DT } from '../src/game/constants.ts';
 
 let failed = 0;
 const check = (ok, msg) => { if (!ok) { failed++; console.log('  FAIL:', msg); } };

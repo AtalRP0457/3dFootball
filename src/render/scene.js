@@ -3,13 +3,13 @@
 
 import * as THREE from 'three';
 import { createCharacter } from './character/character.js';
-import { playerIdentity } from '../game/players/identity.js';
+import { playerIdentity } from '../game/players/identity.ts';
 import { buildPitch } from './stadium/pitch.js';
 import { buildStadium as buildArena } from './stadium/stadium.js';
 import {
   PITCH, HALF_L, HALF_W, GOAL, BOX, GOAL_AREA, PENALTY_SPOT,
   PENALTY_ARC_RADIUS, BALL_R,
-} from '../game/constants.js';
+} from '../game/constants.ts';
 
 const HUMAN_COLORS = { p1: '#22d3ee', p2: '#f43f5e' };
 // Ground rings under players

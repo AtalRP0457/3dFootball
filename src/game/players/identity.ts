@@ -9,29 +9,43 @@
 // can be pinned with APPEARANCE_OVERRIDES (or an `appearance` object on the
 // player record), which wins over the generated values.
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+import type { Identity, BodyBuild, BootStyle, Attributes } from '../../types/game.ts';
 
-export function hashString(s) {
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
+/** Known appearance data for a player (overrides generated values). */
+export interface AppearanceOverride {
+  heightCm?: number; weightKg?: number; age?: number; bodyType?: string; skinTone?: string;
+  hair?: { style?: string; color?: string; hex?: string }; facialHair?: string; boots?: string;
+}
+/** What playerIdentity() needs to know about a player. */
+export interface IdentityInput {
+  playerId?: string; id?: string | number; name: string; number: number;
+  position?: string; role?: string; overall?: number | null; attributes?: Attributes | null;
+  foot?: string; captain?: boolean; appearance?: AppearanceOverride;
+}
+
+export function hashString(s: unknown): number {
   let h = 2166136261;
   for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
   return h >>> 0;
 }
 /** Deterministic 0..1 value for a key. */
-function unit(key) {
+function unit(key: string): number {
   return (hashString(key) % 100000) / 100000;
 }
-function pick(arr, key) {
+function pick<T>(arr: readonly T[], key: string): T {
   return arr[hashString(key) % arr.length];
 }
 
 export const SKIN_TONES = ['#f6d7c3', '#eac4a6', '#d9a982', '#c68e64', '#a8704a', '#8a5636', '#6b3f26', '#4a2a19'];
-export const HAIR_COLORS = {
+export const HAIR_COLORS: Record<string, string> = {
   black: '#141110', darkBrown: '#2e1d13', brown: '#5a3a22', lightBrown: '#8a6240',
   blond: '#c9a464', platinum: '#e3d5b0', ginger: '#9c4a22', grey: '#8b8680',
 };
 export const HAIR_STYLES = ['buzz', 'short', 'crop', 'quiff', 'sidePart', 'curly', 'afro', 'manBun', 'long', 'shaved'];
 export const FACIAL_HAIR = ['none', 'none', 'none', 'stubble', 'stubble', 'beard', 'goatee', 'moustache'];
-export const BODY_TYPES = {
+export const BODY_TYPES: Record<string, BodyBuild> = {
   // shoulder / chest / waist / hip widths and limb thickness, relative to an
   // "athletic" 1.0. Leg length is relative to height.
   lean: { label: 'Lean', shoulder: 0.94, chest: 0.92, waist: 0.92, hip: 0.95, limb: 0.9, leg: 1.02 },
@@ -41,7 +55,7 @@ export const BODY_TYPES = {
   powerful: { label: 'Powerful', shoulder: 1.06, chest: 1.06, waist: 1.02, hip: 1.05, limb: 1.12, leg: 1.0 },
   tall: { label: 'Tall & rangy', shoulder: 1.02, chest: 1.0, waist: 0.98, hip: 1.0, limb: 0.98, leg: 1.04 },
 };
-export const BOOT_STYLES = [
+export const BOOT_STYLES: BootStyle[] = [
   { id: 'black-classic', name: 'Black classic', upper: '#111214', accent: '#f2f2f2', sole: '#d9d9d9' },
   { id: 'white-gold', name: 'White / gold', upper: '#f4f4f2', accent: '#d4a83a', sole: '#1c1c1c' },
   { id: 'volt', name: 'Volt', upper: '#d6f22e', accent: '#141414', sole: '#f15a24' },
@@ -59,14 +73,14 @@ export const BOOT_STYLES = [
  * data only.
  * Example: 'some-player-id': { heightCm: 188, weightKg: 86, hair: { style: 'short', color: 'brown' } }
  */
-export const APPEARANCE_OVERRIDES = {};
+export const APPEARANCE_OVERRIDES: Record<string, AppearanceOverride> = {};
 
-const POSITION_GROUP = {
+const POSITION_GROUP: Record<string, string> = {
   GK: 'GK', CB: 'CB', LB: 'FB', RB: 'FB', LWB: 'FB', RWB: 'FB', CDM: 'DM', CM: 'CM', CAM: 'AM',
   LM: 'W', RM: 'W', LW: 'W', RW: 'W', CF: 'ST', ST: 'ST', DEF: 'CB', MID: 'CM', FWD: 'ST',
 };
 // Height ranges (cm) by position group: [mean, spread].
-const HEIGHT_BY_GROUP = {
+const HEIGHT_BY_GROUP: Record<string, [number, number]> = {
   GK: [191, 5], CB: [188, 5], FB: [179, 5], DM: [182, 6], CM: [179, 6], AM: [176, 6], W: [175, 6], ST: [183, 7],
 };
 
@@ -76,7 +90,7 @@ const HEIGHT_BY_GROUP = {
  *   nationality?, attributes? (0-99), appearance? (overrides)
  * }
  */
-export function playerIdentity(p) {
+export function playerIdentity(p: IdentityInput): Identity {
   const id = p.playerId || p.id || `${p.name}#${p.number}`;
   const pos = p.position || p.role || 'CM';
   const group = POSITION_GROUP[pos] || 'CM';
@@ -123,13 +137,13 @@ export function playerIdentity(p) {
   if (age >= 34 && unit(`${id}:grey`) < 0.35) hairColor = 'grey';
   const facialHair = age < 20 ? 'none' : pick(FACIAL_HAIR, `${id}:fh`);
   const boots = pick(BOOT_STYLES, `${id}:boots`);
-  const accessories = [];
+  const accessories: string[] = [];
   if (hairStyle === 'long' && unit(`${id}:band`) < 0.5) accessories.push('headband');
   if (unit(`${id}:tape`) < 0.18) accessories.push('wristTape');
   if (unit(`${id}:sleeve`) < 0.12 && group !== 'GK') accessories.push('longSleeves');
 
-  const identity = {
-    id,
+  const identity: Identity = {
+    id: String(id),
     name: p.name,
     number: p.number,
     position: pos,
@@ -149,27 +163,30 @@ export function playerIdentity(p) {
     captain: !!p.captain,
     keeper: pos === 'GK',
   };
-  const ov = { ...(APPEARANCE_OVERRIDES[id] || {}), ...(p.appearance || {}) };
+  const ov: AppearanceOverride = { ...(APPEARANCE_OVERRIDES[String(id)] || {}), ...(p.appearance || {}) };
   if (ov.heightCm) identity.heightCm = ov.heightCm;
   if (ov.weightKg) identity.weightKg = ov.weightKg;
   if (ov.age) identity.age = ov.age;
   if (ov.bodyType && BODY_TYPES[ov.bodyType]) { identity.bodyType = ov.bodyType; identity.build = BODY_TYPES[ov.bodyType]; }
   if (ov.skinTone) identity.skinTone = ov.skinTone;
-  if (ov.hair) identity.hair = { ...identity.hair, ...ov.hair, hex: HAIR_COLORS[ov.hair.color] || ov.hair.hex || identity.hair.hex };
+  if (ov.hair) {
+    const color = ov.hair.color ?? identity.hair.color;
+    identity.hair = { style: ov.hair.style ?? identity.hair.style, color, hex: HAIR_COLORS[color] || ov.hair.hex || identity.hair.hex };
+  }
   if (ov.facialHair) identity.facialHair = ov.facialHair;
   if (ov.boots) identity.boots = BOOT_STYLES.find((b) => b.id === ov.boots) || identity.boots;
   return identity;
 }
 
 /** Scale of the character relative to the 1.80 m reference skeleton. */
-export const heightScale = (identity) => identity.heightCm / 180;
+export const heightScale = (identity: Pick<Identity, 'heightCm'>) => identity.heightCm / 180;
 
 /**
  * Pick a captain: an override from the team record, else the highest-rated
  * experienced outfield starter (age breaks ties). Returns an index into
  * `players` or -1.
  */
-export function chooseCaptain(players, override) {
+export function chooseCaptain(players: Array<IdentityInput & { identity?: Identity }>, override?: string | null): number {
   if (override) {
     const i = players.findIndex((p) => p.playerId === override || p.name === override);
     if (i >= 0) return i;
