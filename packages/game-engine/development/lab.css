@@ -47,3 +47,13 @@ html, body, #root { margin: 0; height: 100%; background: #070d1a; color: #eef2ff
 .lab-slider b { font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
 .lab-reset { margin-top: 6px; }
 @media (max-width: 1280px) { .lab { --lab-top: 128px; } .lab-left, .lab-right { width: 290px; } }
+.lab-panel dd.good { color: #4cd37a; }
+.lab-keys kbd { margin-right: 4px; opacity: .55; }
+.lab-keys kbd.on { opacity: 1; background: #ffc72c; color: #14100a; }
+.lab-events { max-height: 230px; }
+.lab-results { margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.lab-results li { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 3px 0; border-top: 1px solid rgba(255,255,255,.08); }
+.lab-results b.pass { color: #4cd37a; } .lab-results b.fail { color: #ff6b6b; }
+.lab-results small { display: block; color: #9fb0d4; }
+.lab-run { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.lab-banner { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); padding: 6px 14px; border-radius: 6px; background: rgba(255,199,44,.92); color: #14100a; font: 600 15px 'Oswald', sans-serif; letter-spacing: .04em; pointer-events: none; }

@@ -17,6 +17,8 @@ const CAPTURE = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRig
 
 export class LabInput {
   private down = new Set<string>();
+  /** Keys pressed since the last read: a tap shorter than one physics step still registers. */
+  private tapped = new Set<string>();
   /** Edge-triggered UI keys (camera, pause …) for the lab shell. */
   onKey: ((code: string) => void) | null = null;
 
@@ -26,6 +28,7 @@ export class LabInput {
     if (CAPTURE.has(e.code)) e.preventDefault();
     if (!this.down.has(e.code)) this.onKey?.(e.code);
     this.down.add(e.code);
+    this.tapped.add(e.code);
   };
   private readonly ku = (e: KeyboardEvent) => { this.down.delete(e.code); };
   private readonly blur = () => { this.down.clear(); };
@@ -44,7 +47,9 @@ export class LabInput {
 
   /** Build the player's input for this step; cameraYaw is the view heading (0 = +z). */
   read(cameraYaw: number): PlayerInput {
-    const k = (c: string) => this.down.has(c);
+    const tapped = this.tapped;
+    this.tapped = new Set();
+    const k = (c: string) => this.down.has(c) || tapped.has(c);
     let fx = 0, fz = 0;
     if (k('KeyW') || k('ArrowUp')) fz += 1;
     if (k('KeyS') || k('ArrowDown')) fz -= 1;

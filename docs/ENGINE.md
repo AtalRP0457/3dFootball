@@ -58,26 +58,57 @@ Rendering never advances the simulation; it interpolates the last two
 snapshots with `alpha`. Results are bit-identical at 30, 60, 120 and 144 fps
 (check 38).
 
-## How the ball is struck (no teleporting, no attachment)
+## Player–ball interaction (one authority)
 
-- **Kicks**: a button press only *requests* a kick. The player approaches
-  until the ball will be at the kicking foot at the clip's contact frame, then
-  swings. At the `contact` marker the foot's position is computed from the
-  current pose by forward kinematics; if it is within reach of the ball, an
-  impulse is applied: speed from the kick type, charge and attributes, scaled
-  by contact quality (gap, body angle to the aim, balance, preferred foot,
-  ball speed); direction error from skill and quality; spin from the kick type
-  and off-centre contact; part of the run's momentum carries into the ball.
-  Out of reach = a fresh air shot.
-- **Dribbling**: on foot strikes while in possession, the swinging foot taps
-  the ball. Each touch is solved so the ball (skidding, then rolling) comes
-  back to the player's feet after a touch interval that depends on pace and
-  dribbling; touches alternate feet at close control and steer the ball back
-  onto the player's line.
-- **Tackles**: the tackling foot (FK) must reach the ball during the lunge or
-  slide; missing the ball but catching the opponent's legs trips him.
-- **Receiving**: a ball arriving in reach is cushioned (quality from ball
-  control, ball speed and height) or, if hard and low while defending, blocked.
+`PlayerBallInteraction` exists **once per Simulation** and is the only code
+that changes the ball's velocity. Players, AI, skills and tackles *queue*
+impulses with it; `flush()` applies exactly one per fixed step (kicks and
+tackles beat blocks and first touches, which beat dribble touches) before
+Rapier steps. The Architecture test fails if any other engine file writes
+ball velocity.
+
+### Possession state machine
+
+`FreeBall → PossessionAcquired → ControlledDribbling / SprintDribbling /
+TurningWithBall → Passing / Shooting → BallReleased → FreeBall`, plus
+`PossessionLost` (ball escaped, tackled, blocked). Every transition is a
+`BallPossession` event with its reason.
+
+### Dribbling
+
+Touches happen on foot strikes, or earlier when the ball would leave the
+control zone or the stick changes direction. Each touch is solved so the
+rolling ball reaches **where the player will be** (the movement model is run
+forward under the current input) plus a lead ahead of him, in his local
+frame, to the side of the foot that plays next (alternating feet). Reach
+grows with stride length. If the stick turns away while the ball is out of
+reach, the player first steps to the ball, then turns it with a directional
+touch. Releasing the stick cushions the ball to his slowing pace and puts
+the sole on it. Touch kinds: slow, normal, sprint, directional, stop;
+surfaces: inside, outside, laces, sole.
+
+### Passing and shooting pipeline
+
+`J/K/I/L released → hold time → power (tap 25%, 0.3 s 50%, 0.6 s 75%, 0.9 s
+100%) → PassCommand/ShotCommand requested → accepted | buffered (running onto
+the ball or lining up) | rejected (with reason) → wind-up: the player adjusts
+his approach so the striking foot meets the ball → BallContact at the
+animation contact frame (forward kinematics of the foot) → BallImpulse →
+BallRelease`. Ball speed = foot speed × (1 + e)·M/(M + m) × technique
+(skill, balance) × contact quality; foot speed comes from the shot/pass type
+and the input power, never from randomness. Direction error comes from
+skill and contact quality only.
+
+### Debugging an action
+
+The Lab's left panel shows movement state, animation, current action,
+velocity, direction, stick, possession, selected foot, the J/K/I/L buttons
+held, hold duration and power, and for the ball its owner, possession and
+physics state, last contact and last impulse. The event log lists every
+step of the pipeline, so a failing action shows exactly where it stopped.
+The **Gameplay tests** tab runs tests A–D (dribbling, passing, shooting,
+possession) live with scripted controller input; `npm run test:engine` runs
+the same scripts headlessly.
 
 ## Attributes → physics
 
@@ -128,5 +159,5 @@ floodlit, one reference player and one ball.
 - **Animation** is procedural (IK gait + authored keyframe clips), not mocap.
 - **Jumps** are animated root lift; the physics capsule stays on the ground
   plane (headers use the animated head position).
-- **Not integrated** into the match yet (stages 9–10), pending your approval
-  of the reference player.
+- **Not integrated** into the main match yet: the match still runs its own
+  ball and player code (`src/game/match.ts`). Integration is the next step.

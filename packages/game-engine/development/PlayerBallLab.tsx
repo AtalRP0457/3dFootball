@@ -7,7 +7,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BallModel, type RenderClock } from '../ball/BallModel.tsx';
-import { decomposeSpin } from '../ball/BallSpin.ts';
+import { decomposeSpin, slipSpeed } from '../ball/BallSpin.ts';
 import type { TrajectoryPoint } from '../ball/BallTypes.ts';
 import type { PhysicsEvent } from '../physics/PhysicsEvents.ts';
 import type { Simulation } from '../physics/Simulation.ts';
@@ -21,6 +21,7 @@ import { LabInput, SKILL_KEYS } from './LabInput.ts';
 import { useLabStore, type CameraMode, type FpsCap, type LabStats, type SparringMode } from './labStore.ts';
 import { PlayerDebugPanel } from './PlayerDebugPanel.tsx';
 import { sparringInput } from './SparringAI.ts';
+import { GAMEPLAY_TESTS, GameplayRunner } from './GameplayTests.ts';
 
 const USER_KIT: KitColours = { shirt: '#1b3fa8', secondary: '#ffc72c', shorts: '#0b1533', socks: '#1b3fa8', gk: '#2e7d32', design: 'plain' };
 const SPAR_KIT: KitColours = { shirt: '#c8102e', secondary: '#ffffff', shorts: '#ffffff', socks: '#c8102e', gk: '#2e7d32', design: 'plain' };
@@ -35,10 +36,17 @@ interface Shared {
 function describe(e: PhysicsEvent): string | null {
   const t = e.time.toFixed(2);
   switch (e.type) {
-    case 'ballKick': return `${t}s ${e.kind} ${e.speed.toFixed(1)} m/s · ${e.foot} foot · contact ${(e.quality * 100).toFixed(0)}%`;
-    case 'ballTouch': return `${t}s touch ${e.foot} · ${e.speed.toFixed(1)} m/s`;
-    case 'ballContact': return e.surface === 'ground' && e.speed < 3 ? null : `${t}s ball hit ${e.surface} at ${e.speed.toFixed(1)} m/s`;
-    case 'tackle': return `${t}s ${e.kind} tackle ${e.won ? 'won the ball' : 'missed'}`;
+    case 'PassCommand': case 'ShotCommand': {
+      const what = e.type === 'PassCommand' ? 'Pass' : 'Shot';
+      return `${t}s ${what} ${e.phase}: ${e.kind} ${(e.power * 100).toFixed(0)}%${e.reason ? ` (${e.reason})` : ''}`;
+    }
+    case 'BallContact': return `${t}s ${e.hit ? 'Foot contact detected' : 'Foot MISSED the ball'} · ${e.action} ${e.foot} · gap ${(e.gap * 100).toFixed(0)} cm${e.hit ? ` · quality ${(e.quality * 100).toFixed(0)}%` : ''}`;
+    case 'BallImpulse': return e.source === 'dribble' || e.source === 'stop' ? null : `${t}s Ball impulse applied: ${e.kind} ${e.speed.toFixed(1)} m/s (${e.impulse.toFixed(2)} N·s)`;
+    case 'BallRelease': return `${t}s Ball released (${e.kind})`;
+    case 'DribbleTouch': return `${t}s touch ${e.foot} ${e.surface} · ${e.kind} · ${e.speed.toFixed(1)} m/s`;
+    case 'BallPossession': return `${t}s Possession: ${e.prev} → ${e.state}${e.owner ? ` (${e.owner})` : ''} · ${e.reason}`;
+    case 'SurfaceContact': return e.surface === 'ground' && e.speed < 3 ? null : `${t}s ball hit ${e.surface} at ${e.speed.toFixed(1)} m/s`;
+    case 'TackleContact': return `${t}s ${e.kind} tackle ${e.won ? 'won the ball' : e.fouled ? 'missed and tripped' : 'missed'}`;
     case 'playerCollision': return `${t}s collision ${e.impulse.toFixed(0)} N·s`;
     case 'balanceLost': return `${t}s ${e.playerId} lost balance`;
     default: return null;
@@ -55,7 +63,7 @@ function LoopDriver({ sim, user, shared }: { sim: Simulation; user: PlayerContro
     const off = sim.pw.events.on((e) => {
       const s = describe(e);
       if (s) { log.push(s); if (log.length > 30) log.shift(); }
-      if (e.type === 'ballKick') shared.predicted.current = sim.ball.predict(5);
+      if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) shared.predicted.current = sim.ball.predict(5);
     });
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
@@ -93,12 +101,28 @@ function collectStats(sim: Simulation, p: PlayerController, events: string[], fp
       stamina: p.stamina, balance: p.balance, grounded: p.pose.lift < 0.02, colliding: p.colliding, hasBall: p.hasBall,
       supportFoot: p.contact.supportFoot(p.gait), gaitPhase: p.contact.phase,
       charge: { pass: p.charge('pass', sim.time), through: p.charge('through', sim.time), lob: p.charge('lob', sim.time), shoot: p.charge('shoot', sim.time) },
-      pending: p.pending?.kind ?? null,
+      pending: p.buffered ? `${p.buffered.req.kind} (waiting for the ball)` : p.kick ? `${p.kick.kind} (swinging)` : null,
+      velocity: [p.vel.x, p.vel.z],
+      stick: [p.input.move.x, p.input.move.z],
+      possession: sim.interaction.owner === p.id ? sim.interaction.state : sim.interaction.owner ? `— (${sim.interaction.owner} has it)` : '—',
+      selectedFoot: p.kick?.foot ?? sim.interaction.lastTouchFoot ?? p.preferredFoot,
+      action: p.sm.action?.clip.name ?? 'none',
+    },
+    input: {
+      held: { J: p.input.pass, K: p.input.through, I: p.input.lob, L: p.input.shoot },
+      hold: Math.max(p.holdTime('pass', sim.time), p.holdTime('through', sim.time), p.holdTime('lob', sim.time), p.holdTime('shoot', sim.time)),
+      power: Math.max(p.charge('pass', sim.time), p.charge('through', sim.time), p.charge('lob', sim.time), p.charge('shoot', sim.time)),
+      last: p.lastCharge ? `${p.lastCharge.key} held ${p.lastCharge.seconds.toFixed(2)} s → ${(p.lastCharge.power * 100).toFixed(0)}%` : '—',
     },
     ball: {
       speed: sp, position: [b.position.x, b.position.y, b.position.z], velocity: [b.velocity.x, b.velocity.y, b.velocity.z],
       angular: [b.angularVelocity.x, b.angularVelocity.y, b.angularVelocity.z], spin: decomposeSpin(b.velocity, b.angularVelocity),
       height: b.position.y - sim.cal.ball.radius, grounded: b.grounded, lastSurface: b.lastContact?.surface ?? '—', lastTouchBy: sim.ball.lastTouchBy ?? '—',
+      owner: sim.interaction.owner ?? 'none',
+      possessionState: sim.interaction.state,
+      lastContact: (() => { const c = sim.interaction.lastContact; return c ? `${c.action}: ${c.hit ? `hit, gap ${(c.gap * 100).toFixed(0)} cm, quality ${(c.quality * 100).toFixed(0)}%` : `MISSED (gap ${(c.gap * 100).toFixed(0)} cm)`} @ ${c.time.toFixed(2)} s` : '—'; })(),
+      lastImpulse: (() => { const i = sim.interaction.lastImpulse; return i ? `${i.kind} → ${i.speed.toFixed(1)} m/s (${i.impulse.toFixed(2)} N·s) @ ${i.time.toFixed(2)} s` : '—'; })(),
+      physicsState: b.position.y - sim.cal.ball.radius > 0.03 ? 'airborne' : sp < 0.03 ? 'at rest' : slipSpeed(b.velocity, b.angularVelocity, sim.cal.ball.radius) > 0.25 ? 'skidding' : 'rolling',
     },
     events: [...events], fps, physicsHz: hz, simTime: sim.time,
   };
@@ -273,6 +297,41 @@ function LabMeta() {
   return <div className="lab-meta">{s ? `${s.fps.toFixed(0)} fps · physics ${s.physicsHz.toFixed(0)} Hz · t ${s.simTime.toFixed(1)} s` : 'starting…'}</div>;
 }
 
+// ------------------------------------------------------------ gameplay tests
+function GameplayTestsPanel() {
+  const queue = useLabStore((s) => s.gtQueue), running = useLabStore((s) => s.gtRunning), results = useLabStore((s) => s.gtResults);
+  const set = useLabStore((s) => s.set);
+  const busy = running !== null || queue.length > 0;
+  return (
+    <section className="lab-panel">
+      <h3>Gameplay tests</h3>
+      <p className="lab-note">Each test drives the reference player with scripted controller input (the same input the keyboard produces) and checks the event log. Watch it on the pitch.</p>
+      <div className="lab-run">
+        {GAMEPLAY_TESTS.map((t) => (
+          <button key={t.id} type="button" disabled={busy} className={running === t.id ? 'on' : ''} onClick={() => set({ gtQueue: [t.id], camera: 'follow' })}>{t.id} · {t.name}</button>
+        ))}
+        <button type="button" disabled={busy} onClick={() => set({ gtQueue: GAMEPLAY_TESTS.map((t) => t.id), camera: 'follow' })}>Run all four</button>
+      </div>
+      {GAMEPLAY_TESTS.filter((t) => results[t.id]).map((t) => {
+        const r = results[t.id];
+        const ok = r.every((c) => c.pass);
+        return (
+          <div key={t.id}>
+            <h4>{t.id} · {t.name}: {ok ? 'all passed' : `${r.filter((c) => !c.pass).length} failed`}</h4>
+            <ul className="lab-results">{r.map((c) => <li key={c.name}><b className={c.pass ? 'pass' : 'fail'}>{c.pass ? 'PASS' : 'FAIL'}</b><span>{c.name}<small>{c.detail}</small></span></li>)}</ul>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function TestBanner() {
+  const running = useLabStore((s) => s.gtRunning), step = useLabStore((s) => s.gtStep);
+  if (!running) return null;
+  return <div className="lab-banner">Test {running} running · {step}</div>;
+}
+
 // ------------------------------------------------------------ main
 export function PlayerBallLab({ sim, user }: { sim: Simulation; user: PlayerController }) {
   // Subscribe to UI settings only (not the 10 Hz stats) so the 3D scene does not re-render.
@@ -286,9 +345,27 @@ export function PlayerBallLab({ sim, user }: { sim: Simulation; user: PlayerCont
   const input = useMemo(() => new LabInput(), []);
   const sparRef = useRef<PlayerController | null>(null);
 
-  // Inputs are sampled once per fixed physics step.
+  const runner = useRef<GameplayRunner | null>(null);
+  // Inputs are sampled once per fixed physics step (or scripted by a running gameplay test).
   useEffect(() => {
-    sim.beforeStep = () => {
+    sim.beforeStep = (dt) => {
+      const st = useLabStore.getState();
+      if (!runner.current && st.gtQueue.length) {
+        const test = GAMEPLAY_TESTS.find((t) => t.id === st.gtQueue[0]);
+        st.set({ gtQueue: st.gtQueue.slice(1), gtRunning: test?.id ?? null, sparring: 'off' });
+        if (test) runner.current = new GameplayRunner(sim, user, test);
+      }
+      const r = runner.current;
+      if (r) {
+        r.feed(dt);
+        if (r.current !== useLabStore.getState().gtStep) useLabStore.getState().set({ gtStep: r.current });
+        if (r.done) {
+          runner.current = null;
+          const s2 = useLabStore.getState();
+          s2.set({ gtRunning: null, gtStep: '', gtResults: { ...s2.gtResults, [r.test.id]: r.results } });
+        }
+        return;
+      }
       user.input = input.read(shared.camYaw.current);
       const sp = sparRef.current;
       if (sp) sp.input = sparringInput(sp, user, sim.ball, useLabStore.getState().sparring, sim.time);
@@ -301,9 +378,7 @@ export function PlayerBallLab({ sim, user }: { sim: Simulation; user: PlayerCont
     ballToFeet();
   };
   const ballToFeet = () => {
-    const f = { x: Math.sin(user.yaw), z: Math.cos(user.yaw) };
-    sim.ball.reset({ x: user.pos.x + f.x * 0.6, y: sim.cal.ball.radius, z: user.pos.z + f.z * 0.6 });
-    sim.ball.touched(user.id, 'touch');
+    sim.giveBall(user, 0.6);
     shared.predicted.current = [];
   };
 
@@ -333,7 +408,7 @@ export function PlayerBallLab({ sim, user }: { sim: Simulation; user: PlayerCont
     if (!sparRef.current) {
       const p = sim.addPlayer({ id: 'sparring', name: 'Sparring Partner', number: 4, start: { x: user.pos.x + 2, z: user.pos.z + 8 }, yaw: Math.PI, seed: 99 });
       sparRef.current = p;
-      if (st.sparring === 'dribbler') { sim.ball.reset({ x: p.pos.x, y: sim.cal.ball.radius, z: p.pos.z - 0.6 }); sim.ball.touched(p.id, 'touch'); }
+      if (st.sparring === 'dribbler') sim.giveBall(p, 0.6);
     }
   }, [st.sparring, sim, user]);
 
@@ -343,13 +418,13 @@ export function PlayerBallLab({ sim, user }: { sim: Simulation; user: PlayerCont
     useLabStore.getState().set({ sparring: 'off', lastTest: id, tab: 'ball' });
     user.teleport({ x: -14, z: 22 }, Math.PI / 2);
     t.run(sim);
-    sim.ball.lastTouchBy = null;
     shared.predicted.current = sim.ball.predict(6);
   };
 
   return (
     <div className="lab">
       <LabScene sim={sim} user={user} shared={shared} spar={sparRef} sparring={st.sparring} overlays={st.showOverlays} />
+      <TestBanner />
 
       <header className="lab-top">
         <div className="lab-title"><b>GOLD STANDARD</b> Player &amp; Ball Lab</div>
@@ -387,8 +462,11 @@ export function PlayerBallLab({ sim, user }: { sim: Simulation; user: PlayerCont
         <nav className="lab-tabs">
           <button type="button" className={st.tab === 'player' ? 'on' : ''} onClick={() => st.set({ tab: 'player' })}>Player lab</button>
           <button type="button" className={st.tab === 'ball' ? 'on' : ''} onClick={() => st.set({ tab: 'ball' })}>Ball physics lab</button>
+          <button type="button" className={st.tab === 'tests' ? 'on' : ''} onClick={() => st.set({ tab: 'tests' })}>Gameplay tests</button>
         </nav>
-        {st.tab === 'ball' ? <BallLabPanel cal={sim.cal} onTest={runTest} onCalibrate={() => sim.refreshMaterials()} /> : st.showGuide ? <ControlsGuide /> : null}
+        {st.tab === 'ball' ? <BallLabPanel cal={sim.cal} onTest={runTest} onCalibrate={() => sim.refreshMaterials()} />
+          : st.tab === 'tests' ? <GameplayTestsPanel />
+          : st.showGuide ? <ControlsGuide /> : null}
       </aside>
     </div>
   );

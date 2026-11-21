@@ -1,13 +1,23 @@
-// Every way a player affects the ball. The ball is never attached or
-// teleported: all effects are impulses applied at animation contact frames
-// (kicks, skill touches, tackles) or at foot strikes (dribble touches), and
-// only when the foot – located by forward kinematics of the current pose –
-// actually reaches the ball.
+// The single authority over player–ball interaction (one per Simulation).
+//
+// Responsibilities: possession (typed state machine), kick commands (pass /
+// shot: request → accept / buffer / reject), kick positioning during the
+// wind-up, foot contact at the animation contact frame, the power model,
+// dribbling (predictive, directional, alternating-foot touches), stopping,
+// receiving / intercepting / blocking, skill touches and tackles.
+//
+// The ball stays a free rigid body. Nothing here sets its position. Every
+// change to its velocity is an impulse QUEUED here and applied once per
+// fixed step by flush(), highest priority first, so two systems can never
+// write conflicting velocities in the same step.
 import type { BallController } from '../ball/BallController.ts';
 import { rollingSpin, spinFromComponents } from '../ball/BallSpin.ts';
-import type { PhysicsEvents } from '../physics/PhysicsEvents.ts';
+import { ACTION_CLIPS } from '../animation/ActionClips.ts';
+import { applyPartial, emptyPose, mirrorPartial, sampleKeys } from '../animation/AnimationBlending.ts';
+import type { PhysicsCalibration } from '../physics/PhysicsConfig.ts';
+import type { ImpulseSource, PhysicsEvents, PossessionState, TouchKind, TouchSurface } from '../physics/PhysicsEvents.ts';
 import { clamp, dirOf, headingOf, len3, type Vec2, type Vec3 } from '../physics/Vec3.ts';
-import { footWorld, headWorld, type RigDims } from './PlayerRig.ts';
+import { footWorld, headWorld, rigDims, type RigDims } from './PlayerRig.ts';
 import type { ActionKind, Foot, KickKind, PlayerTuning, PoseData } from './PlayerTypes.ts';
 
 /** What the interaction system needs to know about a player (implemented by PlayerController). */
@@ -22,203 +32,531 @@ export interface InteractionActor {
   pose: PoseData;
   balance: number;
   rng(): number;
+  /** Where the player will be after T seconds under the current input. */
+  predict(T: number): { pos: Vec2; dir: Vec2; speed: number };
+  /** Current stick direction (world, magnitude 0..1) and the speed it asks for. */
+  stick(): Vec2;
+  intendedSpeed(): number;
 }
 
-export interface KickParams { kind: KickKind; power: number; aim: Vec2; foot: Foot }
+export type KickCommand = 'pass' | 'through' | 'lob' | 'shot';
 
-export interface KickOutcome { hit: boolean; quality: number; speed: number; distance: number }
+export interface KickRequest {
+  command: KickCommand;
+  kind: KickKind;
+  /** 0.25 (tap) … 1 (full hold). */
+  power: number;
+  aim: Vec2;
+}
+
+export interface KickPlan extends KickRequest {
+  foot: Foot;
+  /** Ball centre relative to the body at the contact frame (body frame, reference 1.80 m body). */
+  contactLeft: number;
+  contactFwd: number;
+  /** First-time: the ball was moving at the player when the kick started. */
+  firstTime: boolean;
+}
+
+export type KickDecision =
+  | { result: 'accepted'; plan: KickPlan }
+  | { result: 'buffered' }
+  | { result: 'rejected'; reason: string };
+
+interface QueuedImpulse {
+  playerId: string;
+  priority: number;
+  vel: Vec3;
+  spin: Vec3;
+  touchKind: 'kick' | 'touch';
+  source: ImpulseSource;
+  kind: string;
+  foot: Foot;
+  quality: number;
+  footSpeed: number;
+  after?: () => void;
+}
 
 /** Ball position in the player's body frame. */
-export function ballLocal(a: InteractionActor, ball: Vec3): { fwd: number; left: number; up: number; dist: number } {
+export function ballLocal(a: { pos: Vec2; yaw: number }, ball: Vec3): { fwd: number; left: number; up: number; dist: number } {
   const dx = ball.x - a.pos.x, dz = ball.z - a.pos.z;
   const f = dirOf(a.yaw);
   // Left of facing (+z) is +x, i.e. left = (f.z, −f.x).
   return { fwd: dx * f.x + dz * f.z, left: dx * f.z - dz * f.x, up: ball.y, dist: Math.hypot(dx, dz) };
 }
 
-/** Gaussian-ish deterministic noise from the actor's RNG. */
-function noise(a: InteractionActor): number {
-  return (a.rng() + a.rng() + a.rng() - 1.5) / 0.5;
-}
-const rot = (v: Vec2, ang: number): Vec2 => ({ x: v.x * Math.cos(ang) + v.z * Math.sin(ang), z: -v.x * Math.sin(ang) + v.z * Math.cos(ang) });
 const D2R = Math.PI / 180;
+const rot = (v: Vec2, ang: number): Vec2 => ({ x: v.x * Math.cos(ang) + v.z * Math.sin(ang), z: -v.x * Math.sin(ang) + v.z * Math.cos(ang) });
+const norm2 = (v: Vec2): Vec2 => { const l = Math.hypot(v.x, v.z); return l > 1e-6 ? { x: v.x / l, z: v.z / l } : { x: 0, z: 1 }; };
+const gauss = (a: { rng(): number }): number => (a.rng() + a.rng() + a.rng() - 1.5) / 0.5;
 
-/** Distance a rolling ball must be struck to travel `d` metres and arrive at `vEnd`. */
-export function groundPassSpeed(d: number, vEnd: number, rollingResistance: number, g = 9.81): number {
-  return Math.sqrt(2 * rollingResistance * g * d + vEnd * vEnd) * 1.04;
-}
+/** Hold time (s) → power 0.25 … 1 (tap ≈ 25%, 0.3 s ≈ 50%, 0.6 s ≈ 75%, 0.9 s = 100%). */
+export const powerFromHold = (seconds: number): number => clamp(0.25 + seconds / 1.2, 0.25, 1);
 
-/** Spin fraction given on dribble touches (0 = pure skid, 1 = pure roll). */
-const TOUCH_ROLL = 0.4;
+/** Effective foot mass for the kick collision (kg) and foot–ball restitution. */
+const FOOT_MASS = 1.2, FOOT_E = 0.5;
 
-/**
- * Relative gap between a touched ball and a player running at v: the ball
- * skids (friction μg) until it rolls, then slows by rolling resistance.
- * Returns the time until the player is back level with where the touch began.
- */
-export function touchCatchTime(u0: number, v: number, mu: number, roll: number, rollFrac = TOUCH_ROLL, g = 9.81): { t: number; maxGap: number } {
-  // Rolling speed reached after the skid for a thin-shell ball (I = 2/3 m r²).
-  const ur = u0 * (1 + (2 / 3) * rollFrac) * 0.6;
-  let u = u0, x = 0, t = 0, maxGap = 0;
-  const dt = 0.01;
-  while (t < 4) {
-    const a = u > ur + 1e-3 ? mu * g : roll * g;
-    u = Math.max(0, u - a * dt);
-    x += (u - v) * dt;
-    t += dt;
-    if (x > maxGap) maxGap = x;
-    if (x <= 0 && t > 0.05) return { t, maxGap };
-  }
-  return { t, maxGap };
-}
+const PASS_KINDS: ReadonlySet<KickKind> = new Set<KickKind>(['shortPass', 'firstTimePass', 'drivenPass', 'throughBall', 'lobPass', 'longPass', 'cross']);
+const REF_DIMS = rigDims(1.8);
 
 export class PlayerBallInteraction {
-  /** Foot used for the previous dribble touch (to alternate at close control). */
-  private lastTouchFoot: Foot | null = null;
+  owner: string | null = null;
+  state: PossessionState = 'FreeBall';
+  stateSince = 0;
+  private releasedBy: string | null = null;
+  private releasedAt = -9;
+  private lastTouchAt = -9;
+  /** Foot used for the last touch (shown in the debug panel; drives alternation). */
+  lastTouchFoot: Foot | null = null;
+  private lostSince = -1;
+  /** Most recent applied impulse and contact, for the debug panel. */
+  lastImpulse: { playerId: string; source: ImpulseSource; kind: string; speed: number; impulse: number; time: number } | null = null;
+  lastContact: { playerId: string; action: string; hit: boolean; gap: number; quality: number; time: number } | null = null;
+  /** Impulses dropped because a higher-priority one won the same step. */
+  conflicts = 0;
+  private queue: QueuedImpulse[] = [];
+  private contactCache = new Map<string, { left: number; fwd: number }>();
 
-  constructor(private readonly events: PhysicsEvents, private readonly ballCfg: { radius: number; rollingResistance: number; groundFriction: number }) {}
+  constructor(private readonly events: PhysicsEvents, readonly ball: BallController, private readonly cal: PhysicsCalibration) {}
 
-  // ---------------------------------------------------------------- kicks
-  /**
-   * Resolve a kick at its contact frame. Returns whether the foot met the
-   * ball; the impulse comes from foot speed, contact quality and attributes.
-   */
-  kick(a: InteractionActor, ball: BallController, k: KickParams, time: number): KickOutcome {
-    const b = ball.curr.position;
-    const header = k.kind === 'header';
-    const contactPt = header ? headWorld(a.pose, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims) : footWorld(a.pose, k.foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
-    const gap = Math.hypot(b.x - contactPt.x, b.y - contactPt.y, b.z - contactPt.z) - this.ballCfg.radius;
-    const reach = header ? 0.35 : 0.34;
-    if (gap > reach) return { hit: false, quality: 0, speed: 0, distance: gap };
-    const t = a.tuning;
-    // Contact quality: clean strike close to the foot, body square to the aim,
-    // on balance, preferred foot, ball not too fast across the foot.
-    const facing = dirOf(a.yaw);
-    const aimAngle = Math.abs(Math.acos(clamp(facing.x * k.aim.x + facing.z * k.aim.z, -1, 1)));
-    const relBall = Math.hypot(ball.curr.velocity.x - a.vel.x, ball.curr.velocity.z - a.vel.z);
-    let q = 1 - clamp((gap - 0.04) / reach, 0, 1) * 0.6;
-    q *= 1 - clamp((aimAngle - 50 * D2R) / (90 * D2R), 0, 0.45);
-    q *= 0.7 + 0.3 * a.balance;
-    q *= k.foot === a.preferredFoot ? 1 : 0.86;
-    q *= 1 - clamp((relBall - 6) / 30, 0, 0.3);
-    const passing = k.kind.endsWith('Pass') || k.kind === 'throughBall' || k.kind === 'cross';
-    const skill = passing ? t.passSkill : header ? t.heading : (t.shotSkill + t.finishing) / 2;
-    q = clamp(q * (0.82 + 0.18 * skill), 0.15, 1);
+  // =========================================================== possession
+  has(id: string): boolean { return this.owner === id; }
 
-    const p = clamp(k.power, 0.05, 1);
-    let speed = 10, elev = 0, top = 0, side = 0;
-    const runSpeed = Math.hypot(a.vel.x, a.vel.z);
-    switch (k.kind) {
-      case 'shortPass': case 'firstTimePass': speed = groundPassSpeed(6 + 26 * p, 2.5, this.ballCfg.rollingResistance); break;
-      case 'drivenPass': speed = 15 + 9 * p; elev = 3; top = 15; break;
-      case 'throughBall': speed = groundPassSpeed(12 + 26 * p, 1.5, this.ballCfg.rollingResistance); break;
-      case 'lobPass': speed = Math.sqrt((9.81 * (12 + 30 * p)) / Math.sin(2 * 38 * D2R)) * 1.08; elev = 38; top = -12; break;
-      case 'longPass': speed = Math.sqrt((9.81 * (25 + 35 * p)) / Math.sin(2 * 27 * D2R)) * 1.12; elev = 27; top = -15; break;
-      case 'cross': speed = Math.sqrt((9.81 * (18 + 25 * p)) / Math.sin(2 * 22 * D2R)) * 1.1; elev = 22; top = -10; side = k.foot === 'R' ? -30 : 30; break;
-      case 'shot': speed = 19 + 10 * p * (0.8 + 0.2 * t.shotSkill); elev = 3 + 8 * p; top = 5; break;
-      case 'powerShot': speed = 25 + 9 * p * (0.75 + 0.25 * t.shotSkill); elev = 5 + 9 * p; top = 8; break;
-      case 'finesseShot': speed = 17 + 7 * p; elev = 6 + 5 * p; side = (k.foot === 'R' ? -1 : 1) * (38 + 18 * t.shotSkill); top = 4; break;
-      case 'placedShot': speed = 15 + 6 * p; elev = 2 + 3 * p; break;
-      case 'lowDrivenShot': speed = 22 + 8 * p; elev = 1.5; top = 28; break;
-      case 'chipShot': speed = 11 + 6 * p; elev = 48; top = -32; break;
-      case 'volley': speed = 19 + 10 * p; elev = 2 + 6 * p; top = 6; break;
-      case 'halfVolley': speed = 21 + 9 * p; elev = 3 + 6 * p; top = 12; break;
-      case 'header': speed = (8 + 9 * p) * (0.7 + 0.3 * t.heading) + len3(ball.curr.velocity) * 0.35; elev = -6 + 10 * p; break;
-    }
-    // Error: angular spread grows with poor contact, speed of run, power, fatigue.
-    const shooting = !passing;
-    const err = (0.8 + (1 - skill) * 5 + (1 - q) * 6 + (shooting ? p * 1.5 + runSpeed * 0.15 : 0)) * D2R;
-    const dir = rot(k.aim, noise(a) * err);
-    elev = elev + noise(a) * err / D2R * 0.5;
-    const exit = speed * (0.72 + 0.28 * q);
-    const ce = Math.cos(elev * D2R), se = Math.sin(elev * D2R);
-    // Momentum of the run carries into the ball (partly).
-    const carry = shooting ? 0.25 : 0.1;
-    const vel: Vec3 = { x: dir.x * exit * ce + a.vel.x * carry, y: exit * se, z: dir.z * exit * ce + a.vel.z * carry };
-    // Spin: from the kick type plus off-centre contact.
-    const offCentre = (1 - q) * noise(a) * 25;
-    let spin = spinFromComponents(vel, { top, side: side + offCentre });
-    if (elev < 4 && (k.kind === 'shortPass' || k.kind === 'firstTimePass' || k.kind === 'throughBall')) {
-      // Ground passes are struck through the centre: the ball rolls almost at once.
-      const r = rollingSpin(vel, this.ballCfg.radius);
-      spin = { x: r.x * 0.8 + spin.x * 0.2, y: spin.y, z: r.z * 0.8 + spin.z * 0.2 };
-      vel.y = Math.min(vel.y, 0.8);
-    }
-    ball.kick(vel, spin, a.id);
-    this.events.emit({ type: 'ballKick', playerId: a.id, kind: k.kind, speed: len3(vel), foot: k.foot, quality: q, time });
-    return { hit: true, quality: q, speed: len3(vel), distance: gap };
+  setState(state: PossessionState, owner: string | null, reason: string, time: number): void {
+    if (state === this.state && owner === this.owner) return;
+    const prev = this.state;
+    this.state = state;
+    this.owner = owner;
+    this.stateSince = time;
+    this.events.emit({ type: 'BallPossession', owner, state, prev, reason, time });
   }
 
-  // -------------------------------------------------------------- dribbling
+  /** Development tools: give a player the ball (e.g. "ball to feet"). */
+  grant(id: string, time: number): void {
+    this.queue = [];
+    this.lastTouchAt = time;
+    this.setState('PossessionAcquired', id, 'ball placed at feet', time);
+  }
+  /** Development tools: the ball was reset (tests); nobody owns it. */
+  reset(time: number): void {
+    this.queue = [];
+    this.releasedBy = null;
+    this.setState('FreeBall', null, 'ball reset', time);
+  }
+
+  /** After the physics step: lose possession if the ball has escaped. */
+  postStep(actors: ReadonlyArray<InteractionActor>, time: number): void {
+    if (this.state === 'BallReleased' && time - this.releasedAt > 0.6) this.setState('FreeBall', null, 'released ball is loose', time);
+    if (this.state === 'PossessionLost' && time - this.stateSince > 0.3) this.setState('FreeBall', null, 'loose ball', time);
+    if (!this.owner || this.state === 'Passing' || this.state === 'Shooting') { this.lostSince = -1; return; }
+    const a = actors.find((p) => p.id === this.owner);
+    if (!a) { this.setState('FreeBall', null, 'owner left', time); return; }
+    const L = ballLocal(a, this.ball.curr.position);
+    const limit = 2.4 + 0.35 * Math.hypot(a.vel.x, a.vel.z);
+    if (L.dist > limit || this.ball.curr.position.y > 2.2) {
+      if (this.lostSince < 0) this.lostSince = time;
+      if (time - this.lostSince > 0.25) this.setState('PossessionLost', null, `ball ${L.dist.toFixed(1)} m away`, time);
+    } else this.lostSince = -1;
+  }
+
+  // ============================================================ impulses
+  private enqueue(q: QueuedImpulse): void { this.queue.push(q); }
+
+  /** Apply this step's winning impulse. Called once per fixed step, before Rapier. */
+  flush(time: number): void {
+    if (!this.queue.length) return;
+    this.queue.sort((a, b) => b.priority - a.priority);
+    const q = this.queue[0];
+    this.conflicts += this.queue.length - 1;
+    this.queue = [];
+    const before = this.ball.curr.velocity;
+    this.ball.kick(q.vel, q.spin, q.playerId, q.touchKind);
+    const speed = len3(q.vel);
+    const impulse = Math.hypot(q.vel.x - before.x, q.vel.y - before.y, q.vel.z - before.z) * this.cal.ball.mass;
+    this.lastImpulse = { playerId: q.playerId, source: q.source, kind: q.kind, speed, impulse, time };
+    this.events.emit({ type: 'BallImpulse', playerId: q.playerId, source: q.source, kind: q.kind, foot: q.foot, speed, impulse, footSpeed: q.footSpeed, quality: q.quality, time });
+    q.after?.();
+  }
+
+  // ======================================================= kick commands
   /**
-   * Called when a foot strikes the ground while the player has the ball.
-   * The other foot is swinging through: if the ball is at that foot, touch it
-   * ahead along the stick direction. Touch length depends on speed and
-   * dribbling; accuracy on ball control.
+   * Can the player kick now? Accepted when he has the ball (or a free ball
+   * is at his feet, or one is arriving for a first-time kick); buffered while
+   * he runs onto a nearby ball; rejected otherwise.
    */
-  dribbleTouch(a: InteractionActor, ball: BallController, moveDir: Vec2, plantedFoot: Foot, shield: boolean, intendedSpeed: number, time: number): boolean {
-    const b = ball.curr;
-    if (b.position.y > 0.4) return false;
+  requestKick(a: InteractionActor, req: KickRequest, busy: boolean, time: number, quiet = false): KickDecision {
+    const shotLike = req.command === 'shot';
+    const emit = (phase: 'requested' | 'accepted' | 'buffered' | 'rejected', kind: string, reason?: string) => {
+      if (quiet && phase !== 'accepted') return;
+      if (shotLike) this.events.emit({ type: 'ShotCommand', playerId: a.id, phase, kind, power: req.power, reason, time });
+      else this.events.emit({ type: 'PassCommand', playerId: a.id, phase, kind, power: req.power, reason, time });
+    };
+    emit('requested', req.kind);
+    if (busy) { emit('rejected', req.kind, 'player busy (action in progress)'); return { result: 'rejected', reason: 'busy' }; }
+    const b = this.ball.curr;
+    const L = ballLocal(a, b.position);
+    const rel = { x: b.velocity.x - a.vel.x, z: b.velocity.z - a.vel.z };
+    const relSpeed = Math.hypot(rel.x, rel.z);
+    const approaching = L.dist > 0.3 ? -(rel.x * (b.position.x - a.pos.x) + rel.z * (b.position.z - a.pos.z)) / L.dist : 0;
+    const mine = this.owner === a.id;
+    const loose = this.owner === null && !(this.state === 'BallReleased' && this.releasedBy === a.id && time - this.releasedAt < 0.45);
+    const arrive = approaching > 1 ? L.dist / approaching : Infinity;
+    let kind = req.kind;
+    let firstTime = false, ok = false;
+    if ((mine && L.dist < 2.2 + 0.25 * Math.hypot(a.vel.x, a.vel.z)) || (loose && L.dist < 1.7 && relSpeed < 4)) ok = true;
+    else if (loose && arrive < 0.9 && L.dist < 9) { ok = true; firstTime = true; }
+    if (!ok) {
+      if (L.dist < 9 && (mine || loose)) { emit('buffered', kind, `ball ${L.dist.toFixed(1)} m away: running onto it`); return { result: 'buffered' }; }
+      emit('rejected', kind, mine || loose ? 'ball too far away' : 'another player has the ball');
+      return { result: 'rejected', reason: 'no ball' };
+    }
+    if (!firstTime) {
+      // Can the wind-up bring the foot to the ball? If not, line up first.
+      const clip = ACTION_CLIPS[kind];
+      const tc = (clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55) * clip.duration;
+      const sp = this.setupPoint(a, req.aim, kind, a.preferredFoot, tc);
+      const miss = Math.hypot(sp.x - (a.pos.x + a.vel.x * tc), sp.z - (a.pos.z + a.vel.z * tc));
+      if (miss > 0.75) {
+        emit('buffered', kind, `lining up (${miss.toFixed(2)} m off)`);
+        return { result: 'buffered' };
+      }
+    }
+    const high = b.position.y;
+    if (high > 1.4) kind = 'header';
+    else if (high > 0.55 && shotLike) kind = 'volley';
+    else if (shotLike && b.velocity.y > 1.2) kind = 'halfVolley';
+    if (firstTime && kind === 'shortPass') kind = 'firstTimePass';
+    // Foot: the preferred one unless the ball sits clearly on the other side of the aim line.
+    const aimLeft = (b.position.x - a.pos.x) * req.aim.z - (b.position.z - a.pos.z) * req.aim.x;
+    const foot: Foot = kind === 'header' ? a.preferredFoot : aimLeft > 0.18 ? 'L' : aimLeft < -0.18 ? 'R' : a.preferredFoot;
+    const c = this.contactOffset(kind, foot);
+    const plan: KickPlan = { ...req, kind, foot, contactLeft: c.left, contactFwd: c.fwd, firstTime };
+    emit('accepted', kind);
+    this.setState(shotLike ? 'Shooting' : 'Passing', a.id, `${kind} accepted`, time);
+    return { result: 'accepted', plan };
+  }
+
+  /** Where the ball centre must be (body frame) at the clip's contact frame. */
+  private contactOffset(kind: KickKind, foot: Foot): { left: number; fwd: number } {
+    const key = `${kind}|${foot}`;
+    const hit = this.contactCache.get(key);
+    if (hit) return hit;
+    const clip = ACTION_CLIPS[kind];
+    const t = clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55;
+    const pose = emptyPose();
+    let keys = sampleKeys(clip.keys, t);
+    if (foot === 'L') keys = mirrorPartial(keys);
+    applyPartial(pose, keys, 1);
+    const f = kind === 'header' ? headWorld(pose, { x: 0, y: 0, z: 0 }, 0, REF_DIMS) : footWorld(pose, foot, { x: 0, y: 0, z: 0 }, 0, REF_DIMS);
+    // Instep contact: the ball centre sits a little ahead of the striking surface.
+    const out = { left: f.x, fwd: f.z + (kind === 'header' ? 0.05 : 0.09) };
+    this.contactCache.set(key, out);
+    return out;
+  }
+
+  /** Body position that puts the ball at the striking foot at the contact frame (t s from now). */
+  setupPoint(a: InteractionActor, aim: Vec2, kind: KickKind, foot: Foot, t: number): Vec2 {
+    const c = this.contactOffset(kind, foot);
+    const b = this.ball.curr;
+    const bp = { x: b.position.x + b.velocity.x * t, z: b.position.z + b.velocity.z * t };
+    const f = norm2(aim);
+    const s = a.tuning.heightM / 1.8;
+    return { x: bp.x - f.x * c.fwd * s - f.z * c.left * s, z: bp.z - f.z * c.fwd * s + f.x * c.left * s };
+  }
+
+  /**
+   * During the wind-up: where the player should move so that, at the
+   * contact frame, the ball is at the striking foot (the player adjusts his
+   * approach; the ball is never moved). Returns this step's velocity and the
+   * yaw to turn to.
+   */
+  kickSetup(a: InteractionActor, plan: KickPlan, timeToContact: number): { vel: Vec2; yaw: number } {
+    const b = this.ball.curr;
+    const t = Math.max(0, timeToContact);
+    const bp = { x: b.position.x + b.velocity.x * t, z: b.position.z + b.velocity.z * t };
+    const yaw = headingOf(plan.aim.x, plan.aim.z);
+    const f = dirOf(yaw);
+    const s = a.tuning.heightM / 1.8;
+    // Body position that puts the ball at (contactLeft, contactFwd) when facing the aim.
+    const want = {
+      x: bp.x - f.x * plan.contactFwd * s - f.z * plan.contactLeft * s,
+      z: bp.z - f.z * plan.contactFwd * s + f.x * plan.contactLeft * s,
+    };
+    const dx = want.x - a.pos.x, dz = want.z - a.pos.z;
+    const k = 1 / Math.max(t, 0.1);
+    let vx = dx * k, vz = dz * k;
+    const cap = Math.max(4.5, Math.hypot(a.vel.x, a.vel.z) + 2.5);
+    const m = Math.hypot(vx, vz);
+    if (m > cap) { vx *= cap / m; vz *= cap / m; }
+    return { vel: { x: vx, z: vz }, yaw };
+  }
+
+  /**
+   * The contact frame: if the striking foot (forward kinematics of the
+   * current pose) reaches the ball, compute and queue the impulse.
+   */
+  resolveKick(a: InteractionActor, plan: KickPlan, time: number): boolean {
+    const b = this.ball.curr.position;
+    const header = plan.kind === 'header';
+    const pt = header ? headWorld(a.pose, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims) : footWorld(a.pose, plan.foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
+    const gap = Math.hypot(b.x - pt.x, b.y - pt.y, b.z - pt.z) - this.cal.ball.radius;
+    const reach = header ? 0.34 : 0.36;
+    const shot = plan.command === 'shot';
+    if (gap > reach) {
+      this.lastContact = { playerId: a.id, action: plan.kind, hit: false, gap, quality: 0, time };
+      this.events.emit({ type: 'BallContact', playerId: a.id, action: plan.kind, foot: plan.foot, hit: false, gap, quality: 0, time });
+      // Missed: possession continues if the ball is still close, otherwise it is loose.
+      const L = ballLocal(a, b);
+      if (L.dist < 1.8) this.setState('ControlledDribbling', a.id, `${plan.kind} missed the ball`, time);
+      else this.setState('PossessionLost', null, `${plan.kind} missed the ball`, time);
+      return false;
+    }
+    const t = a.tuning;
+    const facing = dirOf(a.yaw);
+    const aimAngle = Math.acos(clamp(facing.x * plan.aim.x + facing.z * plan.aim.z, -1, 1));
+    const ballV = this.ball.curr.velocity;
+    const relBall = Math.hypot(ballV.x - a.vel.x, ballV.z - a.vel.z);
+    // Contact quality: clean strike, body square to the aim, balance, foot, incoming ball.
+    let q = 1 - clamp((gap - 0.03) / reach, 0, 1) * 0.5;
+    q *= 1 - clamp((aimAngle - 35 * D2R) / (90 * D2R), 0, 0.4);
+    q *= 0.75 + 0.25 * a.balance;
+    q *= plan.foot === a.preferredFoot ? 1 : 0.88;
+    q *= 1 - clamp((relBall - 8) / 30, 0, 0.25);
+    q = clamp(q, 0.2, 1);
+    const passing = PASS_KINDS.has(plan.kind);
+    const skill = passing ? t.passSkill : header ? t.heading : (t.shotSkill + t.finishing) / 2;
+
+    // Foot speed from the swing (input power × technique); the collision gives
+    // the ball (1 + e)·M/(M + m) of it.
+    const p = clamp(plan.power, 0.25, 1);
+    let foot = 10, elev = 0, top = 0, side = 0;
+    const g = this.cal.world.gravity;
+    const transfer = ((1 + FOOT_E) * FOOT_MASS) / (FOOT_MASS + this.cal.ball.mass);
+    const lobFoot = (dist: number, deg: number) => (Math.sqrt((g * dist) / Math.sin(2 * deg * D2R)) * 1.12) / transfer;
+    switch (plan.kind) {
+      case 'shortPass': case 'firstTimePass': foot = 4 + 13 * p; elev = 0.5; break;
+      case 'drivenPass': foot = 7 + 14 * p; elev = 3; top = 14; break;
+      case 'throughBall': foot = 6.5 + 12 * p; elev = p > 0.7 ? 2.5 : 0.5; break;
+      case 'lobPass': foot = lobFoot(12 + 30 * p, 36); elev = 36; top = -12; break;
+      case 'longPass': foot = lobFoot(25 + 35 * p, 28); elev = 28; top = -14; break;
+      case 'cross': foot = lobFoot(18 + 25 * p, 22); elev = 22; top = -10; side = plan.foot === 'R' ? -32 : 32; break;
+      case 'shot': foot = 9.5 + 18 * p; elev = 3 + 7 * p; top = 6; break;
+      case 'powerShot': foot = 12.5 + 18 * p; elev = 5 + 8 * p; top = 9; break;
+      case 'finesseShot': foot = 10 + 10 * p; elev = 6 + 5 * p; side = (plan.foot === 'R' ? -1 : 1) * (36 + 18 * t.shotSkill); top = 4; break;
+      case 'placedShot': foot = 9 + 8 * p; elev = 2 + 3 * p; break;
+      case 'lowDrivenShot': foot = 11 + 14 * p; elev = 1.5; top = 28; break;
+      case 'chipShot': foot = 7.5 + 6 * p; elev = 48; top = -32; break;
+      case 'volley': foot = 10 + 15 * p; elev = 2 + 6 * p; top = 6; break;
+      case 'halfVolley': foot = 11 + 14 * p; elev = 3 + 6 * p; top = 12; break;
+      case 'header': foot = (6 + 8 * p) * (0.7 + 0.3 * t.heading) + len3(ballV) * 0.3; elev = -6 + 10 * p; break;
+    }
+    const technique = (0.86 + 0.14 * skill) * (0.85 + 0.15 * a.balance);
+    const exit = foot * transfer * technique * (0.78 + 0.22 * q);
+    // Direction: a small error from skill and contact quality (never the strength).
+    const runSpeed = Math.hypot(a.vel.x, a.vel.z);
+    const spread = (0.6 + (1 - skill) * 4 + (1 - q) * 5 + (shot ? p * 1.2 + runSpeed * 0.12 : 0)) * D2R;
+    const noise = gauss(a);
+    const dir = rot(plan.aim, noise * spread);
+    elev += noise * (spread / D2R) * 0.3;
+    const ce = Math.cos(elev * D2R), se = Math.sin(elev * D2R);
+    const carry = shot ? 0.2 : 0.08;
+    const vel: Vec3 = { x: dir.x * exit * ce + a.vel.x * carry, y: exit * se, z: dir.z * exit * ce + a.vel.z * carry };
+    let spin = spinFromComponents(vel, { top, side: side + (1 - q) * noise * 18 });
+    if (elev < 4 && passing) {
+      // Ground passes are struck through the middle and roll almost at once.
+      const rs = rollingSpin(vel, this.cal.ball.radius);
+      spin = { x: rs.x * 0.85, y: spin.y, z: rs.z * 0.85 };
+      vel.y = Math.min(vel.y, 0.6);
+    }
+    this.lastContact = { playerId: a.id, action: plan.kind, hit: true, gap, quality: q, time };
+    this.events.emit({ type: 'BallContact', playerId: a.id, action: plan.kind, foot: plan.foot, hit: true, gap, quality: q, time });
+    this.enqueue({
+      playerId: a.id, priority: 3, vel, spin, touchKind: 'kick', source: header ? 'header' : shot ? 'shot' : 'pass', kind: plan.kind,
+      foot: plan.foot, quality: q, footSpeed: foot,
+      after: () => {
+        this.releasedBy = a.id;
+        this.releasedAt = time;
+        this.setState('BallReleased', null, `${plan.kind} struck`, time);
+        this.events.emit({ type: 'BallRelease', playerId: a.id, kind: plan.kind, time });
+      },
+    });
+    return true;
+  }
+
+  // ============================================================ dribbling
+  /**
+   * Per fixed step for the player in possession (when not kicking).
+   * Touches happen on foot strikes, or earlier when the ball would leave
+   * the control zone or the player changes direction. Each touch is aimed
+   * at where the player will be (movement prediction) plus a lead ahead of
+   * him, so the ball follows the intended direction and stays reachable.
+   */
+  dribble(a: InteractionActor, strike: Foot | null, shield: boolean, time: number): void {
+    if (this.owner !== a.id || this.state === 'Passing' || this.state === 'Shooting') return;
+    const b = this.ball.curr;
+    if (b.position.y > 0.45) return;
+    const L = ballLocal(a, b.position);
+    const t = a.tuning;
+    const since = time - this.lastTouchAt;
+    const stick = a.stick();
+    const hasStick = Math.hypot(stick.x, stick.z) > 0.1;
+    const speed = Math.hypot(a.vel.x, a.vel.z);
+    // A running stride reaches further ahead of the hips than to the side or behind.
+    const inReach = this.reachable(L, speed) && since > 0.14;
+    const relV = { x: b.velocity.x - a.vel.x, z: b.velocity.z - a.vel.z };
+
+    if (!hasStick) {
+      // Pulling up: cushion the ball while slowing, then put the sole on it.
+      if (inReach && speed < 1.8 && Math.hypot(relV.x, relV.z) > 0.35) this.queueTouch(a, { x: a.vel.x * 0.85, z: a.vel.z * 0.85 }, L.left > 0 ? 'L' : 'R', 'sole', 'stop', time);
+      else if (inReach && speed >= 1.8 && since > 0.3) {
+        const bs = Math.hypot(b.velocity.x, b.velocity.z);
+        // Match the ball to where the slowing player will be, so it stays just ahead.
+        const pr = a.predict(0.45);
+        const sp = Math.max(0, pr.speed + 0.35);
+        if (bs > sp + 0.3) this.queueTouch(a, { x: pr.dir.x * sp, z: pr.dir.z * sp }, L.left > 0 ? 'L' : 'R', 'inside', 'stop', time);
+      }
+      if (this.state !== 'ControlledDribbling') this.setState('ControlledDribbling', a.id, 'holding the ball', time);
+      return;
+    }
+    const target = a.intendedSpeed();
+    const sprinting = target > t.runSpeed + 0.3;
+    const facing = dirOf(a.yaw);
+    const sd = norm2(stick);
+    const turnAngle = Math.acos(clamp(sd.x * facing.x + sd.z * facing.z, -1, 1));
+    const turning = turnAngle > 35 * D2R;
+    const st: PossessionState = turning ? 'TurningWithBall' : sprinting ? 'SprintDribbling' : 'ControlledDribbling';
+    if (this.state !== st) this.setState(st, a.id, turning ? `turning ${(turnAngle / D2R).toFixed(0)}°` : sprinting ? 'sprinting with the ball' : 'dribbling', time);
+
+    // Touch interval grows with pace; better dribblers touch more often.
+    const T = shield ? 0.3 : turning ? 0.34 : (0.3 + 0.055 * Math.max(speed, target * 0.7)) * (1.12 - 0.25 * t.dribbleSkill);
+    const pred = a.predict(T);
+    const lead = shield ? 0.35 : 0.42 + 0.1 * pred.speed * (sprinting ? 1.6 : 1);
+    // Alternate feet: aim slightly to the side of the foot that plays next.
+    const nextFoot: Foot = this.lastTouchFoot === 'L' ? 'R' : 'L';
+    const sideOff = (nextFoot === 'L' ? 1 : -1) * 0.1;
+    const pl = { x: pred.dir.z, z: -pred.dir.x };
+    const goal = { x: pred.pos.x + pred.dir.x * lead + pl.x * sideOff, z: pred.pos.z + pred.dir.z * lead + pl.z * sideOff };
+    // Where the ball would be without a touch (rolling).
+    const ar = this.cal.ball.rollingResistance * this.cal.world.gravity;
+    const bs = Math.hypot(b.velocity.x, b.velocity.z);
+    const tt = Math.min(T, bs / ar);
+    const roll = bs > 1e-3 ? (bs * tt - 0.5 * ar * tt * tt) / bs : 0;
+    const free = { x: b.position.x + b.velocity.x * roll, z: b.position.z + b.velocity.z * roll };
+    const err = Math.hypot(free.x - goal.x, free.z - goal.z);
+    const overrun = L.fwd < 0.3;
+    const needed = strike ? err > 0.25 || overrun : err > 0.75 || overrun || (turning && err > 0.45);
+    if (!inReach || !needed) return;
+    // Solve the touch: reach `goal` in T under rolling resistance.
+    const dx = goal.x - b.position.x, dz = goal.z - b.position.z;
+    const d = Math.hypot(dx, dz);
+    const u = Math.min(d / T + 0.5 * ar * T, pred.speed + 5.5);
+    const spread = ((1 - t.touchControl) * 5 + speed * 0.3 * (1 - t.dribbleSkill) + 0.4) * D2R;
+    const dir = rot(d > 1e-4 ? { x: dx / d, z: dz / d } : pred.dir, gauss(a) * spread);
+    // Alternate feet unless the ball is clearly on one side.
+    const foot: Foot = Math.abs(L.left) > 0.3 ? (L.left > 0 ? 'L' : 'R') : nextFoot;
+    // Inside or outside of that foot, depending on which way the ball goes.
+    const lateral = dir.x * facing.z - dir.z * facing.x; // + = to the left
+    const surface: TouchSurface = sprinting && !turning ? 'laces' : (foot === 'L') === (lateral > 0) ? 'outside' : 'inside';
+    const kind: TouchKind = turning ? 'directional' : sprinting ? 'sprint' : speed < 2.5 ? 'slow' : 'normal';
+    this.queueTouch(a, { x: dir.x * u, z: dir.z * u }, foot, surface, kind, time);
+  }
+
+  /** Can a foot reach the ball this step? (forward reach grows with stride length) */
+  reachable(L: { fwd: number; left: number; dist: number }, speed: number): boolean {
+    const fwdReach = 0.75 + 0.12 * speed;
+    if (L.fwd > fwdReach || L.fwd < -0.55 || Math.abs(L.left) > 0.7) return false;
+    return L.dist < Math.max(0.95, fwdReach);
+  }
+
+  /**
+   * While in possession: where the player should run to keep the ball. When
+   * the ball is out of reach and the stick asks for a different direction,
+   * he first goes to the ball (then turns it with a touch); otherwise null.
+   */
+  collectDirection(a: InteractionActor): Vec2 | null {
+    if (this.owner !== a.id) return null;
+    const b = this.ball.curr;
     const L = ballLocal(a, b.position);
     const speed = Math.hypot(a.vel.x, a.vel.z);
-    // Swing foot = opposite the planted one; it passes ~0.3–0.9 m ahead.
-    const swing: Foot = plantedFoot === 'L' ? 'R' : 'L';
-    const trigger = 0.55 + speed * 0.06;
-    if (L.fwd > trigger || L.fwd < -0.15 || Math.abs(L.left) > 0.55) return false;
-    // Close control alternates feet: let a same-foot chance pass unless the ball is about to be overrun.
-    if (speed < 6.2 && swing === this.lastTouchFoot && L.fwd > 0.3 && time - ball.lastTouchTime < 1.5) return false;
-    const t = a.tuning;
-    const dir = Math.hypot(moveDir.x, moveDir.z) > 0.1 ? moveDir : dirOf(a.yaw);
-    const facing = dirOf(a.yaw);
-    const turnAngle = Math.acos(clamp(dir.x * facing.x + dir.z * facing.z, -1, 1));
-    // Size the touch for the speed the player is heading for, not just his current pace.
-    const pace = Math.max(speed, Math.min(intendedSpeed, speed + 2.5));
-    // Touch rhythm: time until the player is back on the ball. Faster running
-    // means longer touches; better dribblers touch more often.
-    let period = (0.42 + 0.09 * pace) * (1.12 - 0.25 * t.dribbleSkill);
-    if (shield) period = 0.35;
-    if (turnAngle > 70 * D2R) period = 0.4; // cut / drag: short touch
-    const along = pace * Math.cos(Math.min(turnAngle, Math.PI / 2));
-    // Solve the touch speed so the ball comes back to the feet after `period`.
-    let lo = along, hi = along + 9;
-    for (let i = 0; i < 18; i++) {
-      const mid = (lo + hi) / 2;
-      if (touchCatchTime(mid, along, this.ballCfg.groundFriction, this.ballCfg.rollingResistance).t < period) lo = mid; else hi = mid;
+    if (this.reachable(L, speed) || b.position.y > 0.6) return null;
+    const stick = a.stick();
+    const t = clamp(L.dist / Math.max(speed, 3), 0.1, 0.6);
+    const tx = b.position.x + b.velocity.x * t - a.pos.x, tz = b.position.z + b.velocity.z * t - a.pos.z;
+    const l = Math.hypot(tx, tz);
+    if (l < 1e-3) return null;
+    const toBall = { x: tx / l, z: tz / l };
+    // Stick released with the ball rolling on: go and stop it.
+    if (Math.hypot(stick.x, stick.z) < 0.1) return Math.hypot(b.velocity.x, b.velocity.z) > 0.4 ? toBall : null;
+    const sd = norm2(stick);
+    if (toBall.x * sd.x + toBall.z * sd.z > Math.cos(30 * D2R)) return null; // already heading to it
+    return toBall;
+  }
+
+  private queueTouch(a: InteractionActor, v: Vec2, foot: Foot, surface: TouchSurface, kind: TouchKind, time: number): void {
+    const vel: Vec3 = { x: v.x, y: 0, z: v.z };
+    this.lastTouchAt = time;
+    this.lastTouchFoot = foot;
+    const speed = Math.hypot(v.x, v.z);
+    this.enqueue({
+      playerId: a.id, priority: 1, vel, spin: rollingSpin(vel, this.cal.ball.radius), touchKind: 'touch',
+      source: kind === 'stop' ? 'stop' : 'dribble', kind: `${kind} ${surface}`, foot, quality: 1, footSpeed: speed,
+      after: () => this.events.emit({ type: 'DribbleTouch', playerId: a.id, foot, surface, kind, speed, time }),
+    });
+  }
+
+  // ===================================================== receiving / loose
+  /**
+   * Any player not in possession: control a ball that arrives within reach
+   * (first touch), block a hard low one when defending, or pick up a loose
+   * ball / a ball the dribbler has knocked too far.
+   */
+  receive(a: InteractionActor, others: ReadonlyArray<InteractionActor>, defending: boolean, time: number): Foot | null {
+    if (this.owner === a.id) return null;
+    if (this.releasedBy === a.id && time - this.releasedAt < 0.45) return null;
+    const b = this.ball.curr;
+    const L = ballLocal(a, b.position);
+    const reach = a.tuning.interceptReach + (defending ? 0.25 : 0);
+    if (L.dist > reach || b.position.y > 1.7) return null;
+    if (this.owner) {
+      // Someone is dribbling: only a ball knocked away from him can be taken.
+      const o = others.find((p) => p.id === this.owner);
+      if (o && Math.hypot(b.position.x - o.pos.x, b.position.z - o.pos.z) < 1.0) return null;
     }
-    const u = Math.max(0.6, (lo + hi) / 2);
-    const ahead = touchCatchTime(u, along, this.ballCfg.groundFriction, this.ballCfg.rollingResistance).maxGap;
-    const err = ((1 - t.touchControl) * 6 + speed * 0.35 * (1 - t.dribbleSkill) + 0.5) * D2R;
-    // Steer the ball back onto the player's line: aim at a point ahead on the
-    // path rather than straight along the stick, cancelling lateral drift.
-    const rel = { x: b.position.x - a.pos.x, z: b.position.z - a.pos.z };
-    const along2 = rel.x * dir.x + rel.z * dir.z;
-    const perp = { x: rel.x - dir.x * along2, z: rel.z - dir.z * along2 };
-    const reachAhead = Math.max(1.2, ahead * 1.6 + 0.6);
-    const aimV = { x: dir.x * reachAhead - perp.x, z: dir.z * reachAhead - perp.z };
-    const al = Math.hypot(aimV.x, aimV.z) || 1;
-    const d = rot({ x: aimV.x / al, z: aimV.z / al }, noise(a) * err);
-    const vel: Vec3 = { x: d.x * u, y: 0, z: d.z * u };
-    const rs = rollingSpin(vel, this.ballCfg.radius);
-    ball.kick(vel, { x: rs.x * TOUCH_ROLL, y: 0, z: rs.z * TOUCH_ROLL }, a.id, 'touch');
-    this.lastTouchFoot = swing;
-    this.events.emit({ type: 'ballTouch', playerId: a.id, foot: swing, speed: u, time });
-    return true;
+    const rel = { x: b.velocity.x - a.vel.x, z: b.velocity.z - a.vel.z };
+    const relSpeed = Math.hypot(rel.x, rel.z);
+    const toward = -(rel.x * (b.position.x - a.pos.x) + rel.z * (b.position.z - a.pos.z)) / Math.max(L.dist, 1e-3);
+    if (relSpeed > 1.2 && toward < 0.2 && L.dist > 0.6) return null;
+    const foot: Foot = L.left > 0 ? 'L' : 'R';
+    const prevOwner = this.owner;
+    if (len3(b.velocity) > 15 && b.position.y < 1.2 && defending) {
+      const back: Vec3 = { x: -b.velocity.x * 0.25, y: Math.abs(b.velocity.y) * 0.3 + 0.5, z: -b.velocity.z * 0.25 };
+      this.enqueue({ playerId: a.id, priority: 2, vel: back, spin: { x: 0, y: 0, z: 0 }, touchKind: 'kick', source: 'block', kind: 'block', foot, quality: 1, footSpeed: 0,
+        after: () => this.setState('PossessionLost', null, `blocked by ${a.id}`, time) });
+      return foot;
+    }
+    // Cushioned first touch to the player's pace, nudged along the stick.
+    const hard = clamp((relSpeed - 5) / 20, 0, 1) + clamp((b.position.y - 0.45) / 1.2, 0, 1) * 0.5;
+    const miss = (1 - a.tuning.touchControl) * (0.4 + hard);
+    const stick = a.stick();
+    const dir = Math.hypot(stick.x, stick.z) > 0.1 ? norm2(stick) : dirOf(a.yaw);
+    const push = 0.6 + 0.8 * Math.hypot(stick.x, stick.z);
+    const noise = gauss(a);
+    const vel: Vec3 = {
+      x: a.vel.x + dir.x * push + rel.x * miss * 0.3 + noise * miss * 0.6,
+      y: Math.max(0, b.velocity.y * 0.15),
+      z: a.vel.z + dir.z * push + rel.z * miss * 0.3 + noise * miss * 0.6,
+    };
+    this.lastTouchAt = time;
+    this.lastTouchFoot = foot;
+    this.enqueue({ playerId: a.id, priority: 2, vel, spin: rollingSpin(vel, this.cal.ball.radius), touchKind: 'touch', source: 'control', kind: 'first touch', foot, quality: 1 - miss, footSpeed: 0,
+      after: () => this.setState('PossessionAcquired', a.id, prevOwner ? `won from ${prevOwner}` : relSpeed > 3 ? 'first touch' : 'picked up loose ball', time) });
+    return foot;
   }
 
-  /** Sole-stop: kill the ball's run when the player stops with it. */
-  stopBall(a: InteractionActor, ball: BallController, time: number): boolean {
-    const L = ballLocal(a, ball.curr.position);
-    if (L.dist > 0.75 || ball.curr.position.y > 0.35 || L.fwd < -0.1) return false;
-    const vel = { x: a.vel.x * 0.9, y: 0, z: a.vel.z * 0.9 };
-    ball.kick(vel, rollingSpin(vel, this.ballCfg.radius), a.id, 'touch');
-    this.events.emit({ type: 'ballTouch', playerId: a.id, foot: a.preferredFoot, speed: Math.hypot(vel.x, vel.z), time });
-    return true;
-  }
-
-  // ----------------------------------------------------------- skill touches
-  skillTouch(a: InteractionActor, ball: BallController, skill: ActionKind, which: 'touch' | 'touch2', exitSide: number, aim: Vec2, foot: Foot, time: number): boolean {
-    const L = ballLocal(a, ball.curr.position);
-    if (L.dist > 1.25 || ball.curr.position.y > 0.45) return false;
+  // ======================================================= skills/tackles
+  skillTouch(a: InteractionActor, skill: ActionKind, which: 'touch' | 'touch2', exitSide: number, aim: Vec2, foot: Foot, time: number): boolean {
+    const L = ballLocal(a, this.ball.curr.position);
+    if (L.dist > 1.25 || this.ball.curr.position.y > 0.45) return false;
     const facing = dirOf(a.yaw);
     const speed = Math.hypot(a.vel.x, a.vel.z);
     let dir: Vec2 = facing, u = speed + 1.2;
@@ -230,98 +568,47 @@ export class PlayerBallInteraction {
       case 'roulette': dir = which === 'touch' ? rot(facing, -exitSide * 120 * D2R) : aim; u = which === 'touch' ? 0.9 : 2.6; break;
       case 'heelToHeel': dir = rot(facing, -exitSide * 30 * D2R); u = Math.max(speed, 2) + 2.2; break;
       case 'fakeShot': dir = rot(facing, -exitSide * 80 * D2R); u = 2.6; break;
+      default: break;
     }
-    const err = ((1 - a.tuning.dribbleSkill) * 6 + 1) * D2R;
-    const d = rot(dir, noise(a) * err);
+    const d = rot(dir, gauss(a) * ((1 - a.tuning.dribbleSkill) * 6 + 1) * D2R);
     const vel: Vec3 = { x: d.x * u, y: 0, z: d.z * u };
-    ball.kick(vel, rollingSpin(vel, this.ballCfg.radius), a.id, 'touch');
-    this.events.emit({ type: 'ballTouch', playerId: a.id, foot, speed: u, time });
+    this.lastTouchAt = time;
+    this.lastTouchFoot = foot;
+    this.enqueue({ playerId: a.id, priority: 2, vel, spin: rollingSpin(vel, this.cal.ball.radius), touchKind: 'touch', source: 'skill', kind: skill, foot, quality: 1, footSpeed: u,
+      after: () => this.setState('ControlledDribbling', a.id, `${skill} touch`, time) });
     return true;
   }
 
-  // --------------------------------------------------------------- tackles
-  /** Standing tackle: while the leg lunges, the foot pokes the ball if it reaches it. */
-  standingTackle(a: InteractionActor, ball: BallController, foot: Foot, time: number): boolean {
+  /** Tackle foot reaches the ball? (standing: during the lunge; sliding: during the slide). */
+  tackle(a: InteractionActor, kind: 'standing' | 'sliding', foot: Foot, time: number): boolean {
     const f = footWorld(a.pose, foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
-    const b = ball.curr.position;
-    const gap = Math.hypot(b.x - f.x, b.y - f.y, b.z - f.z) - this.ballCfg.radius;
-    const reach = 0.22 + 0.2 * a.tuning.tackleSkill;
-    const won = gap <= reach;
-    if (!won) return false;
-    {
-      const facing = dirOf(a.yaw);
-      const d = rot(facing, noise(a) * (25 - 15 * a.tuning.tackleSkill) * D2R);
-      const u = 3 + 3.5 * a.tuning.tackleSkill;
-      const vel: Vec3 = { x: d.x * u + a.vel.x * 0.3, y: 0.4, z: d.z * u + a.vel.z * 0.3 };
-      ball.kick(vel, rollingSpin(vel, this.ballCfg.radius), a.id);
-    }
-    this.events.emit({ type: 'tackle', playerId: a.id, kind: 'standing', won: true, time });
-    return true;
-  }
-
-  /** Sliding tackle: the extended foot sweeps through the ball while sliding. */
-  slidingSweep(a: InteractionActor, ball: BallController, foot: Foot, time: number): boolean {
-    const f = footWorld(a.pose, foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
-    const b = ball.curr.position;
-    const gap = Math.hypot(b.x - f.x, b.y - f.y, b.z - f.z) - this.ballCfg.radius;
-    if (gap > 0.3) return false;
+    const b = this.ball.curr.position;
+    const gap = Math.hypot(b.x - f.x, b.y - f.y, b.z - f.z) - this.cal.ball.radius;
+    const reach = kind === 'sliding' ? 0.3 : 0.22 + 0.2 * a.tuning.tackleSkill;
+    if (gap > reach) return false;
     const facing = dirOf(a.yaw);
-    const u = 5 + 4 * a.tuning.tackleSkill;
-    const d = rot(facing, noise(a) * 20 * D2R);
-    const vel: Vec3 = { x: d.x * u + a.vel.x * 0.4, y: 0.8, z: d.z * u + a.vel.z * 0.4 };
-    ball.kick(vel, rollingSpin(vel, this.ballCfg.radius), a.id);
-    this.events.emit({ type: 'tackle', playerId: a.id, kind: 'sliding', won: true, time });
+    const d = rot(facing, gauss(a) * (kind === 'sliding' ? 20 : 25 - 15 * a.tuning.tackleSkill) * D2R);
+    const u = kind === 'sliding' ? 5 + 4 * a.tuning.tackleSkill : 3 + 3.5 * a.tuning.tackleSkill;
+    const vel: Vec3 = { x: d.x * u + a.vel.x * 0.35, y: kind === 'sliding' ? 0.8 : 0.4, z: d.z * u + a.vel.z * 0.35 };
+    const prev = this.owner;
+    this.enqueue({ playerId: a.id, priority: 3, vel, spin: rollingSpin(vel, this.cal.ball.radius), touchKind: 'kick', source: 'tackle', kind: `${kind} tackle`, foot, quality: 1, footSpeed: u,
+      after: () => {
+        this.events.emit({ type: 'TackleContact', playerId: a.id, kind, won: true, fouled: false, time });
+        this.setState('PossessionLost', null, prev ? `tackled by ${a.id}` : `cleared by ${a.id}`, time);
+      } });
     return true;
   }
+  tackleMissed(a: InteractionActor, kind: 'standing' | 'sliding', fouled: boolean, time: number): void {
+    this.events.emit({ type: 'TackleContact', playerId: a.id, kind, won: false, fouled, time });
+  }
 
-  /** Where the tackling foot is (to test contact with an opponent's legs). */
+  /** Where a tackling foot is (to test contact with an opponent's legs). */
   footPoint(a: InteractionActor, foot: Foot): Vec3 {
     return footWorld(a.pose, foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
   }
 
-  // ---------------------------------------------------- receiving / blocking
-  /**
-   * The ball arrives within reach of a player who is not busy: block a fast
-   * low ball, otherwise control it with a cushioned first touch. Returns the
-   * foot used, or null if out of reach.
-   */
-  receive(a: InteractionActor, ball: BallController, moveDir: Vec2, defending: boolean, time: number): Foot | null {
-    const b = ball.curr;
-    const L = ballLocal(a, b.position);
-    const reach = a.tuning.interceptReach + (defending ? 0.25 : 0);
-    if (L.dist > reach || b.position.y > 1.6) return null;
-    const rel = { x: b.velocity.x - a.vel.x, z: b.velocity.z - a.vel.z };
-    const relSpeed = Math.hypot(rel.x, rel.z);
-    // Only when the ball is coming at us (or barely moving relative to us).
-    const toward = -(rel.x * (b.position.x - a.pos.x) + rel.z * (b.position.z - a.pos.z)) / Math.max(L.dist, 1e-3);
-    if (relSpeed > 1.2 && toward < 0.3) return null;
-    const foot: Foot = L.left > 0 ? 'L' : 'R';
-    const t = a.tuning;
-    const speedAbs = len3(b.velocity);
-    if (speedAbs > 15 && b.position.y < 1.2 && defending) {
-      // Block: the ball deflects off the leg/body and loses most of its pace.
-      const back = { x: -b.velocity.x * 0.25 + noise(a) * 2, y: Math.abs(b.velocity.y) * 0.3 + 0.5, z: -b.velocity.z * 0.25 + noise(a) * 2 };
-      ball.kick(back, { x: 0, y: 0, z: 0 }, a.id, 'kick');
-      this.events.emit({ type: 'ballTouch', playerId: a.id, foot, speed: len3(back), time });
-      return foot;
-    }
-    // First touch: cushion to the player's pace, nudged towards the stick.
-    const hard = clamp((relSpeed - 4) / 20, 0, 1) + clamp((b.position.y - 0.4) / 1.2, 0, 1) * 0.5;
-    const err = (1 - t.touchControl) * (0.6 + hard) ;
-    const dir = Math.hypot(moveDir.x, moveDir.z) > 0.1 ? moveDir : dirOf(a.yaw);
-    const push = 0.5 + 0.6 * Math.hypot(moveDir.x, moveDir.z);
-    const vel: Vec3 = {
-      x: a.vel.x + dir.x * push + rel.x * err * 0.35 + noise(a) * err,
-      y: Math.max(0, b.velocity.y * 0.15),
-      z: a.vel.z + dir.z * push + rel.z * err * 0.35 + noise(a) * err,
-    };
-    ball.kick(vel, rollingSpin(vel, this.ballCfg.radius), a.id, 'touch');
-    this.events.emit({ type: 'ballTouch', playerId: a.id, foot, speed: len3(vel), time });
-    return foot;
-  }
-
   /** Aim at the goal the player is attacking if it is in front of him. */
-  static shotAim(a: InteractionActor, stick: Vec2, goalHalfLength: number, goalWidth: number): Vec2 {
+  static shotAim(a: { pos: Vec2; yaw: number }, stick: Vec2, goalHalfLength: number, goalWidth: number): Vec2 {
     const facing = dirOf(a.yaw);
     const goalZ = facing.z >= 0 ? goalHalfLength : -goalHalfLength;
     const toGoal = { x: -a.pos.x, z: goalZ - a.pos.z };
@@ -329,19 +616,10 @@ export class PlayerBallInteraction {
     const dirToGoal = { x: toGoal.x / dist, z: toGoal.z / dist };
     const inFront = facing.x * dirToGoal.x + facing.z * dirToGoal.z > 0.2 && dist < 45;
     if (!inFront) return Math.hypot(stick.x, stick.z) > 0.2 ? norm2(stick) : facing;
-    // Stick left/right picks the corner (relative to the shooter's view).
     const leftAxis = { x: dirToGoal.z, z: -dirToGoal.x };
     const lateral = clamp(stick.x * leftAxis.x + stick.z * leftAxis.z, -1, 1);
     // Corner along the goal line, on the side the stick points (shooter's view).
     const target = { x: lateral * goalWidth * 0.38 * (leftAxis.x >= 0 ? 1 : -1), z: goalZ };
-    const v = { x: target.x - a.pos.x, z: target.z - a.pos.z };
-    return norm2(v);
+    return norm2({ x: target.x - a.pos.x, z: target.z - a.pos.z });
   }
 }
-
-function norm2(v: Vec2): Vec2 {
-  const l = Math.hypot(v.x, v.z);
-  return l > 1e-6 ? { x: v.x / l, z: v.z / l } : { x: 0, z: 1 };
-}
-
-export const headingTo = (from: Vec2, to: Vec2): number => headingOf(to.x - from.x, to.z - from.z);

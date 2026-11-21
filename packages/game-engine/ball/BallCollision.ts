@@ -30,6 +30,6 @@ export class BallCollision {
     this.last = entry;
     this.log.push(entry);
     if (this.log.length > 40) this.log.shift();
-    this.pw.events.emit({ type: 'ballContact', surface: other.kind, speed, time: this.pw.time, playerId: other.playerId });
+    this.pw.events.emit({ type: 'SurfaceContact', surface: other.kind, speed, time: this.pw.time, playerId: other.playerId });
   }
 }

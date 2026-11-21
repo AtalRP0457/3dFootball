@@ -16,6 +16,9 @@ export function BallDebugPanel() {
     <section className="lab-panel">
       <h3>Ball</h3>
       <dl>
+        <dt>Possession owner</dt><dd>{b.owner}</dd>
+        <dt>Possession state</dt><dd><b>{b.possessionState}</b></dd>
+        <dt>Physics state</dt><dd>{b.physicsState}</dd>
         <dt>Speed</dt><dd>{f(b.speed)} m/s <small>({f(b.speed * 3.6, 1)} km/h)</small></dd>
         <dt>Position</dt><dd>{v3(b.position)}</dd>
         <dt>Linear velocity</dt><dd>{v3(b.velocity)}</dd>
@@ -23,10 +26,11 @@ export function BallDebugPanel() {
         <dt>Spin</dt><dd>top {f(b.spin.top * REV, 1)} · side {f(b.spin.side * REV, 1)} rev/s</dd>
         <dt>Height</dt><dd>{f(b.height)} m</dd>
         <dt>Contact</dt><dd>{b.grounded ? 'on the ground' : 'in the air'} · last: {b.lastSurface}</dd>
-        <dt>Last touch</dt><dd>{b.lastTouchBy}</dd>
+        <dt>Last contact</dt><dd>{b.lastContact}</dd>
+        <dt>Last impulse</dt><dd>{b.lastImpulse}</dd>
       </dl>
-      <h4>Events</h4>
-      <ol className="lab-events">{s.events.slice(-8).reverse().map((e, i) => <li key={i}>{e}</li>)}</ol>
+      <h4>Event log</h4>
+      <ol className="lab-events">{s.events.slice(-14).reverse().map((e, i) => <li key={i}>{e}</li>)}</ol>
     </section>
   );
 }

@@ -3,23 +3,28 @@
 //
 // Per fixed step:
 //   1. read the Rapier body (velocity includes last step's contacts)
-//   2. buttons → charged kicks / instant actions
-//   3. pending kick: approach the ball until the contact frame will line up
-//   4. momentum movement → body velocity
-//   5. stride phase advanced by distance travelled → foot strikes
-//   6. state machine → animation events; pose (IK) for this step
-//   7. events act on the ball at the exact frame (kick, touch, tackle)
-import type { BallController } from '../ball/BallController.ts';
-import { ACTION_CLIPS, KICK_ACTIONS, SKILL_ACTIONS } from '../animation/ActionClips.ts';
+//   2. buttons → kick commands (via the central PlayerBallInteraction) /
+//      instant actions; buffered kicks run the player onto the ball
+//   3. momentum movement → body velocity (during a kick's wind-up the
+//      interaction system positions the player so the foot meets the ball)
+//   4. stride phase advanced by distance travelled → foot strikes
+//   5. state machine → animation events; pose (IK) for this step
+//   6. events and dribbling go to the interaction system, which queues
+//      impulses; the Simulation applies them once per step (flush)
+import { KICK_ACTIONS, SKILL_ACTIONS, ACTION_CLIPS } from '../animation/ActionClips.ts';
 import { AnimationStateMachine } from '../animation/AnimationStateMachine.ts';
 import { emptyPose } from '../animation/AnimationBlending.ts';
 import { FootContact, gaitFor, type GaitParams } from '../animation/FootContact.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { PitchConfig } from '../physics/PhysicsConfig.ts';
 import { angleDiff, clamp, dirOf, headingOf, type Vec2 } from '../physics/Vec3.ts';
+import type { BallController } from '../ball/BallController.ts';
 import { REFERENCE_ATTRIBUTES, deriveTuning } from './PlayerAttributes.ts';
 import { computePose } from './PlayerAnimation.ts';
-import { PlayerBallInteraction, ballLocal, type InteractionActor } from './PlayerBallInteraction.ts';
+import {
+  PlayerBallInteraction, ballLocal, powerFromHold,
+  type InteractionActor, type KickCommand, type KickPlan, type KickRequest,
+} from './PlayerBallInteraction.ts';
 import type { CollisionBody } from './PlayerCollision.ts';
 import { stepMovement, targetSpeedFor, type MoveMode } from './PlayerMovement.ts';
 import { PlayerPhysics } from './PlayerPhysics.ts';
@@ -50,7 +55,7 @@ export interface StepContext {
 }
 
 type ChargeKey = 'pass' | 'through' | 'lob' | 'shoot';
-interface PendingKick { kind: KickKind; power: number; aim: Vec2; since: number }
+const CHARGE_COMMAND: Record<ChargeKey, KickCommand> = { pass: 'pass', through: 'through', lob: 'lob', shoot: 'shot' };
 
 const D2R = Math.PI / 180;
 const SPIN_SKILLS: ReadonlySet<ActionKind> = new Set<ActionKind>(['dragBack', 'roulette']);
@@ -66,7 +71,6 @@ export class PlayerController implements InteractionActor {
   readonly physics: PlayerPhysics;
   readonly sm = new AnimationStateMachine();
   readonly contact = new FootContact();
-  private readonly interaction: PlayerBallInteraction;
 
   input: PlayerInput = emptyInput();
   private prevInput: PlayerInput = emptyInput();
@@ -81,22 +85,25 @@ export class PlayerController implements InteractionActor {
   gait: GaitParams = gaitFor(0);
   pose: PoseData = emptyPose();
   colliding = false;
-  hasBall = false;
-  pending: PendingKick | null = null;
+  /** Accepted kick being executed (until its contact frame). */
+  kick: KickPlan | null = null;
+  /** Kick waiting for the ball to come within reach. */
+  buffered: { req: KickRequest; since: number } | null = null;
   /** Charge start times (sim s) of held kick buttons. */
   private charges = new Map<ChargeKey, number>();
   /** Shot modifiers held at any point while the shot was charging. */
   private chargeMods = { finesse: false, lowDriven: false, chip: false, powerMod: false };
+  /** Last released kick button: hold time and power (debug panel). */
+  lastCharge: { key: ChargeKey; seconds: number; power: number } | null = null;
   private lastSetVel: Vec2 = { x: 0, z: 0 };
   private actionYaw0 = 0;
   private actionAim: Vec2 = { x: 0, z: 1 };
-  private actionKind: KickKind | null = null;
   private seed: number;
   /** Interpolation snapshots. */
   prev: PlayerSnapshot;
   curr: PlayerSnapshot;
 
-  constructor(private readonly pw: PhysicsWorld, setup: PlayerSetup) {
+  constructor(private readonly pw: PhysicsWorld, private readonly ix: PlayerBallInteraction, setup: PlayerSetup) {
     this.id = setup.id;
     this.name = setup.name;
     this.number = setup.number;
@@ -110,7 +117,6 @@ export class PlayerController implements InteractionActor {
     this.yaw = setup.yaw ?? 0;
     this.seed = (setup.seed ?? 1234567) >>> 0;
     this.physics = new PlayerPhysics(pw, this.id, setup.start, massKg, heightM);
-    this.interaction = new PlayerBallInteraction(pw.events, pw.cal.ball);
     this.curr = this.snapshot();
     this.prev = this.curr;
   }
@@ -126,6 +132,26 @@ export class PlayerController implements InteractionActor {
 
   get speed(): number { return Math.hypot(this.vel.x, this.vel.z); }
   get actionName(): string { return this.sm.current; }
+  /** In possession (owned by the central interaction system). */
+  get hasBall(): boolean { return this.ix.has(this.id); }
+  stick(): Vec2 { return this.input.move; }
+  intendedSpeed(): number { return targetSpeedFor(this.input, this.tuning, this.stamina); }
+
+  /** Simulate the movement model forward under the current input (dribble prediction). */
+  predict(T: number): { pos: Vec2; dir: Vec2; speed: number } {
+    let vel = { ...this.vel }, yaw = this.yaw, yawRate = this.yawRate, stamina = this.stamina;
+    let x = this.pos.x, z = this.pos.z;
+    const dt = 1 / 30;
+    const mode = this.moveMode(null);
+    for (let t = 0; t < T - 1e-6; t += dt) {
+      const h = Math.min(dt, T - t);
+      const r = stepMovement({ vel, yaw, yawRate, stamina }, this.input, this.tuning, mode, h);
+      vel = r.vel; yaw = r.yaw; yawRate = r.yawRate; stamina = r.stamina;
+      x += vel.x * h; z += vel.z * h;
+    }
+    const s = Math.hypot(vel.x, vel.z);
+    return { pos: { x, z }, dir: s > 0.3 ? { x: vel.x / s, z: vel.z / s } : dirOf(yaw), speed: s };
+  }
 
   // ------------------------------------------------------------------ step
   preStep(dt: number, ctx: StepContext): void {
@@ -134,39 +160,44 @@ export class PlayerController implements InteractionActor {
     this.pos = this.physics.position();
     this.vel = this.physics.velocity();
     const bl = ballLocal(this, ball.curr.position);
-    this.hasBall = ball.lastTouchBy === this.id && ball.lastTouchKind === 'touch' && bl.dist < 2.4 + this.speed * 0.25 && ball.curr.position.y < 0.7 && now - ball.lastTouchTime < 4;
 
     this.handleButtons(ctx);
     let moveInput: PlayerInput = this.input;
-    let approach = false;
-    if (this.pending) {
-      const o = this.approach(ctx);
-      if (o) {
-        // Run to the ball whatever pace modifier is held; sprint if it is getting away.
-        const bs = Math.hypot(ball.curr.velocity.x, ball.curr.velocity.z);
-        moveInput = { ...this.input, move: o, jog: false, walk: false, sprint: this.input.sprint || bs > this.tuning.runSpeed - 0.5 || bl.dist > 3 };
-        approach = true;
+    if (this.buffered) {
+      // Run onto the ball until the kick can be accepted.
+      const d = this.ix.requestKick(this, this.buffered.req, this.sm.busy, now, true);
+      if (d.result === 'accepted') { this.buffered = null; this.startKick(d.plan); }
+      else if (now - this.buffered.since > 1.2 || d.result === 'rejected') {
+        const r = this.buffered.req;
+        const reason = d.result === 'rejected' ? 'ball no longer available' : 'ball never came within reach';
+        if (r.command === 'shot') this.pw.events.emit({ type: 'ShotCommand', playerId: this.id, phase: 'expired', kind: r.kind, power: r.power, reason, time: now });
+        else this.pw.events.emit({ type: 'PassCommand', playerId: this.id, phase: 'expired', kind: r.kind, power: r.power, reason, time: now });
+        this.buffered = null;
+      } else {
+        // Step to the spot that lines the kicking foot up with the ball.
+        const r = this.buffered.req;
+        const sp = this.ix.setupPoint(this, r.aim, r.kind, this.preferredFoot, 0.3);
+        const to = { x: sp.x - this.pos.x, z: sp.z - this.pos.z };
+        const l = Math.hypot(to.x, to.z) || 1;
+        moveInput = { ...this.input, move: { x: to.x / l, z: to.z / l }, jog: false, walk: false, sprint: l > 2.5 };
       }
     }
 
-    // ---- movement mode ----
+    // In possession with the ball out of reach and the stick turning away:
+    // go and collect it first (the directional touch then turns it).
+    if (!this.buffered && !this.sm.action && this.hasBall) {
+      const c = this.ix.collectDirection(this);
+      if (c) {
+        const mag = Math.max(Math.hypot(this.input.move.x, this.input.move.z), 1);
+        const bs = Math.hypot(ball.curr.velocity.x, ball.curr.velocity.z);
+        moveInput = { ...moveInput, move: { x: c.x * mag, z: c.z * mag }, sprint: moveInput.sprint || bs > this.tuning.runSpeed - 0.3, jog: false, walk: false };
+      }
+    }
+
+    // ---- movement ----
     const a = this.sm.action;
     const defend = this.input.defend;
-    let mode: MoveMode;
-    if (a) {
-      mode = { kind: a.clip.move, control: a.clip.control, speedCap: a.clip.speedCap };
-      if (KICK_ACTIONS.has(a.clip.name)) mode.facing = headingOf(this.actionAim.x, this.actionAim.z);
-    } else if (defend && this.hasBall) {
-      mode = { kind: 'dribble', speedCap: 2.6, facing: this.shieldYaw(ctx) };
-    } else if (defend) {
-      const toBall = headingOf(ball.curr.position.x - this.pos.x, ball.curr.position.z - this.pos.z);
-      mode = { kind: 'jockey', facing: bl.dist < 30 ? toBall : this.yaw };
-    } else {
-      // With the ball, top speed drops a little (more for weaker dribblers).
-      const dribbleCap = this.hasBall ? this.tuning.sprintSpeed * (0.86 + 0.1 * this.tuning.dribbleSkill) : undefined;
-      const ballSpeed = Math.hypot(ball.curr.velocity.x, ball.curr.velocity.z);
-      mode = { kind: this.hasBall ? 'dribble' : 'normal', speedCap: approach ? Math.max(this.approachCap(bl.dist), ballSpeed + 1.4) : dribbleCap };
-    }
+    const mode = this.moveMode(ctx);
     if (this.balance < 0.6) mode.control = (mode.control ?? 1) * clamp(this.balance / 0.6, 0.25, 1);
     const res = stepMovement({ vel: this.vel, yaw: this.yaw, yawRate: this.yawRate, stamina: this.stamina }, moveInput, this.tuning, mode, dt);
     this.vel = res.vel;
@@ -174,6 +205,20 @@ export class PlayerController implements InteractionActor {
     this.yawRate = res.yawRate;
     this.stamina = res.stamina;
     this.accel = res.accel;
+    // Kick wind-up: adjust the approach so the foot meets the ball at the contact frame.
+    if (a && this.kick && KICK_ACTIONS.has(a.clip.name) && !a.resolved) {
+      const c = a.clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55;
+      const tLeft = c * a.clip.duration - a.time;
+      if (tLeft > 0) {
+        const s = this.ix.kickSetup(this, this.kick, tLeft);
+        const k = Math.min(1, dt * 14);
+        const nv = { x: this.vel.x + (s.vel.x - this.vel.x) * k, z: this.vel.z + (s.vel.z - this.vel.z) * k };
+        this.accel = { x: (nv.x - this.vel.x) / dt, z: (nv.z - this.vel.z) / dt };
+        this.vel = nv;
+        const dy = angleDiff(this.yaw, s.yaw);
+        this.yaw += clamp(dy, -11 * dt, 11 * dt);
+      }
+    }
 
     // ---- stride ----
     const speed = Math.hypot(this.vel.x, this.vel.z);
@@ -221,11 +266,30 @@ export class PlayerController implements InteractionActor {
     this.physics.setVelocity(this.vel);
     this.lastSetVel = { ...this.vel };
 
-    // ---- ball interaction at the exact frame ----
-    for (const e of events) this.onAnimEvent(e.kind, ctx);
+    // ---- ball interaction (through the central system) ----
+    for (const e of events) this.onAnimEvent(e.kind, a, ctx);
     this.continuous(ctx);
     this.balance = Math.min(1, this.balance + dt * (0.3 + 0.5 * this.tuning.balance));
     this.prevInput = { ...this.input, move: { ...this.input.move } };
+  }
+
+  /** Movement mode for the current action / stance. */
+  private moveMode(ctx: StepContext | null): MoveMode {
+    const a = this.sm.action;
+    if (a) {
+      const mode: MoveMode = { kind: a.clip.move, control: a.clip.control, speedCap: a.clip.speedCap };
+      if (KICK_ACTIONS.has(a.clip.name)) mode.facing = headingOf(this.actionAim.x, this.actionAim.z);
+      return mode;
+    }
+    if (this.input.defend && this.hasBall) return { kind: 'dribble', speedCap: 2.6, facing: ctx ? this.shieldYaw(ctx) : undefined };
+    if (this.input.defend && ctx) {
+      const b = ctx.ball.curr.position;
+      const d = Math.hypot(b.x - this.pos.x, b.z - this.pos.z);
+      return { kind: 'jockey', facing: d < 30 ? headingOf(b.x - this.pos.x, b.z - this.pos.z) : this.yaw };
+    }
+    // With the ball, top speed drops a little (more for weaker dribblers).
+    if (this.hasBall) return { kind: 'dribble', speedCap: this.tuning.sprintSpeed * (0.86 + 0.1 * this.tuning.dribbleSkill) };
+    return { kind: 'normal' };
   }
 
   /** After the physics step: capture the state for rendering and debug. */
@@ -258,15 +322,27 @@ export class PlayerController implements InteractionActor {
     this.balance = Math.max(0, this.balance - severity);
     const name = this.sm.action?.clip.name;
     if (name === 'fall' || name === 'getUp' || name === 'slidingTackle') return;
-    if (this.balance < 0.12) { this.sm.start('fall', { foot: 'R', force: true }); this.pending = null; this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
-    else if (this.balance < 0.45 && name !== 'stumble') { this.sm.start('stumble', { foot: 'R', force: true }); this.pending = null; this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
+    const lose = () => { this.kick = null; this.buffered = null; };
+    if (this.balance < 0.12) { this.sm.start('fall', { foot: 'R', force: true }); lose(); this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
+    else if (this.balance < 0.45 && name !== 'stumble') { this.sm.start('stumble', { foot: 'R', force: true }); lose(); this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
   }
 
   teleport(p: Vec2, yaw = this.yaw): void {
     this.physics.teleport(p);
     this.pos = { ...p }; this.vel = { x: 0, z: 0 }; this.yaw = yaw; this.yawRate = 0;
-    this.sm.action = null; this.pending = null; this.balance = 1;
+    this.sm.action = null; this.kick = null; this.buffered = null; this.balance = 1;
     this.curr = this.snapshot(); this.prev = this.curr;
+  }
+
+  /** Charge level 0.25..1 for a held kick button (for the HUD), 0 when not held. */
+  charge(k: ChargeKey, now: number): number {
+    const s = this.charges.get(k);
+    return s === undefined ? 0 : powerFromHold(now - s);
+  }
+  /** Seconds the button has been held (0 when not held). */
+  holdTime(k: ChargeKey, now: number): number {
+    const s = this.charges.get(k);
+    return s === undefined ? 0 : now - s;
   }
 
   // ------------------------------------------------------------- internals
@@ -294,8 +370,10 @@ export class PlayerController implements InteractionActor {
       if (this.released(k)) {
         const start = this.charges.get(k) ?? now;
         this.charges.delete(k);
-        const power = clamp((now - start) / 0.9, 0.08, 1);
-        this.requestKick(k, power, ctx);
+        const seconds = now - start;
+        const power = powerFromHold(seconds);
+        this.lastCharge = { key: k, seconds, power };
+        this.command(k, power, ctx);
       }
     }
     const busy = this.sm.busy;
@@ -312,92 +390,41 @@ export class PlayerController implements InteractionActor {
     if (this.input.skillMove && this.input.skill && this.input.skillMove !== this.prevInput.skillMove && !busy) this.startSkill(this.input.skillMove, ctx);
   }
 
-  /** Charge-meter level 0..1 for a held kick button (for the HUD). */
-  charge(k: ChargeKey, now: number): number {
-    const s = this.charges.get(k);
-    return s === undefined ? 0 : clamp((now - s) / 0.9, 0.08, 1);
-  }
-
-  private requestKick(k: ChargeKey, power: number, ctx: StepContext): void {
+  /** Build a pass/shot command from the released button and hand it to the interaction system. */
+  private command(k: ChargeKey, power: number, ctx: StepContext): void {
     const stick = this.input.move;
     const hasStick = Math.hypot(stick.x, stick.z) > 0.25;
     const facing = dirOf(this.yaw);
-    const aimPass = hasStick ? norm(stick) : facing;
+    let aim = hasStick ? norm(stick) : facing;
     let kind: KickKind;
-    let aim = aimPass;
-    if (k === 'pass') kind = power > 0.72 ? 'drivenPass' : 'shortPass';
+    if (k === 'pass') kind = power > 0.8 ? 'drivenPass' : 'shortPass';
     else if (k === 'through') kind = 'throughBall';
     else if (k === 'lob') {
       const wide = Math.abs(this.pos.x) > ctx.pitch.width / 2 - 16 && Math.abs(this.pos.z) > ctx.pitch.length / 2 - 30;
-      kind = wide ? 'cross' : power > 0.7 ? 'longPass' : 'lobPass';
+      kind = wide ? 'cross' : power > 0.75 ? 'longPass' : 'lobPass';
       if (wide) aim = norm({ x: -this.pos.x * 0.85, z: Math.sign(this.pos.z) * (ctx.pitch.length / 2 - 9) - this.pos.z });
     } else {
       const m = this.chargeMods;
-      kind = m.finesse ? 'finesseShot' : m.lowDriven ? 'lowDrivenShot' : m.chip ? 'chipShot'
-        : m.powerMod ? 'powerShot' : power < 0.2 ? 'placedShot' : 'shot';
+      kind = m.finesse ? 'finesseShot' : m.lowDriven ? 'lowDrivenShot' : m.chip ? 'chipShot' : m.powerMod ? 'powerShot' : 'shot';
       aim = PlayerBallInteraction.shotAim(this, stick, ctx.pitch.length / 2, ctx.pitch.goalWidth);
     }
-    this.pending = { kind, power, aim, since: ctx.time };
+    const req: KickRequest = { command: CHARGE_COMMAND[k], kind, power, aim };
+    const d = this.ix.requestKick(this, req, this.sm.busy, ctx.time);
+    if (d.result === 'accepted') this.startKick(d.plan);
+    else if (d.result === 'buffered') this.buffered = { req, since: ctx.time };
   }
 
-  private approachCap(dist: number): number {
-    return dist < 1.2 ? 2.5 : dist < 3 ? 4.5 : 9;
-  }
-
-  /**
-   * Work towards a kick: start the swing when the ball will be at the
-   * kicking foot at the contact frame, otherwise steer to the ball.
-   * Returns a movement override while approaching.
-   */
-  private approach(ctx: StepContext): Vec2 | null {
-    const p = this.pending;
-    if (!p) return null;
-    if (ctx.time - p.since > 1.6) { this.pending = null; return null; }
-    if (this.sm.busy) return null;
-    const b = ctx.ball.curr;
-    let kind = p.kind;
-    const shotLike = !kind.endsWith('Pass') && kind !== 'throughBall' && kind !== 'cross';
-    if (b.position.y > 1.3) kind = 'header';
-    else if (b.position.y > 0.5) kind = shotLike ? 'volley' : kind;
-    else if (shotLike && b.velocity.y > 1.2 && b.position.y < 0.5) kind = 'halfVolley';
-    const relV = { x: b.velocity.x - this.vel.x, z: b.velocity.z - this.vel.z };
-    const ballMoving = Math.hypot(relV.x, relV.z) > 4 && !this.hasBall;
-    if (kind === 'shortPass' && ballMoving) kind = 'firstTimePass';
-    const clip = ACTION_CLIPS[kind];
-    const contactT = clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55;
-    const tc = clip.duration * contactT;
-    const g = this.pw.cal.world.gravity, r = this.pw.cal.ball.radius;
-    const bp = { x: b.position.x + b.velocity.x * tc, y: Math.max(r, b.position.y + b.velocity.y * tc - 0.5 * g * tc * tc), z: b.position.z + b.velocity.z * tc };
-    const pp = { x: this.pos.x + this.vel.x * tc * 0.6, z: this.pos.z + this.vel.z * tc * 0.6 };
-    const f = dirOf(this.yaw);
-    const dx = bp.x - pp.x, dz = bp.z - pp.z;
-    const fwd = dx * f.x + dz * f.z, left = dx * f.z - dz * f.x;
-    const foot: Foot = kind === 'header' ? this.preferredFoot : left > 0.14 ? 'L' : left < -0.14 ? 'R' : this.preferredFoot;
-    const idealFwd = kind === 'header' ? 0.2 : kind === 'volley' ? 0.55 : 0.42;
-    const idealLeft = kind === 'header' ? 0 : foot === 'R' ? -0.13 : 0.13;
-    const heightOk = kind === 'header' ? bp.y > 1.55 && bp.y < 2.6 : kind === 'volley' ? bp.y < 1.3 : bp.y < 0.55;
-    if (Math.abs(fwd - idealFwd) < 0.36 && Math.abs(left - idealLeft) < 0.34 && heightOk) {
-      this.actionKind = kind;
-      this.actionAim = p.aim;
-      this.startAction(kind, foot, p.power);
-      this.pending = null;
-      return null;
-    }
-    // Steer to a spot just behind the ball on the line of the aim.
-    const dist = Math.hypot(b.position.x - this.pos.x, b.position.z - this.pos.z);
-    if (dist > 5 && !ballMoving) { this.pending = null; return null; }
-    const lead = ballMoving ? 0.35 : 0.15;
-    const target = { x: b.position.x + b.velocity.x * lead - p.aim.x * 0.5, z: b.position.z + b.velocity.z * lead - p.aim.z * 0.5 };
-    const to = { x: target.x - this.pos.x, z: target.z - this.pos.z };
-    const d = Math.hypot(to.x, to.z);
-    if (d < 0.12) return { x: p.aim.x * 0.5, z: p.aim.z * 0.5 };
-    return { x: to.x / d, z: to.z / d };
+  private startKick(plan: KickPlan): void {
+    this.kick = plan;
+    this.actionAim = plan.aim;
+    this.sm.start(plan.kind, { foot: plan.foot, power: plan.power, aim: plan.aim, force: true });
+    this.actionYaw0 = this.yaw;
   }
 
   private startAction(kind: ActionKind, foot: Foot, power = 0.5, side = 1): void {
     if (this.sm.start(kind, { foot, power, aim: this.actionAim, side })) {
       this.actionYaw0 = this.yaw;
-      if (!KICK_ACTIONS.has(kind)) this.actionKind = null;
+      if (!KICK_ACTIONS.has(kind)) this.kick = null;
     }
   }
 
@@ -428,79 +455,59 @@ export class PlayerController implements InteractionActor {
     return headingOf(this.pos.x - best.pos.x, this.pos.z - best.pos.z);
   }
 
-  private onAnimEvent(kind: string, ctx: StepContext): void {
-    const a = this.sm.action ?? null;
-    const ball = ctx.ball, now = ctx.time;
-    // The action may have ended this step; markers still belong to it.
-    const name = a?.clip.name ?? null;
-    if (kind === 'contact' && this.actionKind && (name === this.actionKind || name === null)) {
-      this.interaction.kick(this, ball, { kind: this.actionKind, power: a?.power ?? 0.5, aim: this.actionAim, foot: a?.foot ?? this.preferredFoot }, now);
-      this.actionKind = null;
+  private onAnimEvent(kind: string, action: AnimationStateMachine['action'], ctx: StepContext): void {
+    const now = ctx.time;
+    const name = action?.clip.name ?? null;
+    if (kind === 'contact' && this.kick && name === this.kick.kind && action) {
+      action.resolved = true;
+      this.ix.resolveKick(this, this.kick, now);
+      this.kick = null;
       return;
     }
     if (kind === 'contact' && name === 'jump') {
       // Jumping header if the ball is at the head.
-      this.interaction.kick(this, ball, { kind: 'header', power: 0.6, aim: dirOf(this.yaw), foot: this.preferredFoot }, now);
+      const plan: KickPlan = { command: 'shot', kind: 'header', power: 0.6, aim: dirOf(this.yaw), foot: this.preferredFoot, contactLeft: 0, contactFwd: 0.2, firstTime: true };
+      const b = ctx.ball.curr.position;
+      if (b.y > 1.3 && Math.hypot(b.x - this.pos.x, b.z - this.pos.z) < 1.2) this.ix.resolveKick(this, plan, now);
       return;
     }
-    if ((kind === 'touch' || kind === 'touch2') && a && SKILL_ACTIONS.has(a.clip.name)) {
-      this.interaction.skillTouch(this, ball, a.clip.name, kind, a.side, this.actionAim, a.foot, now);
+    if ((kind === 'touch' || kind === 'touch2') && action && SKILL_ACTIONS.has(action.clip.name)) {
+      this.ix.skillTouch(this, action.clip.name, kind, action.side, this.actionAim, action.foot, now);
     }
   }
 
   /** A tackle that misses the ball but catches the opponent's legs trips him. */
-  private tripCheck(ctx: StepContext, foot: Foot, severity: number): void {
-    const p = this.interaction.footPoint(this, foot);
+  private tripCheck(ctx: StepContext, foot: Foot, severity: number): boolean {
+    const p = this.ix.footPoint(this, foot);
+    let hit = false;
     for (const o of ctx.others) {
       const d = Math.hypot(o.pos.x - p.x, o.pos.z - p.z);
-      if (d < 0.42 && p.y < 0.7) o.knock(severity);
+      if (d < 0.42 && p.y < 0.7) { o.knock(severity); hit = true; }
     }
+    return hit;
   }
 
   private continuous(ctx: StepContext): void {
-    const a = this.sm.action, ball = ctx.ball, now = ctx.time;
+    const a = this.sm.action, now = ctx.time;
     if (a && a.clip.name === 'slidingTackle') {
       const t = a.time / a.clip.duration;
       if (t > 0.1 && t < 0.8) {
-        if (!a.resolved && this.interaction.slidingSweep(this, ball, a.foot, now)) a.resolved = true;
-        if (!a.resolved) this.tripCheck(ctx, a.foot, 1.2);
-        else this.tripCheck(ctx, a.foot, 0.5);
+        if (!a.resolved && this.ix.tackle(this, 'sliding', a.foot, now)) a.resolved = true;
+        this.tripCheck(ctx, a.foot, a.resolved ? 0.5 : 1.2);
       }
+      if (t >= 0.8 && !a.resolved) { a.resolved = true; this.ix.tackleMissed(this, 'sliding', false, now); }
       return;
     }
     if (a && a.clip.name === 'standingTackle') {
       const t = a.time / a.clip.duration;
-      if (!a.resolved && t > 0.2 && t < 0.58 && this.interaction.standingTackle(this, ball, a.foot, now)) a.resolved = true;
-      if (!a.resolved && t >= 0.58) {
-        a.resolved = true;
-        this.pw.events.emit({ type: 'tackle', playerId: this.id, kind: 'standing', won: false, time: now });
-        this.tripCheck(ctx, a.foot, 0.95);
-      }
+      if (!a.resolved && t > 0.2 && t < 0.58 && this.ix.tackle(this, 'standing', a.foot, now)) a.resolved = true;
+      if (!a.resolved && t >= 0.58) { a.resolved = true; this.ix.tackleMissed(this, 'standing', this.tripCheck(ctx, a.foot, 0.95), now); }
       return;
     }
     if (a && a.clip.interruptible === false) return;
-    // Dribble touch when a foot strikes while we have the ball.
-    const struck = this.contact.struck;
-    const stick = this.input.move;
-    const hasStick = Math.hypot(stick.x, stick.z) > 0.1;
-    if (this.hasBall && !this.pending && hasStick) {
-      // Touch on a foot strike; or a saving touch if the ball is about to go under us.
-      const L = ballLocal(this, ball.curr.position);
-      const urgent = L.fwd < 0.3 && L.fwd > -0.1 && now - ball.lastTouchTime > 0.2;
-      const foot = struck ?? (urgent ? (this.contact.supportFoot(this.gait)) : null);
-      const intended = targetSpeedFor(this.input, this.tuning, this.stamina);
-      if (foot && this.interaction.dribbleTouch(this, ball, norm(stick), foot, this.input.defend, intended, now)) return;
-    }
-    if (this.hasBall && !this.pending && !hasStick && this.speed < 1.8) {
-      const rel = Math.hypot(ball.curr.velocity.x - this.vel.x, ball.curr.velocity.z - this.vel.z);
-      if (rel > 0.6 && this.interaction.stopBall(this, ball, now)) return;
-    }
-    // Receive / intercept / block.
-    if (this.pending) return;
-    const mine = ball.lastTouchBy === this.id && now - ball.lastTouchTime < 0.45;
-    if (mine) return;
-    if (ball.lastTouchBy === this.id && this.hasBall) return;
-    const foot = this.interaction.receive(this, ball, stick, this.input.defend, now);
+    if (this.kick || this.buffered) return;
+    if (this.hasBall) { this.ix.dribble(this, this.contact.struck, this.input.defend, now); return; }
+    const foot = this.ix.receive(this, ctx.others, this.input.defend, now);
     if (foot) this.sm.start('trap', { foot, force: true });
   }
 }

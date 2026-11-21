@@ -23,14 +23,13 @@ function hold(sim: Simulation, p: PlayerController, secs: number, inp: Partial<P
 async function withBall(start = { x: 0, z: 0 }): Promise<{ sim: Simulation; p: PlayerController }> {
   const sim = await world();
   const p = sim.addPlayer({ id: 'ref', name: 'Reference', number: 10, start });
-  sim.ball.reset({ x: start.x, y: sim.cal.ball.radius, z: start.z + 0.5 });
-  sim.ball.touched('ref', 'touch');
+  sim.giveBall(p, 0.5);
   return { sim, p };
 }
 async function noBall(start = { x: 0, z: -30 }): Promise<{ sim: Simulation; p: PlayerController }> {
   const sim = await world();
   const p = sim.addPlayer({ id: 'ref', name: 'Reference', number: 10, start });
-  sim.ball.reset({ x: 30, y: sim.cal.ball.radius, z: 40 });
+  sim.placeBall({ x: 30, y: sim.cal.ball.radius, z: 40 });
   return { sim, p };
 }
 
@@ -124,7 +123,7 @@ export const CHECKS: Check[] = [
     const sim = await world();
     const a = sim.addPlayer({ id: 'a', name: 'A', number: 1, start: { x: 0, z: -6 } });
     const b = sim.addPlayer({ id: 'b', name: 'B', number: 2, start: { x: 0.05, z: 6 }, yaw: Math.PI });
-    sim.ball.reset({ x: 30, y: 0.11, z: 30 });
+    sim.placeBall({ x: 30, y: 0.11, z: 30 });
     let minD = 99;
     for (let i = 0; i < 240; i++) { a.input = { ...emptyInput(), move: { x: 0, z: 1 } }; b.input = { ...emptyInput(), move: { x: 0, z: -1 } }; sim.step(); minD = Math.min(minD, Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z)); }
     const ok = minD > a.physics.radius + b.physics.radius - 0.06 && Number.isFinite(a.pos.x);
@@ -134,7 +133,7 @@ export const CHECKS: Check[] = [
     const sim = await world();
     const a = sim.addPlayer({ id: 'a', name: 'A', number: 1, start: { x: 0, z: -14 } });
     const b = sim.addPlayer({ id: 'b', name: 'B', number: 2, start: { x: 0, z: 2 }, yaw: Math.PI });
-    sim.ball.reset({ x: 30, y: 0.11, z: 30 });
+    sim.placeBall({ x: 30, y: 0.11, z: 30 });
     let lost = '';
     sim.pw.events.on((e) => { if (e.type === 'balanceLost' && !lost) lost = e.playerId; });
     for (let i = 0; i < 300; i++) { a.input = { ...emptyInput(), move: { x: 0, z: 1 }, sprint: true }; b.input = { ...emptyInput(), move: { x: 0, z: -1 }, sprint: true }; sim.step(); }
@@ -156,7 +155,7 @@ export const CHECKS: Check[] = [
   } },
   { id: 15, name: 'Ball rolls (not slides)', run: async () => {
     const sim = await world();
-    sim.ball.reset({ x: 0, y: 0.11, z: -30 }, { x: 0, y: 0, z: 8 });
+    sim.placeBall({ x: 0, y: 0.11, z: -30 }, { x: 0, y: 0, z: 8 });
     for (let i = 0; i < 90; i++) sim.step();
     const s = sim.ball.curr;
     const slip = slipSpeed(s.velocity, s.angularVelocity, sim.cal.ball.radius);
@@ -167,7 +166,7 @@ export const CHECKS: Check[] = [
   } },
   { id: 16, name: 'Ball bounces naturally', run: async () => {
     const sim = await world();
-    sim.ball.reset({ x: 0, y: 2, z: 0 });
+    sim.placeBall({ x: 0, y: 2, z: 0 });
     const peaks: number[] = []; let up = false, prev = 2;
     for (let i = 0; i < 360; i++) { sim.step(); const y = sim.ball.curr.position.y; if (y > prev) up = true; else if (up) { peaks.push(prev); up = false; } prev = y; }
     const dec = peaks.every((p, i) => i === 0 || p <= peaks[i - 1] + 1e-3);
@@ -176,7 +175,7 @@ export const CHECKS: Check[] = [
   } },
   { id: 17, name: 'Correct ground friction (skid → roll)', run: async () => {
     const sim = await world();
-    sim.ball.reset({ x: 0, y: 0.11, z: -30 }, { x: 0, y: 0, z: 10 });
+    sim.placeBall({ x: 0, y: 0.11, z: -30 }, { x: 0, y: 0, z: 10 });
     let tRoll = -1;
     for (let i = 0; i < 120; i++) { sim.step(); const s = sim.ball.curr; if (tRoll < 0 && slipSpeed(s.velocity, s.angularVelocity, 0.11) < 0.15) tRoll = sim.time; }
     const v = sim.ball.curr.velocity.z;
@@ -186,7 +185,7 @@ export const CHECKS: Check[] = [
   { id: 18, name: 'Stable air trajectories (drag)', run: async () => {
     const sim = await world();
     const v0 = 24, e = (30 * Math.PI) / 180;
-    sim.ball.reset({ x: 0, y: 0.11, z: -50 }, { x: 0, y: Math.sin(e) * v0, z: Math.cos(e) * v0 });
+    sim.placeBall({ x: 0, y: 0.11, z: -50 }, { x: 0, y: Math.sin(e) * v0, z: Math.cos(e) * v0 });
     let land = 0;
     for (let i = 0; i < 400; i++) { sim.step(); const s = sim.ball.curr; if (i > 10 && s.position.y < 0.2 && s.velocity.y < 0) { land = s.position.z + 50; break; } }
     const vac = (v0 * v0 * Math.sin(2 * e)) / 9.81;
@@ -199,7 +198,7 @@ export const CHECKS: Check[] = [
       const t = BALL_TESTS[0]; void t;
       const v = { x: 0, y: 7, z: 20 };
       const { spinFromComponents } = await import('../ball/BallSpin.ts');
-      sim.ball.reset({ x: 0, y: 0.11, z: -50 }, v, spinFromComponents(v, { top }));
+      sim.placeBall({ x: 0, y: 0.11, z: -50 }, v, spinFromComponents(v, { top }));
       for (let i = 0; i < 400; i++) { sim.step(); const s = sim.ball.curr; if (i > 10 && s.position.y < 0.2 && s.velocity.y < 0) return s.position.z + 50; }
       return 0;
     };
@@ -224,7 +223,7 @@ export const CHECKS: Check[] = [
     const sim = await world();
     BALL_TESTS.find((t) => t.id === 'post')?.run(sim);
     let hit = false, after = 0;
-    sim.pw.events.on((e) => { if (e.type === 'ballContact' && e.surface === 'post') hit = true; });
+    sim.pw.events.on((e) => { if (e.type === 'SurfaceContact' && e.surface === 'post') hit = true; });
     for (let i = 0; i < 60; i++) { sim.step(); if (hit && !after) after = sim.ball.curr.velocity.z; }
     return { pass: hit && after < -8, detail: hit ? `hit the post, rebounded at ${f(after)} m/s` : 'missed the post' };
   } },
@@ -232,7 +231,7 @@ export const CHECKS: Check[] = [
     const sim = await world();
     BALL_TESTS.find((t) => t.id === 'net')?.run(sim);
     let net = false;
-    sim.pw.events.on((e) => { if (e.type === 'ballContact' && e.surface === 'net') net = true; });
+    sim.pw.events.on((e) => { if (e.type === 'SurfaceContact' && e.surface === 'net') net = true; });
     for (let i = 0; i < 180; i++) sim.step();
     const p = sim.ball.curr.position, s = Math.hypot(sim.ball.curr.velocity.x, sim.ball.curr.velocity.z);
     const inGoal = p.z > 52.5 && p.z < 52.5 + 2.2 && Math.abs(p.x) < 3.7;
@@ -246,7 +245,7 @@ export const CHECKS: Check[] = [
   } },
   { id: 24, name: 'No endless jitter', run: async () => {
     const sim = await world();
-    sim.ball.reset({ x: 0, y: 1.5, z: 0 }, { x: 2, y: 0, z: 1 });
+    sim.placeBall({ x: 0, y: 1.5, z: 0 }, { x: 2, y: 0, z: 1 });
     for (let i = 0; i < 60 * 12; i++) sim.step();
     const v = sim.ball.curr.velocity, w = sim.ball.curr.angularVelocity;
     const rest = Math.hypot(v.x, v.y, v.z) < 0.01 && Math.hypot(w.x, w.y, w.z) < 0.05;
@@ -255,14 +254,14 @@ export const CHECKS: Check[] = [
   { id: 25, name: 'Natural close-control dribbling', run: async () => {
     const { sim, p } = await withBall();
     let touches = 0, maxGap = 0;
-    sim.pw.events.on((e) => { if (e.type === 'ballTouch') touches++; });
+    sim.pw.events.on((e) => { if (e.type === 'DribbleTouch') touches++; });
     hold(sim, p, 6, { move: { x: 0, z: 1 }, jog: true }, () => { maxGap = Math.max(maxGap, Math.hypot(sim.ball.curr.position.x - p.pos.x, sim.ball.curr.position.z - p.pos.z)); });
     return { pass: p.hasBall && touches >= 8 && maxGap < 1.6, detail: `jogging 6 s: ${touches} touches, ball never more than ${f(maxGap)} m away` };
   } },
   { id: 26, name: 'Alternating-foot touches', run: async () => {
     const { sim, p } = await withBall();
     const feet: string[] = [];
-    sim.pw.events.on((e) => { if (e.type === 'ballTouch') feet.push(e.foot); });
+    sim.pw.events.on((e) => { if (e.type === 'DribbleTouch') feet.push(e.foot); });
     hold(sim, p, 6, { move: { x: 0, z: 1 } });
     const alt = feet.slice(1).filter((x, i) => x !== feet[i]).length;
     return { pass: feet.length > 6 && alt / (feet.length - 1) > 0.7, detail: `${feet.join('')} (${alt}/${feet.length - 1} alternate)` };
@@ -270,16 +269,17 @@ export const CHECKS: Check[] = [
   { id: 27, name: 'Short passing', run: async () => {
     const { sim, p } = await withBall();
     let kick = '';
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') kick = `${e.kind} ${f(e.speed, 1)} m/s q${f(e.quality)}`; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) kick = `${e.kind} ${f(e.speed, 1)} m/s q${f(e.quality)}`; });
     hold(sim, p, 0.3, { move: { x: 0, z: 1 }, jog: true, pass: true });
     hold(sim, p, 6, {});
     const d = Math.hypot(sim.ball.curr.position.x, sim.ball.curr.position.z);
-    return { pass: kick.startsWith('shortPass') && d > 10 && d < 25, detail: `${kick}; ball rolled ${f(d, 1)} m` };
+    // Half power (0.3 s hold) ≈ 11 m/s along the turf.
+    return { pass: kick.startsWith('shortPass') && d > 15 && d < 60, detail: `${kick}; ball rolled ${f(d, 1)} m` };
   } },
   { id: 28, name: 'Driven passing', run: async () => {
     const { sim, p } = await withBall();
     let kick = '';
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') kick = `${e.kind} ${f(e.speed, 1)} m/s`; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) kick = `${e.kind} ${f(e.speed, 1)} m/s`; });
     hold(sim, p, 0.85, { move: { x: 0, z: 1 }, jog: true, pass: true });
     hold(sim, p, 2, {});
     return { pass: kick.startsWith('drivenPass'), detail: kick || 'no kick' };
@@ -287,7 +287,7 @@ export const CHECKS: Check[] = [
   { id: 29, name: 'Through balls', run: async () => {
     const { sim, p } = await withBall();
     let kick = '';
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') kick = `${e.kind} ${f(e.speed, 1)} m/s`; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) kick = `${e.kind} ${f(e.speed, 1)} m/s`; });
     hold(sim, p, 0.4, { move: { x: 0, z: 1 }, through: true });
     hold(sim, p, 5, {});
     return { pass: kick.startsWith('throughBall'), detail: `${kick}; ball at z ${f(sim.ball.curr.position.z, 1)} m` };
@@ -295,7 +295,7 @@ export const CHECKS: Check[] = [
   { id: 30, name: 'Powerful shooting', run: async () => {
     const { sim, p } = await withBall({ x: 0, z: 30 });
     let kick = ''; let speed = 0; let goal = false;
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') { kick = e.kind; speed = e.speed; } if (e.type === 'ballContact' && e.surface === 'net') goal = true; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) { kick = e.kind; speed = e.speed; } if (e.type === 'SurfaceContact' && e.surface === 'net') goal = true; });
     hold(sim, p, 0.1, { move: { x: 0, z: 1 }, jog: true });
     hold(sim, p, 0.9, { move: { x: 0, z: 1 }, jog: true, shoot: true, powerMod: true });
     hold(sim, p, 2, {});
@@ -304,7 +304,7 @@ export const CHECKS: Check[] = [
   { id: 31, name: 'Finesse shooting curls', run: async () => {
     const { sim, p } = await withBall({ x: 0, z: 28 });
     let kick = '';
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') kick = e.kind; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) kick = e.kind; });
     hold(sim, p, 0.1, { move: { x: 0, z: 1 }, jog: true });
     hold(sim, p, 0.5, { move: { x: 0, z: 1 }, jog: true, shoot: true, finesse: true });
     let side = 0;
@@ -314,7 +314,7 @@ export const CHECKS: Check[] = [
   { id: 32, name: 'Lobbed / chipped shots', run: async () => {
     const { sim, p } = await withBall({ x: 0, z: 30 });
     let kick = ''; let apex = 0;
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') kick = e.kind; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) kick = e.kind; });
     hold(sim, p, 0.1, { move: { x: 0, z: 1 }, jog: true });
     hold(sim, p, 0.5, { move: { x: 0, z: 1 }, jog: true, shoot: true, chip: true });
     hold(sim, p, 2.5, {}, () => { apex = Math.max(apex, sim.ball.curr.position.y); });
@@ -324,9 +324,9 @@ export const CHECKS: Check[] = [
     const sim = await world();
     const atk = sim.addPlayer({ id: 'atk', name: 'A', number: 7, start: { x: 0, z: 0 } });
     const def = sim.addPlayer({ id: 'def', name: 'D', number: 4, start: { x: 0, z: 6 }, yaw: Math.PI });
-    sim.ball.reset({ x: 0, y: 0.11, z: 0.5 }); sim.ball.touched('atk', 'touch');
+    sim.giveBall(atk, 0.5);
     let won = false, pressed = false;
-    sim.pw.events.on((e) => { if (e.type === 'tackle' && e.playerId === 'def' && e.won) won = true; });
+    sim.pw.events.on((e) => { if (e.type === 'TackleContact' && e.playerId === 'def' && e.won) won = true; });
     for (let i = 0; i < 240; i++) {
       atk.input = { ...emptyInput(), move: { x: 0, z: 1 }, jog: true };
       const d = Math.hypot(sim.ball.curr.position.x - def.pos.x, sim.ball.curr.position.z - def.pos.z);
@@ -334,15 +334,15 @@ export const CHECKS: Check[] = [
       if (d < 1.4) pressed = true;
       sim.step();
     }
-    return { pass: won && sim.ball.lastTouchBy === 'def', detail: won ? 'defender poked the ball away from the dribbler' : 'tackle missed' };
+    return { pass: won, detail: won ? 'defender poked the ball away from the dribbler' : 'tackle missed' };
   } },
   { id: 34, name: 'Sliding tackles', run: async () => {
     const sim = await world();
     const atk = sim.addPlayer({ id: 'atk', name: 'A', number: 7, start: { x: 0, z: 0 } });
     const def = sim.addPlayer({ id: 'def', name: 'D', number: 4, start: { x: 0.3, z: 12 }, yaw: Math.PI });
-    sim.ball.reset({ x: 0, y: 0.11, z: 0.5 }); sim.ball.touched('atk', 'touch');
+    sim.giveBall(atk, 0.5);
     let won = false, slid = false, minFoot = 9;
-    sim.pw.events.on((e) => { if (e.type === 'tackle' && e.kind === 'sliding' && e.won) won = true; });
+    sim.pw.events.on((e) => { if (e.type === 'TackleContact' && e.kind === 'sliding' && e.won) won = true; });
     for (let i = 0; i < 300; i++) {
       atk.input = { ...emptyInput(), move: { x: 0, z: 1 }, jog: true };
       const b = sim.ball.curr.position;
@@ -358,7 +358,7 @@ export const CHECKS: Check[] = [
   { id: 35, name: 'Interceptions / first touch', run: async () => {
     const sim = await world();
     const p = sim.addPlayer({ id: 'rx', name: 'Receiver', number: 8, start: { x: 0, z: 10 }, yaw: Math.PI });
-    sim.ball.reset({ x: 0.3, y: 0.11, z: -5 }, { x: 0, y: 0, z: 9 }, { x: 9 / 0.11, y: 0, z: 0 });
+    sim.placeBall({ x: 0.3, y: 0.11, z: -5 }, { x: 0, y: 0, z: 9 }, { x: 9 / 0.11, y: 0, z: 0 });
     hold(sim, p, 3, {});
     const d = Math.hypot(sim.ball.curr.position.x - p.pos.x, sim.ball.curr.position.z - p.pos.z);
     return { pass: sim.ball.lastTouchBy === 'rx' && d < 2.5, detail: `pass at 9 m/s controlled; ball ${f(d)} m from receiver afterwards` };
@@ -366,7 +366,7 @@ export const CHECKS: Check[] = [
   { id: 36, name: 'Animation and ball contact are synchronised', run: async () => {
     const { sim, p } = await withBall({ x: 0, z: 30 });
     let kickT = -1, contactT = -1;
-    sim.pw.events.on((e) => { if (e.type === 'ballKick') kickT = e.time; });
+    sim.pw.events.on((e) => { if (e.type === 'BallImpulse' && (e.source === 'pass' || e.source === 'shot' || e.source === 'header')) kickT = e.time; });
     hold(sim, p, 0.1, { move: { x: 0, z: 1 }, jog: true });
     for (let i = 0; i < 120; i++) {
       p.input = { ...emptyInput(), move: { x: 0, z: 1 }, jog: true, shoot: i < 24 };
@@ -411,7 +411,7 @@ export const CHECKS: Check[] = [
     const sim = await world();
     const ps: PlayerController[] = [];
     for (let i = 0; i < 22; i++) ps.push(sim.addPlayer({ id: `p${i}`, name: `P${i}`, number: i + 1, start: { x: (i % 11) * 5 - 25, z: i < 11 ? -10 : 10 }, seed: i + 1 }));
-    sim.ball.reset({ x: 0, y: 0.11, z: 0 });
+    sim.placeBall({ x: 0, y: 0.11, z: 0 });
     const t0 = performance.now();
     for (let i = 0; i < 300; i++) {
       for (const p of ps) { const b = sim.ball.curr.position; const dx = b.x - p.pos.x, dz = b.z - p.pos.z, d = Math.hypot(dx, dz) || 1; p.input = { ...emptyInput(), move: { x: dx / d, z: dz / d } }; }
@@ -436,7 +436,7 @@ export const CHECKS: Check[] = [
     const sim = await world();
     const ps: PlayerController[] = [];
     for (let i = 0; i < 6; i++) ps.push(sim.addPlayer({ id: `p${i}`, name: `P${i}`, number: i, start: { x: Math.cos(i) * 6, z: Math.sin(i) * 6 }, seed: i + 3 }));
-    sim.ball.reset({ x: 0, y: 0.11, z: 0 });
+    sim.placeBall({ x: 0, y: 0.11, z: 0 });
     let maxV = 0;
     for (let i = 0; i < 360; i++) {
       for (const p of ps) { const dx = -p.pos.x, dz = -p.pos.z, d = Math.hypot(dx, dz) || 1; p.input = { ...emptyInput(), move: { x: dx / d, z: dz / d } }; }

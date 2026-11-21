@@ -23,6 +23,19 @@ export interface PlayerStats {
   gaitPhase: number;
   charge: { pass: number; through: number; lob: number; shoot: number };
   pending: string | null;
+  velocity: [number, number];
+  stick: [number, number];
+  possession: string;
+  selectedFoot: string;
+  action: string;
+}
+export interface InputStats {
+  held: { J: boolean; K: boolean; I: boolean; L: boolean };
+  /** Seconds the current kick button has been held. */
+  hold: number;
+  /** Power the current hold would give (0.25–1), 0 when nothing is held. */
+  power: number;
+  last: string;
 }
 export interface BallStats {
   speed: number;
@@ -34,9 +47,15 @@ export interface BallStats {
   grounded: boolean;
   lastSurface: string;
   lastTouchBy: string;
+  owner: string;
+  possessionState: string;
+  lastContact: string;
+  lastImpulse: string;
+  physicsState: string;
 }
 export interface LabStats {
   player: PlayerStats;
+  input: InputStats;
   ball: BallStats;
   events: string[];
   fps: number;
@@ -51,11 +70,16 @@ interface LabState {
   showGuide: boolean;
   fpsCap: FpsCap;
   sparring: SparringMode;
-  tab: 'player' | 'ball';
+  tab: 'player' | 'ball' | 'tests';
   paused: boolean;
   slowmo: boolean;
   stats: LabStats | null;
   lastTest: string | null;
+  /** Gameplay tests A–D: queue, the one running, its current step, results. */
+  gtQueue: string[];
+  gtRunning: string | null;
+  gtStep: string;
+  gtResults: Record<string, Array<{ name: string; pass: boolean; detail: string }>>;
   set: (patch: Partial<Omit<LabState, 'set'>>) => void;
 }
 
@@ -71,5 +95,9 @@ export const useLabStore = create<LabState>((set) => ({
   slowmo: false,
   stats: null,
   lastTest: null,
+  gtQueue: [],
+  gtRunning: null,
+  gtStep: '',
+  gtResults: {},
   set: (patch) => set(patch),
 }));
