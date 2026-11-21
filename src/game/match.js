@@ -906,10 +906,12 @@ function doTackle(state, p) {
   const behind = (p.pos.x - victim.pos.x) * victim.face.x
     + (p.pos.z - victim.pos.z) * victim.face.z < -0.35;
   const movingFast = p.intent.sprint || len(p.vel.x, p.vel.z) > 5;
+  // Most challenges are clean; fouls come from tackling through the back
+  // or flying in at full speed, and from being outclassed by the dribbler.
   const foulChance = clamp(
-    0.035 + (behind ? 0.18 : 0) + (movingFast ? 0.07 : 0)
-      + Math.max(0, victim.phys.dribbling - p.phys.tackling) * 100 / 1250,
-    0.02, 0.38,
+    0.006 + (behind ? 0.06 : 0) + (movingFast ? 0.02 : 0)
+      + Math.max(0, victim.phys.dribbling - p.phys.tackling) * 100 / 4000,
+    0.004, 0.14,
   );
   if (Math.random() < foulChance) {
     const spot = { x: victim.pos.x, z: victim.pos.z };
@@ -920,8 +922,9 @@ function doTackle(state, p) {
     state.events.push({ type: 'foul', team: victim.team, player: p.id, victim: victim.id, penalty });
     if (movingFast && Math.random() < 0.045) injurePlayer(state, victim);
     if (p.role !== 'GK') {
-      if (behind && movingFast && Math.random() < 0.12) issueCard(state, p, 'red');
-      else if ((behind || movingFast) && Math.random() < 0.45) issueCard(state, p, 'yellow');
+      if (behind && movingFast && Math.random() < 0.06) issueCard(state, p, 'red');
+      else if (behind && movingFast && Math.random() < 0.4) issueCard(state, p, 'yellow');
+      else if ((behind || movingFast) && Math.random() < 0.12) issueCard(state, p, 'yellow');
     }
     if (penalty) startPenalty(state, victim.team);
     else startRestart(state, 'free kick', victim.team, spot);

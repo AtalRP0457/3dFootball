@@ -53,6 +53,11 @@ function setMove(p, tx, tz, sprint = false, slowRadius = 1.5) {
   it.sprint = sprint && d > 3 && p.stamina > 0.25;
 }
 
+/** Is p behind the ball carrier o (relative to where o is facing)? */
+function fromBehind(p, o) {
+  return (p.pos.x - o.pos.x) * o.face.x + (p.pos.z - o.pos.z) * o.face.z < -0.35;
+}
+
 function opponents(state, p) {
   return state.players.filter((o) => o.team !== p.team && o.onPitch && !o.sentOff);
 }
@@ -179,7 +184,8 @@ function offBallAI(state, p, team, c, dt) {
         if (p.aiTimer <= 0) {
           // Defenders who read the game (marking, positioning, awareness) react sooner.
           p.aiTimer = team.diff.reaction * (1.35 - (p.phys?.defending ?? 0.65) * 0.6) + Math.random() * 0.3;
-          if (Math.random() < 0.7 * team.diff.tackle) p.intent.action = { type: 'tackle' };
+          // Don't dive in through the back of a player: jockey until goal-side.
+          if (Math.random() < (fromBehind(p, o) ? 0.22 : 0.65) * team.diff.tackle) p.intent.action = { type: 'tackle' };
         }
       }
     } else {
@@ -241,7 +247,7 @@ function offBallAI(state, p, team, c, dt) {
       const o = b.owner;
       setMove(p, o.pos.x + o.vel.x * 0.3 - dir * 1.2, o.pos.z + o.vel.z * 0.3, true, 0.3);
       p.aiState = 'double team';
-      if (!o.mustPass && !o.holding && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.6 && Math.random() < 0.02 * team.diff.tackle) {
+      if (!o.mustPass && !o.holding && p.tackleCd <= 0 && dist(p.pos, o.pos) < 1.6 && Math.random() < (fromBehind(p, o) ? 0.006 : 0.02) * team.diff.tackle) {
         p.intent.action = { type: 'tackle' };
       }
       return;

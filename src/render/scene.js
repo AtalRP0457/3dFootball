@@ -4,12 +4,13 @@
 import * as THREE from 'three';
 import { createCharacter } from './character/character.js';
 import { playerIdentity } from '../game/players/identity.js';
+import { buildPitch } from './stadium/pitch.js';
+import { buildStadium as buildArena } from './stadium/stadium.js';
 import {
   PITCH, HALF_L, HALF_W, GOAL, BOX, GOAL_AREA, PENALTY_SPOT,
   PENALTY_ARC_RADIUS, BALL_R,
 } from '../game/constants.js';
 
-const MARGIN = 4; // grass beyond the touchlines (metres)
 const HUMAN_COLORS = { p1: '#22d3ee', p2: '#f43f5e' };
 // Ground rings under players
 const RING = {
@@ -18,7 +19,6 @@ const RING = {
   other: '#ef4444', // red: controlled by the computer
   tackle: '#fb923c', // flashing orange: close enough to tackle
 };
-const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0673b'];
 
 const CAMERA_MODES = {
   broadcast: { h: 22, back: 29, ahead: 0.82, fov: 44, clampX: 13 },
@@ -38,203 +38,6 @@ function texture(c, renderer) {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return t;
-}
-
-// ---------- pitch ----------
-function pitchTexture(renderer) {
-  const S = 20;
-  const W = (PITCH.length + 2 * MARGIN) * S;
-  const H = (PITCH.width + 2 * MARGIN) * S;
-  const [c, g] = canvas(W, H);
-  const X = (x) => (x + HALF_L + MARGIN) * S;
-  const Z = (z) => (z + HALF_W + MARGIN) * S;
-
-  g.fillStyle = '#2e7a31';
-  g.fillRect(0, 0, W, H);
-  const n = 16, sw = W / n;
-  for (let i = 0; i < n; i++) {
-    if (i % 2) { g.fillStyle = '#37893a'; g.fillRect(i * sw, 0, sw, H); }
-  }
-  for (let i = 0; i < 9000; i++) {
-    g.fillStyle = `rgba(${Math.random() < 0.5 ? '20,60,20' : '90,150,80'},0.18)`;
-    g.fillRect(Math.random() * W, Math.random() * H, 2, 2);
-  }
-
-  g.strokeStyle = 'rgba(255,255,255,0.92)';
-  g.fillStyle = 'rgba(255,255,255,0.92)';
-  g.lineWidth = 0.12 * S;
-  g.strokeRect(X(-HALF_L), Z(-HALF_W), PITCH.length * S, PITCH.width * S);
-  g.beginPath(); g.moveTo(X(0), Z(-HALF_W)); g.lineTo(X(0), Z(HALF_W)); g.stroke();
-  g.beginPath(); g.arc(X(0), Z(0), 9.15 * S, 0, Math.PI * 2); g.stroke();
-  g.beginPath(); g.arc(X(0), Z(0), 0.25 * S, 0, Math.PI * 2); g.fill();
-
-  for (const sx of [-1, 1]) {
-    const gx = sx * HALF_L;
-    const inner = (d) => gx - sx * d;
-    // Penalty area
-    g.strokeRect(Math.min(X(gx), X(inner(BOX.depth))), Z(-BOX.width / 2), BOX.depth * S, BOX.width * S);
-    // Goal area
-    g.strokeRect(Math.min(X(gx), X(inner(GOAL_AREA.depth))), Z(-GOAL_AREA.width / 2), GOAL_AREA.depth * S, GOAL_AREA.width * S);
-    // Penalty spot and arc
-    const spot = inner(PENALTY_SPOT);
-    g.beginPath(); g.arc(X(spot), Z(0), 0.2 * S, 0, Math.PI * 2); g.fill();
-    g.save();
-    g.beginPath();
-    g.rect(sx > 0 ? 0 : X(inner(BOX.depth)), 0, sx > 0 ? X(inner(BOX.depth)) : W, H);
-    g.clip();
-    g.beginPath(); g.arc(X(spot), Z(0), PENALTY_ARC_RADIUS * S, 0, Math.PI * 2); g.stroke();
-    g.restore();
-  }
-  // Corner arcs, clipped to the pitch so only the inside quarter shows.
-  g.save();
-  g.beginPath();
-  g.rect(X(-HALF_L), Z(-HALF_W), PITCH.length * S, PITCH.width * S);
-  g.clip();
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      g.beginPath(); g.arc(X(sx * HALF_L), Z(sz * HALF_W), 1 * S, 0, Math.PI * 2); g.stroke();
-    }
-  }
-  g.restore();
-  return texture(c, renderer);
-}
-
-function adTexture(renderer) {
-  const [c, g] = canvas(1024, 64);
-  const ads = [
-    ['#0b3d91', '#ffffff', 'LEGENDS'],
-    ['#ffd400', '#111111', 'DECADES CUP'],
-    ['#c8102e', '#ffffff', '1910 – 2000'],
-    ['#111111', '#22d3ee', 'THREE.JS'],
-  ];
-  const w = c.width / ads.length;
-  ads.forEach(([bg, fg, text], i) => {
-    g.fillStyle = bg; g.fillRect(i * w, 0, w, 64);
-    g.fillStyle = fg; g.font = 'italic 900 38px Arial Black, Arial, sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(text, i * w + w / 2, 34);
-  });
-  const t = texture(c, renderer);
-  t.wrapS = THREE.RepeatWrapping;
-  return t;
-}
-
-function crowdTexture(renderer) {
-  const [c, g] = canvas(512, 256);
-  g.fillStyle = '#2b2b33'; g.fillRect(0, 0, 512, 256);
-  const colors = ['#e63946', '#f1faee', '#a8dadc', '#457b9d', '#ffd166', '#06d6a0', '#ef476f', '#f4a261', '#222', '#ddd'];
-  for (let row = 0; row < 16; row++) {
-    g.fillStyle = '#3a3a44'; g.fillRect(0, row * 16 + 12, 512, 4);
-    for (let i = 0; i < 64; i++) {
-      if (Math.random() < 0.12) continue;
-      const x = i * 8 + Math.random() * 2, y = row * 16 + 2;
-      g.fillStyle = colors[(Math.random() * colors.length) | 0];
-      g.fillRect(x, y + 4, 6, 7);
-      g.fillStyle = SKIN[(Math.random() * SKIN.length) | 0];
-      g.fillRect(x + 1.5, y, 3, 4);
-    }
-  }
-  const t = texture(c, renderer);
-  t.wrapS = THREE.RepeatWrapping;
-  return t;
-}
-
-function makeStand(width, depth, height, crowdTex) {
-  const group = new THREE.Group();
-  const slope = Math.hypot(depth, height);
-  const tex = crowdTex.clone();
-  tex.needsUpdate = true;
-  tex.repeat.set(width / 14, 1);
-  const seats = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, slope),
-    new THREE.MeshLambertMaterial({ map: tex }),
-  );
-  seats.rotation.x = -Math.atan2(depth, height);
-  seats.position.set(0, 1 + height / 2, -depth / 2);
-  group.add(seats);
-  const back = new THREE.Mesh(
-    new THREE.BoxGeometry(width, height + 4, 1),
-    new THREE.MeshLambertMaterial({ color: '#4a4f5c' }),
-  );
-  back.position.set(0, (height + 4) / 2, -depth - 0.5);
-  group.add(back);
-  const roof = new THREE.Mesh(
-    new THREE.BoxGeometry(width, 0.6, depth * 0.7),
-    new THREE.MeshLambertMaterial({ color: '#5d6472' }),
-  );
-  roof.position.set(0, height + 4, -depth * 0.65);
-  group.add(roof);
-  return group;
-}
-
-function buildStadium(scene, renderer) {
-  const pitch = new THREE.Mesh(
-    new THREE.PlaneGeometry(PITCH.length + 2 * MARGIN, PITCH.width + 2 * MARGIN),
-    new THREE.MeshLambertMaterial({ map: pitchTexture(renderer) }),
-  );
-  pitch.rotation.x = -Math.PI / 2;
-  pitch.receiveShadow = true;
-  scene.add(pitch);
-
-  const apron = new THREE.Mesh(
-    new THREE.PlaneGeometry(220, 180),
-    new THREE.MeshLambertMaterial({ color: '#3d5a3e' }),
-  );
-  apron.rotation.x = -Math.PI / 2;
-  apron.position.y = -0.02;
-  apron.receiveShadow = true;
-  scene.add(apron);
-
-  // Advertising boards
-  const ad = adTexture(renderer);
-  const boardMat = (w) => {
-    const t = ad.clone(); t.needsUpdate = true; t.repeat.set(w / 32, 1);
-    return new THREE.MeshLambertMaterial({ map: t });
-  };
-  const bz = HALF_W + MARGIN - 0.6, bx = HALF_L + MARGIN - 0.6;
-  const longW = PITCH.length + 2 * MARGIN, endW = PITCH.width + 2 * MARGIN;
-  const boards = [
-    { w: longW, pos: [0, 0.5, -bz], rot: 0 },
-    { w: longW, pos: [0, 0.5, bz], rot: Math.PI },
-    { w: endW, pos: [-bx, 0.5, 0], rot: Math.PI / 2 },
-    { w: endW, pos: [bx, 0.5, 0], rot: -Math.PI / 2 },
-  ];
-  for (const b of boards) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(b.w, 1), boardMat(b.w));
-    m.position.set(...b.pos);
-    m.rotation.y = b.rot;
-    scene.add(m);
-  }
-
-  // Stands on three sides (the camera side stays open, like TV).
-  const crowd = crowdTexture(renderer);
-  const far = makeStand(PITCH.length + 2 * MARGIN + 4, 20, 13, crowd);
-  far.position.set(0, 0, -(HALF_W + MARGIN + 2));
-  scene.add(far);
-  const left = makeStand(PITCH.width + 2 * MARGIN, 16, 10, crowd);
-  left.position.set(-(HALF_L + MARGIN + 2), 0, 0);
-  left.rotation.y = Math.PI / 2;
-  scene.add(left);
-  const right = makeStand(PITCH.width + 2 * MARGIN, 16, 10, crowd);
-  right.position.set(HALF_L + MARGIN + 2, 0, 0);
-  right.rotation.y = -Math.PI / 2;
-  scene.add(right);
-
-  // Floodlight towers
-  const poleMat = new THREE.MeshLambertMaterial({ color: '#9aa1ad' });
-  const lampMat = new THREE.MeshBasicMaterial({ color: '#fffbe6' });
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      const x = sx * (HALF_L + 16), z = sz * (HALF_W + 18);
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 34, 8), poleMat);
-      pole.position.set(x, 17, z);
-      scene.add(pole);
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 0.6), lampMat);
-      lamp.position.set(x, 35, z);
-      lamp.lookAt(0, 0, 0);
-      scene.add(lamp);
-    }
-  }
 }
 
 // ---------- goals ----------
@@ -298,28 +101,40 @@ function ballTexture(renderer) {
 
 // ---------- renderer ----------
 export function createRenderer(canvasEl) {
-  const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
+  const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#8fbfe8');
-  scene.fog = new THREE.Fog('#8fbfe8', 110, 260);
+  scene.background = new THREE.Color('#b9d4ee');
+  scene.fog = new THREE.Fog('#b9d4ee', 200, 480);
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 500);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 1000);
 
-  scene.add(new THREE.HemisphereLight('#ffffff', '#3b5a3b', 1.8));
-  const sun = new THREE.DirectionalLight('#fff6e0', 2.4);
-  sun.position.set(-25, 50, 30);
+  // Lighting: sky/ground fill plus a high key light (floodlights/sun) whose
+  // shadow map follows the action, so shadows stay crisp everywhere.
+  scene.add(new THREE.HemisphereLight('#e8f1ff', '#4a6b3e', 1.15));
+  const sun = new THREE.DirectionalLight('#fff4e2', 2.9);
+  const SUN_OFFSET = new THREE.Vector3(-18, 60, 26);
+  sun.position.copy(SUN_OFFSET);
   sun.castShadow = true;
+  // 2048 px over ~56 m around the play: ~2.7 cm texels, cheap enough for 60 fps.
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
-  sc.left = -45; sc.right = 45; sc.top = 35; sc.bottom = -35; sc.near = 1; sc.far = 140;
-  sun.shadow.bias = -0.0005;
+  sc.left = -28; sc.right = 28; sc.top = 28; sc.bottom = -28; sc.near = 20; sc.far = 120;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.02;
+  sun.shadow.radius = 3;
   scene.add(sun);
+  scene.add(sun.target);
 
-  buildStadium(scene, renderer);
+  scene.add(buildPitch(renderer));
+  const arena = buildArena(renderer);
+  scene.add(arena.group);
   buildGoal(scene, -1);
   buildGoal(scene, 1);
 
@@ -353,7 +168,21 @@ export function createRenderer(canvasEl) {
     scene.add(arrow);
     markers[id] = { arrow };
   }
-  const ringGeo = new THREE.RingGeometry(0.55, 0.78, 32);
+  const ringGeo = new THREE.RingGeometry(0.55, 0.7, 40);
+  const contactGeo = new THREE.CircleGeometry(0.55, 24);
+  const contactMat = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, 'rgba(0,0,0,0.42)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false });
+  })();
+  // Small marker over the next player (pass target / switch).
+  const nextMarker = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 3), new THREE.MeshBasicMaterial({ color: '#facc15' }));
+  nextMarker.rotation.x = Math.PI;
+  nextMarker.visible = false;
+  scene.add(nextMarker);
   const arenaGlow = new THREE.Group();
   const glowMat = new THREE.MeshBasicMaterial({ color: '#33c8ff', transparent: true, opacity: 0.7 });
   for (const z of [-HALF_W - 0.25, HALF_W + 0.25]) {
@@ -375,8 +204,11 @@ export function createRenderer(canvasEl) {
 
   function setMatch(state) {
     arenaGlow.visible = !!state.indoor;
-    scene.background.set(state.indoor ? '#071329' : '#8fbfe8');
-    scene.fog.color.set(state.indoor ? '#071329' : '#8fbfe8');
+    scene.background.set(state.indoor ? '#071329' : '#b9d4ee');
+    scene.fog.color.set(state.indoor ? '#071329' : '#b9d4ee');
+    // Fans wear their team's colours (home end busiest, away fans grouped).
+    const kitCols = (k) => [k.shirt, k.secondary || k.shirt, k.shirt].filter(Boolean);
+    arena.setColors(kitCols(state.teams[0].kit), kitCols(state.teams[1].kit));
     for (const m of playerMeshes) m.character.dispose();
     playerMeshes = state.players.map((p) => {
       const team = state.teams[p.team];
@@ -397,6 +229,12 @@ export function createRenderer(canvasEl) {
       m.ring.rotation.x = -Math.PI / 2;
       m.ring.position.y = 0.03;
       m.root.add(m.ring);
+      // Soft contact shadow that grounds the feet (the sun casts the real one).
+      m.contact = new THREE.Mesh(contactGeo, contactMat);
+      m.contact.rotation.x = -Math.PI / 2;
+      m.contact.position.y = 0.012;
+      m.contact.renderOrder = 1;
+      m.root.add(m.contact);
       scene.add(m.root);
       return m;
     });
@@ -570,8 +408,11 @@ export function createRenderer(canvasEl) {
     }
     prevBall.copy(ball.position);
 
-    // Rings: green = yours, yellow = next, red = computer-controlled.
-    const live = state.phase !== 'fulltime';
+    // Broadcast-style markers: only the player you control gets a ring and
+    // the arrow overhead; the next player gets a small marker; a player you
+    // can tackle flashes. Computer-controlled players are left clean.
+    const live = state.phase !== 'fulltime' && state.phase !== 'goal';
+    nextMarker.visible = false;
     state.players.forEach((p, i) => {
       const m = playerMeshes[i];
       if (!m) return;
@@ -580,8 +421,12 @@ export function createRenderer(canvasEl) {
       if (team.controlled === p && team.human) kind = 'current';
       else if (team.next === p && team.human) kind = 'next';
       else if (state.teams.some((t) => t.human && t.tackleTarget === p)) kind = 'tackle';
-      m.ring.visible = live && p.onPitch && !p.sentOff;
+      m.ring.visible = live && p.onPitch && !p.sentOff && kind !== 'other' && kind !== 'next';
       m.ring.material.color.set(RING[kind]);
+      if (kind === 'next' && live) {
+        nextMarker.visible = true;
+        nextMarker.position.set(m.root.position.x, (m.character.headHeight ?? 1.95) + 0.3 + Math.sin(time * 6) * 0.05, m.root.position.z);
+      }
       const pulse = kind === 'next' ? 1 + Math.sin(time * 8) * 0.12
         : kind === 'tackle' ? 1.2 + Math.sin(time * 18) * 0.2 : 1;
       const size = kind === 'other' ? 0.8 : 1.1;
@@ -613,6 +458,11 @@ export function createRenderer(canvasEl) {
       camPos.copy(t.pos); camLook.copy(t.look); camera.fov = t.fov; camera.updateProjectionMatrix();
     }
     lastCamMode = mode;
+    // Keep the shadow map centred on the action.
+    sun.target.position.set(camLook.x, 0, camLook.z);
+    sun.position.copy(sun.target.position).add(SUN_OFFSET);
+    // The crowd erupts after a goal and settles again.
+    arena.update(view?.realDt ?? dt, state.phase === 'goal' || view?.replay ? 1 : 0);
     const k = 1 - Math.exp(-camDt * (t.rate || 3.2));
     camPos.lerp(t.pos, k);
     camLook.lerp(t.look, k);

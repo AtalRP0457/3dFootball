@@ -15,46 +15,6 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 
 /* ---------- HUD ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; }
-#scoreboard {
-  position: absolute; top: 16px; left: 16px;
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 14px; background: var(--panel); border: 1px solid var(--edge);
-  border-radius: 4px; font-weight: 800; font-size: 20px; letter-spacing: 0.04em;
-  transform: skewX(-8deg);
-}
-#scoreboard > * { transform: skewX(8deg); }
-#scoreboard .chip { width: 12px; height: 22px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.5); }
-#score { background: var(--gold); color: #111; padding: 0 10px; border-radius: 2px; min-width: 64px; text-align: center; }
-#clock { margin-left: 8px; color: var(--gold); min-width: 34px; }
-
-.ppanel {
-  position: absolute; bottom: 18px; left: 18px; min-width: 230px;
-  padding: 8px 12px; background: var(--panel); border-left: 4px solid var(--p1);
-  border-radius: 4px; font-weight: 700;
-}
-.ppanel.p2, .ppanel.right { left: auto; right: 18px; }
-.ppanel.p2 { border-left-color: var(--p2); }
-.ppanel.right.p1 { border-left-color: var(--p1); }
-.ppanel .tag { display: inline-block; font-size: 12px; padding: 1px 6px; border-radius: 2px; background: var(--p1); color: #04222a; }
-.ppanel.p2 .tag { background: var(--p2); color: #fff; }
-.ppanel .pname { display: inline-block; margin-left: 8px; font-size: 18px; }
-.bar { height: 6px; margin-top: 6px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; }
-.bar i { display: block; height: 100%; width: 0; transition: width 0.05s linear; }
-.bar.stamina i { background: linear-gradient(90deg, #16a34a, #84cc16); }
-.power-label { margin-top: 6px; color: #f4d56a; font-size: 9px; font-weight: 900; letter-spacing: .16em; }
-.bar.power { height: 9px; margin-top: 3px; border: 1px solid rgba(255,255,255,.48); background: rgba(2,8,20,.9); opacity: .9; }
-.bar.power i { background: linear-gradient(90deg, #facc15, #ef4444); }
-.ppanel.charging .bar.power { opacity: 1; }
-
-#banner, #subBanner {
-  position: absolute; left: 50%; transform: translateX(-50%) skewX(-10deg);
-  font-weight: 900; font-style: italic; letter-spacing: 0.06em;
-  opacity: 0; transition: opacity 0.2s, transform 0.2s; white-space: nowrap;
-  text-shadow: 0 4px 0 rgba(0,0,0,0.45);
-}
-#banner { top: 30%; font-size: 72px; color: var(--gold); -webkit-text-stroke: 2px #111; }
-#subBanner { top: calc(30% + 92px); font-size: 26px; background: var(--panel); padding: 6px 18px; border-radius: 3px; }
-#banner.show, #subBanner.show { opacity: 1; }
 #hint { position: absolute; top: 20px; right: 20px; font-size: 13px; opacity: 0.6; }
 .audio-toggle {
   position: absolute; top: 46px; right: 18px; pointer-events: auto;
@@ -312,3 +272,73 @@ kbd {
 .options, .controls { margin-top: 12px; font-size: 13px; }
 .options summary, .controls summary { cursor: pointer; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .center { text-align: center; }
+
+/* ---------------------------------------------------------------------------
+   Broadcast HUD: scoreboard, active players, radar, notices
+   --------------------------------------------------------------------------- */
+.sb {
+  position: absolute; top: 22px; left: 26px; display: flex; align-items: stretch; height: 38px;
+  font: 700 22px/1 'Saira Condensed', 'Oswald', 'Arial Narrow', Arial, sans-serif; letter-spacing: .04em;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
+}
+.sb > * { display: flex; align-items: center; }
+.sb-clock { padding: 0 14px; min-width: 86px; justify-content: center; background: rgba(8, 12, 22, .92); color: #fff; font-variant-numeric: tabular-nums; }
+.sb-team { gap: 0; background: linear-gradient(180deg, #1d2f8f, #13207a); color: #fff; }
+.sb-team b { padding: 0 14px; min-width: 66px; text-align: center; font-weight: 800; }
+.sb-stripe { width: 7px; height: 100%; }
+.sb-score { gap: 0; background: linear-gradient(180deg, #1d2f8f, #13207a); color: #fff; padding: 0 4px;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%); }
+.sb-score b { min-width: 30px; text-align: center; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sb-score i { width: 2px; height: 22px; background: rgba(255,255,255,.35); }
+.sb-team.home { clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 50%, 100% 100%, 0 100%); padding-right: 6px; }
+.sb-team.away { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 6px 50%); padding-left: 6px; }
+
+.tpanel {
+  position: absolute; bottom: 26px; display: flex; align-items: stretch; height: 54px;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
+  font: 700 26px/1 'Saira Condensed', 'Oswald', 'Arial Narrow', Arial, sans-serif; letter-spacing: .03em; color: #fff;
+}
+.tpanel.left { left: 46px; }
+.tpanel.right { right: 46px; }
+.tp-crest { width: 54px; height: 54px; object-fit: contain; padding: 4px; background: rgba(245, 247, 252, .95); }
+.tp-body { display: flex; flex-direction: column; justify-content: center; min-width: 250px;
+  background: linear-gradient(180deg, rgba(14, 30, 64, .94), rgba(8, 18, 42, .94)); box-shadow: inset 0 3px 0 var(--team, #22d3ee); }
+.tp-name { display: flex; align-items: baseline; gap: 10px; padding: 0 16px; }
+.tpanel.right .tp-name { justify-content: flex-end; }
+.tp-num { color: #f5a524; font-weight: 800; }
+.tp-pname { text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.tp-tag { font: 800 12px/1 Arial, sans-serif; font-style: normal; padding: 3px 5px; border-radius: 2px; background: #22d3ee; color: #04222a; align-self: center; }
+.tp-tag:empty { display: none; }
+.tpanel.right .tp-tag { background: #f43f5e; color: #fff; }
+.tp-bars { position: relative; height: 4px; margin: 7px 16px 0; background: rgba(255,255,255,.14); }
+.tp-stamina { position: absolute; inset: 0 auto 0 0; width: 100%; background: linear-gradient(90deg, #22c55e, #a3e635); }
+.tp-power { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, #facc15, #ef4444); opacity: 0; }
+.tpanel.charging .tp-power { opacity: 1; height: 6px; top: -1px; }
+
+#radar { position: absolute; left: 50%; bottom: 18px; width: 230px; height: 150px; transform: translateX(-50%);
+  border: 1px solid rgba(255,255,255,.25); opacity: .9; }
+#replayTag { position: absolute; top: 24px; right: 28px; padding: 6px 14px; font: 800 18px/1 'Saira Condensed', Arial, sans-serif;
+  letter-spacing: .24em; color: #fff; background: rgba(8, 12, 22, .85); border-left: 4px solid #f5a524; }
+
+/* Notices and the goal card */
+#banner, #subBanner { position: absolute; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity .25s, transform .25s; white-space: nowrap; pointer-events: none; }
+#banner { top: 26%; font: 800 64px/1 'Saira Condensed', 'Oswald', Arial, sans-serif; letter-spacing: .14em; color: #fff;
+  padding: 10px 34px; background: linear-gradient(180deg, rgba(20, 36, 120, .9), rgba(10, 18, 70, .9)); box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+#banner.goal { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 44px 12px; }
+#banner .gc-word { font-size: 92px; letter-spacing: .3em; margin-right: -.3em; color: #fff; text-shadow: 0 4px 0 rgba(0,0,0,.35); }
+#banner .gc-name { display: flex; align-items: center; gap: 10px; font-size: 26px; letter-spacing: .08em; color: #f5d48a; }
+#banner .gc-name i { width: 14px; height: 14px; }
+#subBanner { top: 76px; left: 26px; transform: none; font: 700 18px/1 'Saira Condensed', Arial, sans-serif; letter-spacing: .06em;
+  padding: 8px 14px; color: #fff; background: rgba(8, 12, 22, .88); border-left: 4px solid #f5a524; }
+#banner.show, #subBanner.show { opacity: 1; }
+@media (max-width: 900px) {
+  .sb { top: 10px; left: 10px; height: 30px; font-size: 16px; }
+  .tpanel { bottom: 10px; height: 40px; font-size: 18px; }
+  .tpanel.left { left: 10px; } .tpanel.right { right: 10px; }
+  .tp-crest { width: 40px; height: 40px; } .tp-body { min-width: 150px; }
+  #radar { display: none; }
+  #banner { font-size: 40px; } #banner .gc-word { font-size: 54px; }
+}
+/* Keep the utility buttons clear of the REPLAY tag. */
+.audio-toggle { top: 66px; opacity: .75; }
+.replay-skip { top: 98px; }

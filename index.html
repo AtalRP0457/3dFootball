@@ -13,33 +13,29 @@
 
     <!-- In-match HUD -->
     <div id="hud" class="hidden">
-      <div id="scoreboard">
-        <span class="chip" id="homeChip"></span>
-        <span class="tname" id="homeName"></span>
-        <span id="score">0 - 0</span>
-        <span class="tname" id="awayName"></span>
-        <span class="chip" id="awayChip"></span>
-        <span id="clock">0'</span>
+      <!-- Broadcast scoreboard: clock | HOME score score AWAY -->
+      <div id="scoreboard" class="sb">
+        <span id="clock" class="sb-clock">00:00</span>
+        <span class="sb-team home"><i class="sb-stripe" id="homeChip"></i><b id="homeName">HOM</b></span>
+        <span class="sb-score"><b id="scoreHome">0</b><i></i><b id="scoreAway">0</b></span>
+        <span class="sb-team away"><b id="awayName">AWY</b><i class="sb-stripe" id="awayChip"></i></span>
+        <span id="score" class="hidden"></span>
       </div>
-      <div class="ppanel p1" id="p1panel">
-        <div class="tag">P1</div>
-        <div class="pname"></div>
-        <div class="pnext">Next: <span></span></div>
-        <div class="bar stamina"><i></i></div>
-        <div class="power-label">SHOT POWER</div><div class="bar power"><i></i></div>
-        <div class="prompts"></div>
+      <!-- Active player of each team: bottom left (home) and right (away) -->
+      <div class="tpanel left" id="teamPanel0">
+        <img class="tp-crest" alt="">
+        <div class="tp-body"><div class="tp-name"><b class="tp-num"></b><span class="tp-pname"></span><em class="tp-tag"></em></div>
+          <div class="tp-bars"><i class="tp-stamina"></i><i class="tp-power"></i></div></div>
       </div>
-      <div class="ppanel p2" id="p2panel">
-        <div class="tag">P2</div>
-        <div class="pname"></div>
-        <div class="pnext">Next: <span></span></div>
-        <div class="bar stamina"><i></i></div>
-        <div class="power-label">SHOT POWER</div><div class="bar power"><i></i></div>
-        <div class="prompts"></div>
+      <div class="tpanel right" id="teamPanel1">
+        <div class="tp-body"><div class="tp-name"><em class="tp-tag"></em><b class="tp-num"></b><span class="tp-pname"></span></div>
+          <div class="tp-bars"><i class="tp-stamina"></i><i class="tp-power"></i></div></div>
+        <img class="tp-crest" alt="">
       </div>
+      <canvas id="radar" width="300" height="196" aria-label="Radar"></canvas>
+      <div id="replayTag" class="hidden">REPLAY</div>
       <div id="banner"></div>
       <div id="subBanner"></div>
-      <div id="hint">Esc / P pause &middot; C camera &middot; R skip replay &middot; F1 or ` debug</div>
       <button id="audioToggle" class="audio-toggle" type="button" aria-label="Toggle match sound">Sound: On</button>
       <button id="replaySkip" class="audio-toggle replay-skip hidden" type="button">Skip Replay</button>
       <div id="touchControls" class="touch-controls hidden" aria-label="Touch controls">
