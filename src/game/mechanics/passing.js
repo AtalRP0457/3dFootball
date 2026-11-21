@@ -99,7 +99,8 @@ export function planPass(o) {
   const runFactor = clamp(pSpeed / (prof.runSpeed * prof.sprintMul), 0, 1.2);
   const bodyAngle = Math.acos(clamp(p.face.x * dx + p.face.z * dz, -1, 1));
   const fatigue = (1 + (1 - (p.stamina ?? 1)) * 0.25) * (p.injured ? 1.3 : 1);
-  const skill = kind === 'ground' ? prof.passAccuracy : prof.longPassing;
+  const skill = p.role === 'GK' && prof.distribution != null ? prof.distribution
+    : kind === 'ground' ? prof.passAccuracy : prof.longPassing;
   const sigma = (0.008 + (1 - skill) * 0.06)
     * (1 + d / 40)
     * (1 + runFactor * 0.6)

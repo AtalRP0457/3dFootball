@@ -3,7 +3,8 @@
 // the match engine and the menus use. Changing identity or kits never touches
 // the underlying records; it only changes what is displayed.
 import { TEAMS as DECADE_TEAMS } from '../data/teams.js';
-import { DB, IDX, POSITIONS, deriveAttributes, teamRecord, hasRoster, ERAS } from './index.js';
+import { DB, IDX, POSITIONS, deriveAttributes, computeOverall, teamRecord, hasRoster, ERAS } from './index.js';
+import { playerIdentity, chooseCaptain } from '../game/players/identity.js';
 
 const BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL) || '/';
 function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
@@ -89,7 +90,7 @@ function membersFor(teamId, era) {
   return IDX.membersByRoster.get(`${era}:${teamId}`) || [];
 }
 function effective(m) {
-  const e = prefs.edits[m.player_id];
+  const e = prefs.edits[m.player_id] || prefs.edits[m.id];
   return e ? { ...m, overall: e.overall ?? m.overall, position: e.position ?? m.position, attrEdits: e.attributes } : m;
 }
 
@@ -107,13 +108,25 @@ export function playerCard(m) {
   const eff = effective(m);
   const p = IDX.players.get(m.player_id);
   const attributes = deriveAttributes(m.player_id, eff.position, eff.overall, m.pace_hint, eff.attrEdits);
+  const overall = computeOverall(attributes, eff.position, eff.overall, m.player_id, m.pace_hint);
+  const identity = playerIdentity({
+    playerId: m.player_id, name: p.name, position: eff.position, number: m.shirt_number,
+    overall, attributes, foot: p.preferred_foot, appearance: p.appearance,
+  });
   return {
     playerId: m.player_id, memberId: m.id, realName: p.name, name: playerDisplayName(m.player_id, p.name),
     parody: IDX.aliasesByPlayer.get(m.player_id), number: m.shirt_number, position: eff.position,
-    roleName: POSITIONS[eff.position]?.role, group: POSITIONS[eff.position]?.group || 'MID', overall: eff.overall,
+    roleName: POSITIONS[eff.position]?.role, group: POSITIONS[eff.position]?.group || 'MID', overall,
+    identity, heightCm: identity.heightCm, weightKg: identity.weightKg, age: identity.age,
     nationality: p.nationality, foot: p.preferred_foot, weakFoot: m.weak_foot, skillMoves: m.skill_moves,
     attributes, stats: engineStats(attributes, eff.position),
   };
+}
+
+/** Mark the captain of a starting XI (identity + armband follow the flag). */
+function withCaptain(players, override) {
+  const i = chooseCaptain(players, override);
+  return players.map((p, k) => (k === i ? { ...p, captain: true, identity: { ...p.identity, captain: true } } : p));
 }
 
 /** Build a playable team. Players come back in engine slot order (4-3-3 shape). */
@@ -138,7 +151,11 @@ export function buildTeam(teamId, kitType = 'home') {
   pool.sort((a, b) => b.overall - a.overall);
   const gkIdx = pool.findIndex((c) => c.position === 'GK');
   const bench = [...(gkIdx >= 0 ? pool.splice(gkIdx, 1) : []), ...pool].slice(0, 7);
-  const toEngine = (c, role) => ({ name: c.name, number: c.number, stats: c.stats, attributes: c.attributes, playerId: c.playerId, position: c.position, overall: c.overall, ...(role ? { role } : {}) });
+  const toEngine = (c, role) => ({
+    name: c.name, number: c.number, stats: c.stats, attributes: c.attributes, playerId: c.playerId,
+    position: c.position, overall: c.overall, identity: c.identity, nationality: c.nationality, foot: c.foot,
+    ...(role ? { role } : {}),
+  });
   const custom = era === 'custom';
   const team = {
     id: teamId,
@@ -157,7 +174,7 @@ export function buildTeam(teamId, kitType = 'home') {
     crest: custom ? `${BASE}assets/clubs/logos/custom.svg` : crestUrl(teamId),
     kitType,
     kit: custom ? { shirt: '#f3c34a', secondary: '#0a1633', shorts: '#0a1633', socks: '#f3c34a', gk: '#2e7d32', design: 'plain' } : kitFor(teamId, kitType),
-    players: slots.filter(Boolean).map((c) => toEngine(c)),
+    players: withCaptain(slots.filter(Boolean).map((c) => toEngine(c)), rec?.captain),
     bench: bench.map((c) => toEngine(c, POSITIONS[c.position]?.group || 'MID')),
     cards,
   };

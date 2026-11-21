@@ -8,7 +8,9 @@
 import './frontend.css';
 import { trophySVG, ballSVG, esc, shade } from './art.js';
 import { playerSVG, coverSVG, customCoverUrls, loadUserImages } from './hero.js';
-import { DB, IDX, ATTRIBUTE_KEYS, POSITIONS, eraLabel, ERAS } from '../db/index.js';
+import { DB, IDX, ATTRIBUTE_KEYS, ATTRIBUTE_GROUPS, POSITIONS, eraLabel, ERAS } from '../db/index.js';
+import { playerIdentity } from '../game/players/identity.js';
+import { sharedPlayerViewer, PlayerViewer, VIEWER_ANIMS } from '../render/playerViewer.js';
 import { playerCard, kitUrl, kitTypes, kitFor, crestUrl, teamDisplayName } from '../db/teams.js';
 import { kitSVG } from '../db/crests.js';
 import { validateDatabase } from '../db/validate.js';
@@ -118,7 +120,7 @@ class UiSound {
 }
 
 const SCREENS = ['title', 'hub', 'select', 'preview', 'manage'];
-const HUB_TABS = [['home', 'Home'], ['play', 'Play'], ['clubs', 'Club Database'], ['players', 'Player Database'], ['settings', 'Settings']];
+const HUB_TABS = [['home', 'Home'], ['play', 'Play'], ['clubs', 'Clubs'], ['players', 'Players'], ['settings', 'Settings']];
 
 // =====================================================================
 export function createFrontend(api) {
@@ -132,6 +134,8 @@ export function createFrontend(api) {
   let screen = null;
   let hubTab = HUB_TABS.some(([k]) => k === uiPrefs.hubTab) ? uiPrefs.hubTab : 'home';
   let selSide = 0;
+  // Kick-Off 3D viewer state: which squad member is shown and in which mode.
+  const viewer3d = { teamId: null, idx: -1, mode: 'team', anim: 'idle', tab: 'Physical' };
   let manageSide = 0;
   let manageSel = null;
   let manageCursor = 0;
@@ -392,8 +396,10 @@ export function createFrontend(api) {
     try {
       if (screen === 'title') renderTitle();
       if (screen === 'hub') renderHub();
-      if (screen === 'select') renderSelect();
+      if (screen === 'select') { renderSelect(); mountViewer(); } else sharedPlayerViewer().unmount();
+      if (screen === 'hub') mountEditorFigure();
       if (screen === 'preview') renderPreview();
+      if (screen === 'preview') mountPreviewFigures(); else unmountPreviewFigures();
       if (screen === 'manage') renderManage();
     } catch (err) {
       console.error('[front end]', err);
@@ -531,7 +537,7 @@ export function createFrontend(api) {
         <button class="set-link" data-nav data-act="controls" data-v="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>
         <button class="set-link" data-nav data-act="howto" data-v="howto"><b>How to play</b><small>Moving, passing, shooting, defending, rules</small></button>
         <button class="set-link" data-nav data-act="dev" data-v="dev"><b>Developer options</b><small>Game speed, debug overlay, drills</small></button>
-        <button class="set-link" data-nav data-act="validate" data-v="validate"><b>Database check</b><small>Run the validation report (IDs, rosters, logos, kits)</small></button>
+        <button class="set-link" data-nav data-act="validate" data-v="validate"><b>Data check</b><small>Run the validation report (IDs, rosters, logos, kits)</small></button>
         <button class="set-link" data-nav data-act="export" data-v="export"><b>Export saved data</b><small>Settings, squads, rating edits, tournaments → JSON file</small></button>
         <button class="set-link" data-nav data-act="import" data-v="import"><b>Import saved data</b><small>Restore from an exported JSON file</small></button>
         <input type="file" accept="application/json,.json" class="hidden" data-change="importFile">
@@ -540,26 +546,37 @@ export function createFrontend(api) {
     </div>`;
   }
 
-  // ----- player database -----
+  // ----- players -----
+  // One row per footballer: a player who plays for a club and a national
+  // team (e.g. Bayern and England) is listed once with both teams.
+  const clubFirst = (a, b) => (IDX.clubs.has(a.roster_id.split(':')[1]) ? 0 : 1) - (IDX.clubs.has(b.roster_id.split(':')[1]) ? 0 : 1);
   function dbResults() {
     const q = dbQuery.trim().toLowerCase();
-    const rows = [];
+    const byPlayer = new Map();
     for (const m of DB.roster_members) {
-      const [era, teamId] = m.roster_id.split(':');
+      const [era] = m.roster_id.split(':');
       if (era !== settings.roster && settings.roster !== 'custom') continue;
-      const p = IDX.players.get(m.player_id);
-      const alias = IDX.aliasesByPlayer.get(m.player_id)?.name || '';
-      if (q && !p.name.toLowerCase().includes(q) && !alias.toLowerCase().includes(q) && !teamDisplayName(teamId).toLowerCase().includes(q)) continue;
-      rows.push({ m, p, teamId });
+      (byPlayer.get(m.player_id) || byPlayer.set(m.player_id, []).get(m.player_id)).push(m);
     }
-    const edits = ls.get('fsl-edits', {});
-    rows.sort((a, b) => (edits[b.m.id]?.overall ?? b.m.overall) - (edits[a.m.id]?.overall ?? a.m.overall) || a.p.name.localeCompare(b.p.name));
+    const rows = [];
+    for (const [pid, members] of byPlayer) {
+      members.sort(clubFirst);
+      const m = members[0];
+      const p = IDX.players.get(pid);
+      const teamIds = [...new Set(members.map((r) => r.roster_id.split(':')[1]))];
+      const teamNames = teamIds.map((id) => teamDisplayName(id));
+      const alias = IDX.aliasesByPlayer.get(pid)?.name || '';
+      if (q && !p.name.toLowerCase().includes(q) && !alias.toLowerCase().includes(q)
+          && !teamNames.some((n) => n.toLowerCase().includes(q))) continue;
+      rows.push({ m, p, teamId: teamIds[0], teamNames, card: playerCard(m) });
+    }
+    rows.sort((a, b) => b.card.overall - a.card.overall || a.p.name.localeCompare(b.p.name));
     return rows;
   }
   function hubPlayers() {
     const rows = dbResults();
     const shown = rows.slice(0, 80);
-    if (!dbMember && shown[0]) { dbMember = shown[0].m.id; dbPlayer = shown[0].m.player_id; }
+    if ((!dbMember || !rows.some((r) => r.m.id === dbMember)) && shown[0]) { dbMember = shown[0].m.id; dbPlayer = shown[0].m.player_id; }
     return `<div class="pdb">
       <div class="pdb-left a-in" style="--i:1">
         <input class="br-search" type="search" placeholder="Search players, parody names or teams…" value="${esc(dbQuery)}" data-input="dbsearch" aria-label="Search players">
@@ -571,11 +588,10 @@ export function createFrontend(api) {
   }
   function pdbListHTML(shown) {
     const edits = ls.get('fsl-edits', {});
-    return shown.map(({ m, p, teamId }) => {
-      const card = playerCard(m);
+    return shown.map(({ m, teamNames, card }) => {
       return `<button class="pdb-row ${m.id === dbMember ? 'on' : ''}" data-nav data-act="dbPick" data-v="${m.id}">
         <span class="pos ${ROLE_CLASS[GROUP_OF(card.position)]}">${card.position}</span>
-        <span class="pdb-name"><b>${esc(card.name)}</b><small>${esc(teamDisplayName(teamId))}${edits[m.id] ? ' · edited' : ''}</small></span>
+        <span class="pdb-name"><b>${esc(card.name)}</b><small>${esc(teamNames.join(' · '))}${edits[m.player_id] || edits[m.id] ? ' · edited' : ''}</small></span>
         <span class="pdb-ovr">${card.overall}</span></button>`;
     }).join('') || '<div class="br-empty">No players found.</div>';
   }
@@ -593,7 +609,7 @@ export function createFrontend(api) {
     const attrLabel = (k) => k.replace(/^gk/, 'GK ').replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
     const shownAttrs = ATTRIBUTE_KEYS.filter((k) => card.position === 'GK' || !k.startsWith('gk'));
     return `<div class="pe-head">
-        <div class="pe-fig">${playerSVG({ name: card.realName, number: card.number }, kitFor(m.roster_id.split(':')[1], 'home'), { keeper: card.position === 'GK' })}</div>
+        <div class="pe-fig" data-pe3d="${esc(m.id)}"></div>
         <div><h2>${esc(card.name)}</h2>
           <p>${esc(card.roleName || '')} · ${esc(card.nationality)} · ${card.foot} foot · Weak foot ${card.weakFoot}★ · Skills ${card.skillMoves}★</p>
           <p class="pe-alias">Real: <b>${esc(card.realName)}</b> · Parody: <b>${esc(alias?.name || '—')}</b></p>
@@ -606,10 +622,10 @@ export function createFrontend(api) {
       <div class="pe-attrs">${shownAttrs.map((k) => `<label><span>${attrLabel(k)}</span><input type="number" min="1" max="99" value="${card.attributes[k]}" data-edit-attr="${k}"></label>`).join('')}</div>
       <div class="pe-actions">
         <button class="fe-btn primary" data-act="saveEdit">Save ratings</button>
-        <button class="fe-btn" data-act="resetEdit">Reset to database values</button>
+        <button class="fe-btn" data-act="resetEdit">Reset to original ratings</button>
         <button class="fe-btn" data-act="toggleCustom">${inCustom ? 'Remove from' : 'Add to'} Ultimate Team (${custom.players.length}/18)</button>
       </div>
-      <p class="set-note">Edits apply to this player's ${esc(eraLabel(m.roster_id.split(':')[0]))} card only and are saved in this browser. The Custom Ultimate Teams roster profile plays your picked players.</p>`;
+      <p class="set-note">Edits apply to this player for every team he plays for (club and country) and are saved in this browser. The Custom Ultimate Teams roster profile plays your picked players.</p>`;
   }
 
   // ----- team select (FIFA style) -----
@@ -632,7 +648,7 @@ export function createFrontend(api) {
         <div class="ts-right a-in" style="--i:3">${selectRightHTML(fx, m)}</div>
       </div>
       <footer class="fe-foot">
-        <span>${keyCap('↑↓')} Browse ${keyCap('Q/E')} Home / away</span>
+        <span>${keyCap('↑↓')} Browse ${keyCap('Q/E')} Home / away ${keyCap('Drag')} Rotate player</span>
         <button class="fe-btn ghost" data-act="back">${keyCap('Esc')} Back</button>
         <button class="fe-btn primary" data-act="toPreview" ${canContinue() ? '' : 'disabled'}>${keyCap('Enter')} Continue</button>
       </footer>`;
@@ -645,16 +661,144 @@ export function createFrontend(api) {
   function selectCenterHTML(t) {
     if (!api.isPlayable(t.id)) return `<div class="ts-crest">${crest(t)}</div><h2 class="ts-name">${esc(display(t))}</h2><p class="ts-sub">No ${esc(eraLabel(settings.roster))} squad — pick another team or roster profile.</p>`;
     const r = teamRatings(t);
-    const featured = squadOf(t).slice().sort((a, b) => b.rating - a.rating).slice(0, 3);
+    syncViewerTeam(t);
     return `<div class="ts-side-tag ${selSide ? 'away' : 'home'}">${selSide ? 'Away team' : 'Home team'}</div>
-      <div class="ts-crest" data-key="${t.id}">${crest(t)}</div>
-      <h2 class="ts-name">${esc(display(t))}</h2>
-      <p class="ts-sub">${esc(sub(t))}</p>
-      ${starsHTML(r.stars)}
-      <div class="ts-bars">${ratingBar('OVR', r.ovr)}${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}</div>
-      <div class="ts-featured">${featured.map((p) => `<div class="tf-card" style="--kit:${t.kit.shirt}">
-        <div class="tf-fig">${playerSVG(p.pd, t.kit, { keeper: p.role === 'GK', crop: true })}</div>
-        <b>${esc(p.pd.name)}</b><span>${esc(p.pd.position || p.pos)} · ${p.rating}</span></div>`).join('')}</div>`;
+      <div class="ts-headrow">
+        <div class="ts-crest small" data-key="${t.id}">${crest(t)}</div>
+        <div class="ts-title"><h2 class="ts-name">${esc(display(t))}</h2><p class="ts-sub">${esc(sub(t))}</p>${starsHTML(r.stars)}</div>
+        <div class="ts-bars compact">${ratingBar('OVR', r.ovr)}${ratingBar('ATT', r.att)}${ratingBar('MID', r.mid)}${ratingBar('DEF', r.def)}</div>
+      </div>
+      <div class="pv3d">
+        <div class="pv3d-stage" data-pv3d-host>
+          <div class="pv3d-views">${[['front', 'Front'], ['side', 'Side'], ['back', 'Back']].map(([k, l]) => `<button class="pv3d-chip" data-act="pv3dView" data-v="${k}">${l}</button>`).join('')}</div>
+          <div class="pv3d-zoom"><button class="pv3d-chip" data-act="pv3dZoom" data-v="-1" aria-label="Zoom in">+</button><button class="pv3d-chip" data-act="pv3dZoom" data-v="1" aria-label="Zoom out">−</button></div>
+          <div class="pv3d-hint">Drag to rotate · scroll to zoom</div>
+        </div>
+        <div class="pv3d-side">${viewerSideHTML(t)}</div>
+      </div>
+      <div class="pv3d-anims">${VIEWER_ANIMS.map(([k, l]) => `<button class="pv3d-chip ${viewer3d.anim === k ? 'on' : ''}" data-act="pv3dAnim" data-v="${k}">${l}</button>`).join('')}</div>`;
+  }
+  // ----- Kick-Off 3D player viewer -----
+  const viewerSquad = (t) => squadOf(t);
+  function captainIndex(t) {
+    const sq = viewerSquad(t);
+    const i = sq.findIndex((p) => p.pd.captain);
+    return i >= 0 ? i : sq.findIndex((p) => p.role !== 'GK');
+  }
+  function syncViewerTeam(t) {
+    if (viewer3d.teamId !== t.id) {
+      viewer3d.teamId = t.id;
+      viewer3d.idx = captainIndex(t);
+      viewer3d.mode = 'team';
+      viewer3d.anim = 'idle';
+    }
+  }
+  function identityOf(pd, role) {
+    return pd.identity || playerIdentity({ ...pd, position: pd.position || (role === 'GK' ? 'GK' : role) });
+  }
+  function viewerKit(t) {
+    const type = settings[selSide === 0 ? 'homeKit' : 'awayKit'];
+    return kitTypes(t.id).length > 1 ? kitFor(t.id, type) : t.kit;
+  }
+  function viewerSideHTML(t) {
+    const sq = viewerSquad(t);
+    const cur = sq[viewer3d.idx] || sq[0];
+    const nav = `<div class="pv3d-nav">
+        <button class="pv3d-chip" data-act="pv3dStep" data-v="-1" aria-label="Previous player">◀</button>
+        <button class="pv3d-chip" data-act="pv3dCaptain">Captain</button>
+        <button class="pv3d-chip" data-act="pv3dRandom">Random</button>
+        <button class="pv3d-chip" data-act="pv3dStep" data-v="1" aria-label="Next player">▶</button>
+      </div>`;
+    const tabs = `<nav class="pv3d-tabs"><button class="${viewer3d.mode === 'team' ? 'on' : ''}" data-act="pv3dMode" data-v="team">Team overview</button><button class="${viewer3d.mode === 'player' ? 'on' : ''}" data-act="pv3dMode" data-v="player">Player</button></nav>`;
+    if (viewer3d.mode === 'team') {
+      const cap = sq[captainIndex(t)];
+      const kit = viewerKit(t);
+      const colors = [kit.shirt, kit.secondary, kit.shorts, kit.socks].filter(Boolean);
+      return `${tabs}
+        <div class="pv3d-team">
+          <div class="pv3d-meta"><span><em>Formation</em><b>${formationOf(t)}</b></span><span><em>Captain</em><b>${cap ? esc(cap.pd.name) : '—'}</b></span>
+            <span><em>Colours</em><b class="pv3d-swatches">${colors.map((c) => `<i style="background:${c}"></i>`).join('')}</b></span></div>
+          <ol class="pv3d-xi">${sq.slice(0, 11).map((p, i) => `<li><button class="${i === viewer3d.idx ? 'on' : ''}" data-act="pv3dPick" data-v="${i}">
+            <span class="num">${p.pd.number ?? ''}</span><span class="pos ${ROLE_CLASS[p.role]}">${esc(p.pos)}</span><span class="nm">${esc(p.pd.name)}${p.pd.captain ? ' <i class="cap">C</i>' : ''}</span><b>${p.rating}</b></button></li>`).join('')}</ol>
+        </div>${nav}`;
+    }
+    if (!cur) return tabs;
+    const pd = cur.pd;
+    const idn = identityOf(pd, cur.role);
+    const a = pd.attributes;
+    const groups = a
+      ? ATTRIBUTE_GROUPS.filter(([g]) => (cur.role === 'GK') === (g === 'Goalkeeping') || g === 'Physical')
+      : [['Ratings', [['Speed', 'spd'], ['Passing', 'pas'], ['Shooting', 'sho'], ['Dribbling', 'dri'], ['Tackling', 'tac'], ...(cur.role === 'GK' ? [['Goalkeeping', 'gk']] : [])]]];
+    const src = a || pd.stats;
+    const tab = groups.find(([g]) => g === viewer3d.tab) || groups[0];
+    const bar = ([label, k]) => `<div class="pv3d-attr"><span>${label}</span><i><b style="width:${clamp(src[k] ?? 0, 0, 99)}%;background:${(src[k] ?? 0) >= 80 ? '#3ddc84' : (src[k] ?? 0) >= 70 ? '#f3c34a' : '#ef7d3a'}"></b></i><em>${src[k] ?? '–'}</em></div>`;
+    return `${tabs}
+      <div class="pv3d-player">
+        <div class="pv3d-id"><span class="num">${pd.number ?? ''}</span><div><h3>${esc(pd.name)}${pd.captain ? ' <i class="cap">C</i>' : ''}</h3>
+          <p>${esc(pd.position || cur.pos)} · ${esc(display(t))}</p></div><b class="ovr">${cur.rating}<small>OVR</small></b></div>
+        <div class="pv3d-bio">
+          <span><em>Height</em>${idn.heightCm} cm</span><span><em>Weight</em>${idn.weightKg} kg</span><span><em>Age</em>${idn.age}</span>
+          <span><em>Foot</em>${esc(pd.foot || idn.foot || 'Right')}</span><span><em>Build</em>${esc(idn.build.label)}</span><span><em>Boots</em>${esc(idn.boots.name)}</span>
+        </div>
+        <nav class="pv3d-gtabs">${groups.map(([g]) => `<button class="${g === tab[0] ? 'on' : ''}" data-act="pv3dTab" data-v="${g}">${g}</button>`).join('')}</nav>
+        <div class="pv3d-attrs">${tab[1].map(bar).join('')}</div>
+      </div>${nav}`;
+  }
+  function mountViewer() {
+    const el = screenEl('select');
+    const host = el?.querySelector('[data-pv3d-host]');
+    const viewer = sharedPlayerViewer();
+    if (!host) { viewer.unmount(); return; }
+    const t = team(selSide === 0 ? settings.home : settings.away);
+    const sq = viewerSquad(t);
+    const cur = sq[viewer3d.idx] || sq[0];
+    if (!cur) return;
+    viewer.mount(host);
+    const keeper = cur.role === 'GK';
+    viewer.show({
+      identity: { ...identityOf(cur.pd, cur.role), captain: !!cur.pd.captain },
+      kit: viewerKit(t), keeper, crestUrl: t.crest, teamKey: `viewer|${t.id}|${viewerKit(t).shirt}`,
+    });
+    if (viewer.anim !== viewer3d.anim && !(keeper && viewer3d.anim === 'idle')) viewer.setAnim(viewer3d.anim);
+  }
+  /** Players tab: the selected player in 3D, in his primary team's kit. */
+  function mountEditorFigure() {
+    const host = screenEl('hub')?.querySelector('[data-pe3d]');
+    if (!host) return;
+    const m = DB.roster_members.find((r) => r.id === host.dataset.pe3d);
+    if (!m) return;
+    const card = playerCard(m);
+    const teamId = m.roster_id.split(':')[1];
+    const viewer = sharedPlayerViewer();
+    viewer.mount(host);
+    viewer.show({
+      identity: card.identity, kit: kitFor(teamId, 'home'), keeper: card.position === 'GK',
+      crestUrl: crestUrl(teamId), teamKey: `editor|${teamId}`,
+    });
+  }
+  function refreshViewerSide() {
+    const el = screenEl('select');
+    const t = team(selSide === 0 ? settings.home : settings.away);
+    const side = el.querySelector('.pv3d-side');
+    if (side) side.innerHTML = viewerSideHTML(t);
+    el.querySelectorAll('[data-act="pv3dAnim"]').forEach((b) => b.classList.toggle('on', b.dataset.v === viewer3d.anim));
+    mountViewer();
+  }
+  function viewerAction(act, v) {
+    const viewer = sharedPlayerViewer();
+    const t = team(selSide === 0 ? settings.home : settings.away);
+    const n = viewerSquad(t).length;
+    if (act === 'pv3dView') { viewer.view(v); return; }
+    if (act === 'pv3dZoom') { viewer.zoom(Number(v)); return; }
+    if (act === 'pv3dAnim') { viewer3d.anim = v; viewer.setAnim(v === 'idle' && viewerSquad(t)[viewer3d.idx]?.role === 'GK' ? 'gkReady' : v); refreshViewerSide(); return; }
+    if (act === 'pv3dPick') { viewer3d.idx = Number(v); viewer3d.mode = 'player'; }
+    if (act === 'pv3dStep') { viewer3d.idx = (viewer3d.idx + Number(v) + n) % n; viewer3d.mode = 'player'; }
+    if (act === 'pv3dCaptain') { viewer3d.idx = captainIndex(t); viewer3d.mode = 'player'; viewer.view('front', true); }
+    if (act === 'pv3dRandom') { viewer3d.idx = Math.floor(Math.random() * n); viewer3d.mode = 'player'; }
+    if (act === 'pv3dMode') viewer3d.mode = v;
+    if (act === 'pv3dTab') viewer3d.tab = v;
+    sfx.move();
+    refreshViewerSide();
   }
   function selectRightHTML(fx, m) {
     const keeperOnly = settings.mode === 'practice' || settings.mode === 'tutorial';
@@ -686,6 +830,7 @@ export function createFrontend(api) {
     el.querySelector('.ts-center').innerHTML = selectCenterHTML(editing);
     el.querySelector('.ts-right').innerHTML = selectRightHTML(api.resolveFixture(), m);
     refreshBrowseList(el, editing.id, 'pickTeam');
+    mountViewer();
     const cont = el.querySelector('[data-act="toPreview"]');
     if (cont) cont.disabled = !canContinue();
     updateCover();
@@ -732,8 +877,8 @@ export function createFrontend(api) {
     }
     screenEl('preview').innerHTML = `
       <div class="pv-tunnel"></div>
-      <div class="pv-fig left a-in" style="--i:1">${playerSVG(sh.pd, home.kit, { pose: 'fist' })}<div class="pv-figname"><b>${esc(sh.pd.name)}</b><span>${sh.rating} · ${esc(sh.pd.position || sh.pos || '')}</span></div></div>
-      <div class="pv-fig right a-in" style="--i:2">${playerSVG(sa.pd, away.kit, { flip: true, keeper: keeperOnly })}<div class="pv-figname"><b>${esc(sa.pd.name)}</b><span>${sa.rating} · ${esc(sa.pd.position || sa.pos || 'GK')}</span></div></div>
+      <div class="pv-fig left a-in" style="--i:1"><div class="pv-fig3d" data-fig3d="0"></div><div class="pv-figname"><b>${esc(sh.pd.name)}</b><span>${sh.rating} · ${esc(sh.pd.position || sh.pos || '')}</span></div></div>
+      <div class="pv-fig right a-in" style="--i:2"><div class="pv-fig3d" data-fig3d="1"></div><div class="pv-figname"><b>${esc(sa.pd.name)}</b><span>${sa.rating} · ${esc(sa.pd.position || sa.pos || 'GK')}</span></div></div>
       <div class="pv-center a-in" style="--i:0">
         <nav class="pv-tabs">${[['preview', 'Match preview'], ['stats', 'Team stats'], ['lineups', 'Line-ups']].map(([k, l]) => `<button class="${previewTab === k ? 'on' : ''}" data-act="pvTab" data-v="${k}">${l}</button>`).join('')}</nav>
         <div class="pv-crests"><div class="pv-crest">${crest(home)}<b>${esc(display(home))}</b></div><div class="pv-crest">${crest(away)}<b>${esc(keeperOnly ? 'Goalkeeper' : display(away))}</b></div></div>
@@ -747,7 +892,31 @@ export function createFrontend(api) {
         ${fx.continuing ? `<button class="pv-item" data-nav data-act="abandon"><b>New ${esc(m.comp)}</b><span class="pv-ico">↺</span></button>` : '<button class="pv-item" data-nav data-act="pvStats"><b>Detailed stats</b><span class="pv-ico">▮▮</span></button>'}
       </nav>
       <footer class="fe-foot">${keyCap('Enter')} Advance ${keyCap('Esc')} Back ${keyCap('Q/E')} Switch tab</footer>`;
+    previewFigures = [
+      { pd: sh.pd, role: sh.role, kit: home.kit, crest: home.crest, keeper: false },
+      { pd: sa.pd, role: keeperOnly ? 'GK' : sa.role, kit: away.kit, crest: away.crest, keeper: keeperOnly },
+    ];
   }
+  // Match preview: the two star players in 3D (same characters as the match).
+  let previewFigures = [];
+  const previewViewers = [];
+  function mountPreviewFigures() {
+    const el = screenEl('preview');
+    previewFigures.forEach((f, i) => {
+      const host = el?.querySelector(`[data-fig3d="${i}"]`);
+      if (!host) return;
+      if (!previewViewers[i]) previewViewers[i] = new PlayerViewer();
+      const v = previewViewers[i];
+      v.mount(host);
+      v.show({
+        identity: { ...identityOf(f.pd, f.role), captain: !!f.pd.captain },
+        kit: f.kit, keeper: f.keeper || f.role === 'GK', crestUrl: f.crest, teamKey: `preview|${i}|${f.kit.shirt}`,
+      });
+      v.view(i === 0 ? 'threeQuarter' : 'front');
+      if (i === 1) v.yawTarget = -Math.PI / 5;
+    });
+  }
+  function unmountPreviewFigures() { for (const v of previewViewers) v?.unmount(); }
 
   // ----- team management (FIFA 07 style) -----
   function manageTeams() {
@@ -843,7 +1012,7 @@ export function createFrontend(api) {
     focusFirst();
   }
   async function runValidation() {
-    openModal('report', '<h2>Database check</h2><p>Running…</p>');
+    openModal('report', '<h2>Data check</h2><p>Running…</p>');
     const report = validateDatabase();
     // Broken image references: ask the server for every crest and kit file.
     const urls = [...new Set([...DB.clubs, ...DB.national_teams].flatMap((t) => [crestUrlFor(t.id, false), crestUrlFor(t.id, true), ...['home', 'away', 'third'].map((k) => kitUrl(t.id, k))]))];
@@ -852,7 +1021,7 @@ export function createFrontend(api) {
     report.stats['Asset files checked'] = urls.length;
     report.stats['Missing asset files'] = missing;
     const card = modal.querySelector('.fe-modal-card');
-    card.innerHTML = `<h2>Database check</h2>
+    card.innerHTML = `<h2>Data check</h2>
       <p class="${report.errors.length ? 'rep-bad' : 'rep-ok'}">${report.errors.length ? `${report.errors.length} error(s)` : 'No errors: no missing references, duplicate IDs or broken images.'} · ${report.warnings.length} warning(s)</p>
       <table class="rep">${Object.entries(report.stats).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>
       ${report.errors.length ? `<h4>Errors</h4><ul class="rep-list">${report.errors.slice(0, 50).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
@@ -1051,6 +1220,9 @@ export function createFrontend(api) {
       case 'import': screenEl('hub').querySelector('[data-change="importFile"]')?.click(); break;
       case 'resetSquads': squadPrefs = {}; ls.set('fsl-squads', {}); sfx.select(); render(); break;
       case 'pickTeam': pickTeam(v); break;
+      case 'pv3dView': case 'pv3dZoom': case 'pv3dAnim': case 'pv3dPick': case 'pv3dStep':
+      case 'pv3dCaptain': case 'pv3dRandom': case 'pv3dMode': case 'pv3dTab':
+        viewerAction(act, v); break;
       case 'side': selSide = Number(v); sfx.move(); refreshSelectParts(); break;
       case 'kit': settings[selSide === 0 ? 'homeKit' : 'awayKit'] = v; api.persistSettings(); sfx.move(); refreshSelectParts(); break;
       case 'back': back(); break;
@@ -1069,16 +1241,19 @@ export function createFrontend(api) {
         const hub = screenEl('hub');
         hub.querySelector('.pdb-right').innerHTML = playerEditorHTML();
         hub.querySelectorAll('.pdb-row').forEach((r) => r.classList.toggle('on', r.dataset.v === v));
+        mountEditorFigure();
         break;
       }
       case 'saveEdit': {
         const edits = ls.get('fsl-edits', {});
-        edits[dbMember] = readEditor();
+        delete edits[dbMember]; // older saves were keyed by team membership
+        edits[dbPlayer] = readEditor();
         ls.set('fsl-edits', edits); api.refreshDb(); sfx.select(); render(); break;
       }
       case 'resetEdit': {
         const edits = ls.get('fsl-edits', {});
         delete edits[dbMember];
+        delete edits[dbPlayer];
         ls.set('fsl-edits', edits); api.refreshDb(); sfx.back(); render(); break;
       }
       case 'toggleCustom': {
@@ -1101,8 +1276,11 @@ export function createFrontend(api) {
     if (k === 'search') { browse.q = e.target.value; rerenderBrowse(); }
     if (k === 'dbsearch') {
       dbQuery = e.target.value;
-      const shown = dbResults().slice(0, 80);
+      const rows = dbResults();
+      const shown = rows.slice(0, 80);
       screenEl('hub').querySelector('.pdb-list').innerHTML = pdbListHTML(shown);
+      const count = screenEl('hub').querySelector('.pdb-count');
+      if (count) count.textContent = `${rows.length} player${rows.length === 1 ? '' : 's'} in ${eraLabel(settings.roster === 'custom' ? 'modern' : settings.roster)}${rows.length > shown.length ? ` · showing top ${shown.length}` : ''}`;
     }
   });
   root.addEventListener('change', (e) => {

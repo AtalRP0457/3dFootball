@@ -68,7 +68,9 @@ export function planShot(o) {
   const bodyAngle = Math.acos(faceDot);
   const ballDist = Math.hypot(ball.pos.x - p.pos.x, ball.pos.z - p.pos.z);
   const fatigue = (1 + (1 - (p.stamina ?? 1)) * 0.25) * (p.injured ? 1.3 : 1);
-  const typeMul = { normal: 1, power: 1.7, low: 1.05, finesse: 0.8, chip: 1.2 }[type];
+  const curve = prof.curve ?? 0.7;
+  // Finesse accuracy depends on the curve attribute.
+  const typeMul = { normal: 1, power: 1.7, low: 1.05, finesse: 0.8 * (1.35 - curve * 0.5), chip: 1.2 }[type];
   const sigma = (0.012 + (1 - prof.shotAccuracy) * 0.075)
     * (1 + power * power * 0.6) * typeMul
     * (1 + runFactor * 0.8)
@@ -101,7 +103,7 @@ export function planShot(o) {
     top = 3;
     // Curl from outside the post back in: spin sign depends on which way
     // the target is relative to the run of the ball.
-    side = 26 + 22 * power;
+    side = (26 + 22 * power) * (0.65 + curve * 0.5); // better curve, more bend
   } else if (type === 'chip') {
     h = 0;
     targetY = 0;

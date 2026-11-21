@@ -103,10 +103,13 @@ let paused = false;
 let goals = [];
 let acc = 0;
 const REPLAY_FPS = 20;
-const REPLAY_FRAMES = REPLAY_FPS * 6;
+const REPLAY_FRAMES = REPLAY_FPS * 9;
 let replayBuffer = [];
 let replayFrames = null;
-let replayElapsed = 0;
+let replayElapsed = 0; // replay position in frames (fractional)
+let replayInfo = null; // { shooterId, scorerId, dir, shotIdx, goalIdx }
+let pendingReplay = null; // goal scored: replay after the celebration
+let replayFrameCount = 0; // absolute index of frames pushed to the buffer
 let replayCaptureElapsed = 0;
 let fps = 60;
 let lastInputs = {};
@@ -1036,6 +1039,9 @@ function startMatch() {
   acc = 0;
   replayBuffer = [];
   replayFrames = null;
+  replayInfo = null;
+  pendingReplay = null;
+  goalCard = null;
   replayElapsed = replayCaptureElapsed = 0;
   $('replaySkip').classList.add('hidden');
   const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
@@ -1048,21 +1054,21 @@ function startMatch() {
   renderer.setMatch(match);
   $('game').style.filter = eraFilter(home, away);
 
-  $('homeName').textContent = home.name;
-  $('awayName').textContent = practice ? 'PRACTICE' : away.name;
-  for (const [chip, team, data] of [['homeChip', match.teams[0], home], ['awayChip', match.teams[1], away]]) {
-    $(chip).style.background = `${team.kit.shirt} url("${data.crest}") center / contain no-repeat`;
-    $(chip).classList.toggle('crest-chip', !!data.crest);
+  $('homeName').textContent = shortCode(home);
+  $('awayName').textContent = practice ? 'PRC' : shortCode(away);
+  for (const [chip, team, data, i] of [['homeChip', match.teams[0], home, 0], ['awayChip', match.teams[1], away, 1]]) {
+    const k = team.kit;
+    $(chip).style.background = `linear-gradient(90deg, ${k.shirt} 0 50%, ${k.secondary && k.secondary !== k.shirt ? k.secondary : k.shorts} 50% 100%)`;
+    const crestImg = $(`teamPanel${i}`).querySelector('.tp-crest');
+    crestImg.src = data.crest || '';
+    crestImg.classList.toggle('hidden', !data.crest);
+    $(`teamPanel${i}`).style.setProperty('--team', k.shirt);
   }
+  $('teamPanel1').classList.toggle('hidden', !!practice);
   try { history.pushState({ screen: 'match' }, '', '#/match'); } catch { /* sandboxed frames */ }
-  $('p1panel').style.display = match.teams.some((t) => t.human === 'p1') ? '' : 'none';
-  $('p2panel').style.display = match.teams.some((t) => t.human === 'p2') ? '' : 'none';
   $('subsBtn').classList.toggle('hidden', !match.teams.some((t) => t.human));
   $('formationRow').classList.toggle('hidden', !!match.indoor);
   $('subsPanel').classList.add('hidden');
-  // P1 panel sits on the side of the team P1 controls.
-  const p1Team = match.teams.find((t) => t.human === 'p1');
-  $('p1panel').classList.toggle('right', !!p1Team && p1Team.index === 1);
   $('debug').classList.toggle('hidden', !dev.debug);
 
   frontend.hide();
@@ -1091,6 +1097,9 @@ function toMenu() {
   audio.setInMatch(false);
   match = null;
   replayFrames = null;
+  replayInfo = null;
+  pendingReplay = null;
+  goalCard = null;
   replayBuffer = [];
   $('replaySkip').classList.add('hidden');
   $('touchControls').classList.add('hidden');
@@ -1199,22 +1208,70 @@ function captureReplayFrame(force = false) {
   if (!force && replayCaptureElapsed < 1 / REPLAY_FPS) return;
   if (!force) replayCaptureElapsed -= 1 / REPLAY_FPS;
   replayBuffer.push(snapshotForRender(match));
+  replayFrameCount++;
   if (replayBuffer.length > REPLAY_FRAMES) replayBuffer.shift();
 }
 
-function beginGoalReplay() {
+/** Remember the goal; the replay runs once the live celebration has played. */
+function queueGoalReplay(e) {
+  pendingReplay = {
+    goalAbs: replayFrameCount,
+    scorerId: e.scorerId,
+    shotId: match.ball.shotId,
+    shooterId: match.ball.shooter?.id ?? e.scorerId,
+    dir: match.teams[e.team].dir,
+  };
+}
+
+function beginGoalReplay(info) {
   if (replayFrames || replayBuffer.length < REPLAY_FPS) return;
   captureReplayFrame(true);
-  replayFrames = replayBuffer.slice(-REPLAY_FPS * 4);
+  const firstAbs = replayFrameCount - replayBuffer.length;
+  const startAbs = Math.max(firstAbs, info.goalAbs - Math.round(REPLAY_FPS * 3.6));
+  const endAbs = Math.min(replayFrameCount, info.goalAbs + Math.round(REPLAY_FPS * 1.6));
+  replayFrames = replayBuffer.slice(startAbs - firstAbs, endAbs - firstAbs);
+  if (replayFrames.length < 2) { replayFrames = null; return; }
+  const shotIdx = replayFrames.findIndex((f) => f.ball.shotId === info.shotId && !f.ball.owner);
+  replayInfo = {
+    shooterId: info.shooterId, scorerId: info.scorerId, dir: info.dir,
+    shotIdx: shotIdx >= 0 && info.shotId > 0 ? shotIdx : null,
+    goalIdx: info.goalAbs - startAbs,
+  };
   replayElapsed = 0;
   $('replaySkip').classList.remove('hidden');
-  showSub('GOAL REPLAY · press R to skip', 4.2);
+  $('replayTag').classList.remove('hidden');
+}
+
+/** Playback rate: slow motion around the strike and as the ball goes in. */
+function replayRate(pos) {
+  const bump = (centre, before, after) => {
+    if (centre == null) return 0;
+    const d = pos - centre;
+    const w = d < 0 ? before : after;
+    return Math.max(0, 1 - Math.abs(d) / (w * REPLAY_FPS)) ** 0.6;
+  };
+  const slow = Math.max(bump(replayInfo?.shotIdx, 0.45, 0.6), bump(replayInfo?.goalIdx, 0.5, 0.25));
+  return 1 - 0.68 * slow;
+}
+
+/** Blend two replay snapshots (positions interpolate in the renderer). */
+function replayView(pos) {
+  const i = Math.min(replayFrames.length - 2, Math.floor(pos));
+  const a = replayFrames[i], b = replayFrames[i + 1];
+  b.players.forEach((p, k) => { p.prevPos = a.players[k]?.pos || null; });
+  b.ball.prevPos = a.ball.pos;
+  return { state: b, alpha: Math.min(1, Math.max(0, pos - i)) };
 }
 
 function finishReplay() {
   replayFrames = null;
+  replayInfo = null;
+  pendingReplay = null;
+  goalCard = null;
+  replayInfo = null;
   replayElapsed = 0;
   $('replaySkip').classList.add('hidden');
+  $('replayTag').classList.add('hidden');
 }
 
 function handleEvents() {
@@ -1224,18 +1281,12 @@ function handleEvents() {
     if (e.type === 'goal') {
       const team = match.teams[e.team];
       goals.push({ team: e.team, name: e.scorer, own: e.ownGoal, minute: Math.max(1, displayMinute(match)) });
-      showSub(`${e.ownGoal ? 'Own goal: ' : ''}${e.scorer} (${team.data.name})`, 2.4);
-      beginGoalReplay();
-    } else if (e.type === 'woodwork') {
-      showSub(e.what === 'bar' ? 'Off the crossbar!' : 'Off the post!', 1.2);
-    } else if (e.type === 'save' && Math.random() < 0.6) {
-      showSub(e.parry ? 'Great save!' : 'Safe hands', 1.0);
+      showGoalCard(team, e);
+      queueGoalReplay(e);
     } else if (e.type === 'offside') {
-      showSub(e.interference
-        ? `${match.players[e.player].name} penalized for offside interference`
-        : `${match.players[e.player].name} offside`, 1.8);
+      showSub(`Offside · ${match.players[e.player].name}`, 1.6);
     } else if (e.type === 'doubleTouch') {
-      showSub(`${match.players[e.player].name} touched the ball twice — indirect free kick`, 2.0);
+      showSub('Indirect free kick · double touch', 1.6);
     } else if (e.type === 'throwInGoal') {
       showSub(e.ownGoalEnd
         ? 'A throw-in cannot be an own goal — corner awarded'
@@ -1247,7 +1298,7 @@ function handleEvents() {
         ? 'A free kick cannot score directly into your own goal — corner awarded'
         : 'Indirect free kick needs another touch — goal kick awarded', 2.0);
     } else if (e.type === 'foul') {
-      showSub(e.penalty ? 'Foul — penalty awarded' : 'Foul — free kick', 1.8);
+      if (e.penalty) showSub('Penalty', 1.8);
     } else if (e.type === 'card') {
       const player = match.players[e.player];
       showSub(e.secondYellow ? `Second yellow — ${player.name} sent off` : `${e.color === 'red' ? 'Red' : 'Yellow'} card — ${player.name}`, 2.2);
@@ -1262,9 +1313,9 @@ function handleEvents() {
     } else if (e.type === 'injury') {
       showSub(`${match.players[e.player].name} is injured`, 2.2);
     } else if (e.type === 'tactic') {
-      showSub(`${match.teams[e.team].data.name}: ${e.tactic} tactics`, 1.8);
+      // (tactics changes are the user's own choice: no on-pitch message)
     } else if (e.type === 'formation') {
-      showSub(`${match.teams[e.team].data.name}: ${e.formation}`, 1.8);
+      // (formation changes: no on-pitch message)
     } else if (e.type === 'extraTime') {
       showSub('Extra time — golden chance to settle the tie', 2.4);
     } else if (e.type === 'tackle' && e.human) {
@@ -1274,10 +1325,11 @@ function handleEvents() {
         keeper: 'Keeper has it in his hands: you can\u2019t tackle him', nothing: 'Nobody in range to tackle',
         'set piece': 'Wait until the restart is taken',
       }[e.result];
-      if (msg) showSub(msg, 1.2);
+      // Tackle feedback only in the tackling drill / tutorial.
+      if (msg && (drill || tut)) showSub(msg, 1.2);
       if (drill) renderTutorial();
     } else if (e.type === 'halftime') {
-      showSub('Teams change ends', 2.4);
+      // (half time is shown on the scoreboard)
     } else if (e.type === 'fulltime') {
       if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
       else showFullTime();
@@ -1322,37 +1374,115 @@ function promptsFor(id, team) {
   return items.map((t) => `<span>${t}</span>`).join('');
 }
 
+const shortCode = (t) => String(t.short || t.code || t.name || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'TEAM';
+
+/** Match clock as a 90-minute broadcast clock (mm:ss). */
+function broadcastClock(state) {
+  if (!Number.isFinite(state.duration)) return '00:00';
+  const reg = state.regulationDuration || state.duration;
+  const total = Math.max(0, (state.clock / reg) * 90 * 60);
+  const m = Math.floor(total / 60), sec = Math.floor(total % 60);
+  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+/** Big centre card for goals / half time / full time; restarts get nothing. */
+const BANNERS_SHOWN = new Set(['GOAL!', 'HALF TIME', 'FULL TIME', 'EXTRA TIME', 'PENALTY']);
+let goalCard = null;
+function showGoalCard(team, e) {
+  goalCard = { text: e.ownGoal ? 'OWN GOAL' : 'GOAL', name: e.scorer || '', team: shortCode(team.data), color: team.kit.shirt, t: 3.2 };
+}
+
+/** The player each team "has": your controlled player, or for the computer the man on the ball / nearest to it. */
+function activePlayer(team) {
+  if (team.controlled && !team.controlled.sentOff) return team.controlled;
+  const b = match.ball;
+  if (b.owner && b.owner.team === team.index) return b.owner;
+  let best = null, bd = Infinity;
+  for (const p of match.players) {
+    if (p.team !== team.index || !p.onPitch || p.sentOff) continue;
+    const d = Math.hypot(p.pos.x - b.pos.x, p.pos.z - b.pos.z);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
 function updateHud(dt) {
   const [h, a] = match.teams;
-  $('score').textContent = match.practice ? `${h.score}` : `${h.score} - ${a.score}`;
-  $('clock').textContent = match.practice ? '' : `${displayMinute(match)}'`;
+  $('scoreHome').textContent = h.score;
+  $('scoreAway').textContent = match.practice ? '–' : a.score;
+  $('clock').textContent = match.practice ? 'TRAINING'
+    : match.phase === 'halftime' ? 'HT' : match.phase === 'fulltime' ? 'FT' : broadcastClock(match);
   const banner = $('banner');
-  if (match.banner && match.phase !== 'fulltime') {
-    banner.textContent = match.banner.text;
+  if (goalCard && goalCard.t > 0) {
+    goalCard.t -= dt;
+    const html = `<span class="gc-word">${goalCard.text}</span><span class="gc-name"><i style="background:${goalCard.color}"></i>${goalCard.team} · ${goalCard.name}</span>`;
+    if (banner.innerHTML !== html) banner.innerHTML = html;
+    banner.classList.add('show', 'goal');
+  } else if (match.banner && match.phase !== 'fulltime' && BANNERS_SHOWN.has(match.banner.text) && match.banner.text !== 'GOAL!') {
+    if (banner.textContent !== match.banner.text) banner.textContent = match.banner.text;
+    banner.classList.remove('goal');
     banner.classList.add('show');
   } else {
-    banner.classList.remove('show');
+    banner.classList.remove('show', 'goal');
   }
   if (subTimer > 0) {
     subTimer -= dt;
     if (subTimer <= 0) $('subBanner').classList.remove('show');
   }
-  for (const id of ['p1', 'p2']) {
-    const team = match.teams.find((t) => t.human === id);
-    if (!team) continue;
-    const panel = $(`${id}panel`);
-    const p = team.controlled;
-    panel.querySelector('.pname').textContent = p ? `${p.number}  ${p.name}${p.injured ? ' · INJ' : ''}` : '';
-    const n = team.next;
-    panel.querySelector('.pnext span').textContent = n ? `${n.number}  ${n.name}` : '-';
-    panel.querySelector('.stamina i').style.width = `${(p ? p.stamina : 0) * 100}%`;
-    panel.querySelector('.power i').style.width = `${(p ? p.charge : 0) * 100}%`;
+  for (const team of match.teams) {
+    const panel = $(`teamPanel${team.index}`);
+    const p = activePlayer(team);
+    const last = (p?.name || '').split(' ');
+    const surname = (last.length > 1 ? last.slice(1).join(' ') : last[0]).toUpperCase();
+    panel.querySelector('.tp-num').textContent = p ? p.number : '';
+    panel.querySelector('.tp-pname').textContent = p ? surname : '';
+    panel.querySelector('.tp-tag').textContent = team.human ? team.human.toUpperCase() : '';
+    panel.querySelector('.tp-stamina').style.width = `${(p ? p.stamina : 0) * 100}%`;
+    panel.querySelector('.tp-power').style.width = `${(p && p.charge ? p.charge : 0) * 100}%`;
     panel.classList.toggle('charging', !!p && p.charge > 0);
-    const html = promptsFor(id, team);
-    const box = panel.querySelector('.prompts');
-    if (box.innerHTML !== html) box.innerHTML = html;
+    panel.classList.toggle('human', !!team.human);
   }
+  drawRadar();
   if (dev.debug) updateDebug();
+}
+
+/** Mini-map of the whole pitch: circles for the home side, triangles for the away side. */
+function drawRadar() {
+  const cv = $('radar');
+  const g = cv.getContext('2d');
+  const W = cv.width, H = cv.height, pad = 8;
+  const sx = (W - pad * 2) / 105, sz = (H - pad * 2) / 68;
+  const X = (x) => pad + (x + 52.5) * sx, Y = (z) => pad + (z + 34) * sz;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = 'rgba(28, 74, 36, 0.62)';
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = 'rgba(255,255,255,0.55)';
+  g.lineWidth = 1.5;
+  g.strokeRect(X(-52.5), Y(-34), 105 * sx, 68 * sz);
+  g.beginPath(); g.moveTo(X(0), Y(-34)); g.lineTo(X(0), Y(34)); g.stroke();
+  g.beginPath(); g.arc(X(0), Y(0), 9.15 * sx, 0, Math.PI * 2); g.stroke();
+  for (const s of [-1, 1]) {
+    g.strokeRect(Math.min(X(s * 52.5), X(s * (52.5 - 16.5))), Y(-20.16), 16.5 * sx, 40.32 * sz);
+    g.strokeRect(Math.min(X(s * 52.5), X(s * (52.5 - 5.5))), Y(-9.16), 5.5 * sx, 18.32 * sz);
+  }
+  for (const p of match.players) {
+    if (!p.onPitch || p.sentOff) continue;
+    const team = match.teams[p.team];
+    const x = X(p.pos.x), y = Y(p.pos.z);
+    const controlled = team.controlled === p && team.human;
+    g.fillStyle = controlled ? (team.human === 'p1' ? '#22d3ee' : '#f43f5e') : team.kit.shirt;
+    g.strokeStyle = 'rgba(0,0,0,0.65)';
+    g.lineWidth = 1;
+    g.beginPath();
+    const r = controlled ? 5.5 : 4;
+    if (p.team === 0) g.arc(x, y, r, 0, Math.PI * 2);
+    else { g.moveTo(x, y - r); g.lineTo(x + r, y + r * 0.8); g.lineTo(x - r, y + r * 0.8); g.closePath(); }
+    g.fill(); g.stroke();
+  }
+  const b = match.ball.pos;
+  g.fillStyle = '#ffffff';
+  g.beginPath(); g.arc(X(b.x), Y(b.z), 3, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#000'; g.stroke();
 }
 
 function updateDebug() {
@@ -1499,17 +1629,27 @@ function frame(now) {
     } else {
       input.endStep(); // drop key presses while paused or watching a replay
     }
-    let renderState = match;
-    if (!paused && replayFrames) {
-      replayElapsed += dt;
-      const frameIndex = Math.floor(replayElapsed * REPLAY_FPS);
-      if (frameIndex >= replayFrames.length) finishReplay();
-      else renderState = replayFrames[frameIndex];
+    // The goal replay starts once the live celebration has played out.
+    if (pendingReplay) {
+      if (match.phase !== 'goal') pendingReplay = null;
+      else if (match.phaseTimer <= 1.0 && !replayFrames) { beginGoalReplay(pendingReplay); pendingReplay = null; }
     }
-    // Interpolate between the last two physics steps (replay frames are
-    // already snapshots, so they are drawn as-is).
-    const alpha = renderState === match && !blocked ? Math.min(1, acc / FIXED_DT) : 1;
-    renderer.update(renderState, blocked && !replayFrames ? 0 : dt, alpha);
+    let renderState = match;
+    let alpha = !blocked ? Math.min(1, acc / FIXED_DT) : 1;
+    let renderDt = blocked && !replayFrames ? 0 : dt;
+    let view = null;
+    if (replayFrames) {
+      const rate = paused ? 0 : replayRate(replayElapsed);
+      replayElapsed += dt * REPLAY_FPS * rate;
+      if (replayElapsed >= replayFrames.length - 1) finishReplay();
+      else {
+        const rv = replayView(replayElapsed);
+        renderState = rv.state; alpha = rv.alpha; renderDt = dt * rate;
+        view = { replay: { ...replayInfo, t: replayElapsed / REPLAY_FPS, fps: REPLAY_FPS }, realDt: dt };
+      }
+    }
+    // Interpolate between the last two physics steps (or replay snapshots).
+    renderer.update(renderState, renderDt, alpha, view);
     updateHud(dt);
   } else {
     renderer.renderIdle(dt);
@@ -1585,3 +1725,11 @@ fetch(`${import.meta.env.BASE_URL}assets/clubs/logos/official/manifest.json`)
   })
   .catch(() => {});
 requestAnimationFrame(frame);
+
+// Dev-only handle for debugging in the browser console (stripped from builds).
+if (import.meta.env.DEV) {
+  window.__legends = {
+    get match() { return match; },
+    renderer,
+  };
+}

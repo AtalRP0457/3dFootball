@@ -43,7 +43,37 @@ export const ATTRIBUTE_KEYS = [
   'pace', 'acceleration', 'sprintSpeed', 'shooting', 'finishing', 'longShots', 'passing', 'vision', 'crossing',
   'dribbling', 'ballControl', 'agility', 'strength', 'stamina', 'jumping', 'heading', 'defensiveAwareness',
   'tackling', 'interceptions', 'gkDiving', 'gkReflexes', 'gkHandling', 'gkPositioning', 'gkKicking',
+  // Derived from the base set above unless edited: one consistent attribute
+  // system shared by cards, the 3D preview and the match engine.
+  'balance', 'shortPassing', 'longPassing', 'shotPower', 'firstTouch', 'curve', 'marking', 'positioning',
 ];
+
+/** Attribute groups as shown on player cards (label, key). */
+export const ATTRIBUTE_GROUPS = [
+  ['Physical', [['Acceleration', 'acceleration'], ['Sprint speed', 'sprintSpeed'], ['Strength', 'strength'],
+    ['Balance', 'balance'], ['Stamina', 'stamina'], ['Agility', 'agility'], ['Jumping', 'jumping']]],
+  ['Technical', [['Ball control', 'ballControl'], ['First touch', 'firstTouch'], ['Dribbling', 'dribbling'],
+    ['Short passing', 'shortPassing'], ['Long passing', 'longPassing'], ['Vision', 'vision'], ['Crossing', 'crossing'],
+    ['Shot power', 'shotPower'], ['Finishing', 'finishing'], ['Shooting', 'shooting'], ['Long shots', 'longShots'],
+    ['Curve', 'curve'], ['Heading', 'heading']]],
+  ['Defending', [['Tackling', 'tackling'], ['Marking', 'marking'], ['Interceptions', 'interceptions'],
+    ['Positioning', 'positioning'], ['Awareness', 'defensiveAwareness']]],
+  ['Goalkeeping', [['Reflexes', 'gkReflexes'], ['Diving', 'gkDiving'], ['Handling', 'gkHandling'],
+    ['Positioning', 'gkPositioning'], ['Distribution', 'gkKicking']]],
+];
+
+// Weights for the overall rating by role (normalised when used).
+const OVERALL_WEIGHTS = {
+  GK: { gkReflexes: 3, gkDiving: 3, gkHandling: 2.5, gkPositioning: 2.5, gkKicking: 1 },
+  'Centre Back': { tackling: 3, marking: 3, interceptions: 2, positioning: 2, defensiveAwareness: 2, strength: 2, heading: 1.5, jumping: 1, shortPassing: 1, pace: 0.5 },
+  'Full Back': { pace: 2, sprintSpeed: 1, stamina: 1.5, tackling: 2, marking: 1.5, interceptions: 1.5, crossing: 1.5, shortPassing: 1, dribbling: 1 },
+  'Defensive Midfielder': { interceptions: 2.5, tackling: 2, marking: 1.5, shortPassing: 2.5, longPassing: 1.5, stamina: 1.5, strength: 1, ballControl: 1, positioning: 1 },
+  'Central Midfielder': { shortPassing: 3, longPassing: 2, vision: 2, ballControl: 2, firstTouch: 1, dribbling: 1.5, stamina: 1.5, longShots: 1, interceptions: 0.5 },
+  'Attacking Midfielder': { vision: 2.5, shortPassing: 2.5, ballControl: 2, dribbling: 2.5, agility: 1, longShots: 1.5, finishing: 1, firstTouch: 1 },
+  Winger: { pace: 2, sprintSpeed: 1.5, acceleration: 1.5, dribbling: 3, ballControl: 2, crossing: 2, agility: 1.5, finishing: 1, shortPassing: 1 },
+  Striker: { finishing: 3.5, shotPower: 2, shooting: 1.5, heading: 1.5, ballControl: 2, firstTouch: 1, acceleration: 1, sprintSpeed: 1, strength: 1, positioning: 0.5 },
+};
+const roleOf = (position) => (position === 'GK' ? 'GK' : POSITIONS[position]?.role || 'Central Midfielder');
 
 // Attribute offsets from the overall rating, by role.
 const PROFILE = {
@@ -71,6 +101,7 @@ export function deriveAttributes(playerId, position, overall, pace, edits) {
       a[k] = position === 'GK' ? clamp(overall + (prof[k] || 0) + ((hash(playerId + k) % 7) - 3), 30, 99) : clamp(8 + (hash(playerId + k) % 10), 5, 20);
       continue;
     }
+    if (DERIVED[k]) continue;
     const jitter = (hash(playerId + k) % 9) - 4;
     a[k] = clamp(Math.round(overall + (prof[k] ?? -10) + jitter), 20, 99);
   }
@@ -79,7 +110,46 @@ export function deriveAttributes(playerId, position, overall, pace, edits) {
     a.acceleration = clamp(pace + ((hash(playerId + 'acc') % 5) - 1), 20, 99);
     a.sprintSpeed = clamp(pace + ((hash(playerId + 'spr') % 5) - 2), 20, 99);
   }
-  return { ...a, ...(edits || {}) };
+  const merged = { ...a, ...(edits || {}) };
+  // Derived attributes follow their base attributes (including edits) unless
+  // edited themselves.
+  for (const [k, f] of Object.entries(DERIVED)) {
+    if (edits && edits[k] != null) continue;
+    const jitter = (hash(playerId + k) % 7) - 3;
+    merged[k] = clamp(Math.round(f(merged) + jitter), 20, 99);
+  }
+  return merged;
+}
+
+const DERIVED = {
+  balance: (a) => a.agility * 0.6 + a.strength * 0.25 + a.ballControl * 0.15,
+  shortPassing: (a) => a.passing * 0.8 + a.ballControl * 0.2 + 1,
+  longPassing: (a) => a.passing * 0.5 + a.vision * 0.3 + a.crossing * 0.2,
+  shotPower: (a) => a.shooting * 0.55 + a.strength * 0.25 + a.longShots * 0.2 + 2,
+  firstTouch: (a) => a.ballControl * 0.75 + a.dribbling * 0.25,
+  curve: (a) => a.crossing * 0.5 + a.passing * 0.25 + a.longShots * 0.25,
+  marking: (a) => a.defensiveAwareness * 0.6 + a.tackling * 0.4,
+  positioning: (a) => a.defensiveAwareness * 0.5 + a.interceptions * 0.5,
+};
+
+/**
+ * Overall rating from the attributes that matter for a position. Calibrated
+ * so unedited attributes reproduce the listed rating; edits move it.
+ */
+export function computeOverall(attributes, position, listedOverall, playerId = null, pace = null) {
+  const role = roleOf(position);
+  const w = OVERALL_WEIGHTS[role] || OVERALL_WEIGHTS['Central Midfielder'];
+  let sum = 0, ws = 0;
+  for (const [k, wt] of Object.entries(w)) { if (attributes[k] != null) { sum += attributes[k] * wt; ws += wt; } }
+  if (!ws) return listedOverall ?? 60;
+  const raw = sum / ws;
+  if (listedOverall == null) return clamp(Math.round(raw), 1, 99);
+  // Calibration: what a player of the listed rating scores with this role's
+  // default profile, so the rating moves only when attributes differ from it.
+  const base = deriveAttributes(playerId || `__calib__${role}`, position, listedOverall, pace, null);
+  let bsum = 0;
+  for (const [k, wt] of Object.entries(w)) bsum += base[k] * wt;
+  return clamp(Math.round(listedOverall + (raw - bsum / ws)), 1, 99);
 }
 
 // ---------- normalise seed data ----------
