@@ -2,7 +2,7 @@
 // viewer, identity and character code as the game. Open /dev/character-lab.html
 // ?team=bay&i=4&anim=idle&view=front&zoom=0
 import { sharedPlayerViewer, VIEWER_ANIMS } from '../src/render/playerViewer.js';
-import { buildTeam, kitFor } from '../src/db/teams.js';
+import { buildTeam, kitFor } from '../src/db/teams.ts';
 
 const q = new URLSearchParams(location.search);
 const team = buildTeam(q.get('team') || 'bay', q.get('kit') || 'home');

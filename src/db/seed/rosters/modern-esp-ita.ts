@@ -1,5 +1,7 @@
-// Modern Football (2024-25): Spain and Italy. Format: see modern-eng.js.
-export default {
+// Modern Football (2024-25): Spain and Italy. Format: see modern-eng.ts.
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   fcb: `Marc-André ter Stegen|GK|88|1|GER
 Iñaki Peña|GK|76|13|ESP
 Ronald Araújo|CB|85|4|URU
@@ -463,3 +465,5 @@ Andrea Pinamonti|ST|74|19|ITA
 Caleb Ekuban|ST|70|18|GHA
 Alessandro Zanoli|RB|69|59|ITA`,
 };
+
+export default rosters;

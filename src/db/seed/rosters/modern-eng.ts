@@ -2,7 +2,9 @@
 // Line format: Name|Position|Overall|Shirt|Nationality|Foot(L/R, default R)|Pace(optional)
 // Ratings are this game's own estimates on a 1-99 scale (not EA data); edit
 // them in the in-game Player Database.
-export default {
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   mun: `André Onana|GK|83|24|CMR
 Altay Bayındır|GK|73|1|TUR
 Lisandro Martínez|CB|84|6|ARG|L
@@ -382,3 +384,5 @@ Wes Burns|RW|70|7|WAL
 Liam Delap|ST|74|19|ENG
 George Hirst|ST|69|27|SCO`,
 };
+
+export default rosters;

@@ -1,7 +1,9 @@
 // Modern Football (2024 / 2024-25): Brazil, Argentina, MLS, Liga MX, Saudi
-// Pro League. Format: see modern-eng.js. Lower-confidence than European
+// Pro League. Format: see modern-eng.ts. Lower-confidence than European
 // squads (calendar-year seasons, frequent transfers); edit in-game.
-export default {
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   fla: `Agustín Rossi|GK|76|1|ARG
 Léo Ortiz|CB|74|3|BRA
 Léo Pereira|CB|74|4|BRA|L
@@ -255,3 +257,5 @@ Saleh Al-Shehri|ST|70|17|KSA
 Marwan Al-Sahafi|ST|68|21|KSA
 Faisal Al-Ghamdi|CM|66|14|KSA`,
 };
+
+export default rosters;

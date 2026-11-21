@@ -1,15 +1,18 @@
 // Club seed data: identity, parody identity, stadium, crest design and kits.
-// Crest specs describe ORIGINAL club-inspired artwork (see src/db/crests.js);
+// Crest specs describe ORIGINAL club-inspired artwork (see src/db/crests.ts);
 // they are not official badges. Kits are club-inspired colourways.
 //
 // kit tuple: [design, shirt, secondary, shorts, socks]
 // designs: plain, stripes, pinstripes, hoops, halves, quarters, sash, sleeves,
 //          band, chevron, side
-const C = (id, name, short, code, parody, country, league, colors, stadium, capacity, city, crest, kits) => ({
+import type { CrestSpec, KitTuple, SeedClub, SeedKits } from '../../types/db.ts';
+
+const C = (id: string, name: string, short: string, code: string, parody: string, country: string, league: string,
+  colors: string[], stadium: string, capacity: number, city: string, crest: CrestSpec, kits: SeedKits): SeedClub => ({
   id, name, short, code, parody, country, league, colors, stadium, capacity, city, crest, kits,
 });
 
-export const CLUBS = [
+export const CLUBS: SeedClub[] = [
   // ---------- England ----------
   C('mun', 'Manchester United', 'Man United', 'MUN', 'Manchesthair United', 'ENG', 'premier-league', ['#da291c', '#fbe122', '#000000'], 'Old Trafford', 74310, 'Manchester',
     { shape: 'shield', pattern: 'band', emblem: 'devil', mono: 'MU' },
@@ -343,7 +346,7 @@ export const CLUBS = [
     { home: ['stripes', '#fcd116', '#000000', '#000000', '#fcd116'], away: ['plain', '#ffffff', '#000000', '#ffffff', '#ffffff'], third: ['plain', '#000000', '#fcd116', '#000000', '#000000'], gk: '#62cff4' }),
 ];
 
-export const LEAGUES = {
+export const LEAGUES: Record<string, string> = {
   'premier-league': 'Premier League', laliga: 'LaLiga', 'serie-a': 'Serie A', bundesliga: 'Bundesliga', '2-bundesliga': '2. Bundesliga',
   'ligue-1': 'Ligue 1', 'liga-portugal': 'Liga Portugal', eredivisie: 'Eredivisie', 'scottish-premiership': 'Scottish Premiership',
   'pro-league': 'Belgian Pro League', 'super-lig': 'Süper Lig', 'super-league-greece': 'Super League Greece',

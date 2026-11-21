@@ -10,14 +10,18 @@
 // A player appears ONCE in `players` no matter how many clubs, nations or
 // eras he belongs to; each membership is a row in `roster_members` with its
 // own rating and attributes (ratings change between eras).
-import { CLUBS, LEAGUES } from './seed/clubs.js';
-import { NATIONS } from './seed/nations.js';
-import { ROSTER_SOURCES } from './seed/rosters/index.js';
-import { buildParodyAliases } from './parody.js';
+import { CLUBS, LEAGUES } from './seed/clubs.ts';
+import { NATIONS } from './seed/nations.ts';
+import { ROSTER_SOURCES } from './seed/rosters/index.ts';
+import { buildParodyAliases } from './parody.ts';
+import type { Attributes } from '../types/game.ts';
+import type {
+  Era, PositionInfo, RosterMemberRow, SeedKits, TeamRow, Tables,
+} from '../types/db.ts';
 
 export const SCHEMA_VERSION = 2;
 
-export const ERAS = [
+export const ERAS: Era[] = [
   { id: 'modern', label: 'Modern Football', season: '2024-25' },
   { id: 'fifa18', label: 'FIFA 18 Classics', season: '2017-18' },
   { id: 'fifa14', label: 'FIFA 14 Classics', season: '2013-14' },
@@ -26,7 +30,7 @@ export const ERAS = [
   { id: 'custom', label: 'Custom Ultimate Teams', season: 'Your picks' },
 ];
 
-export const POSITIONS = {
+export const POSITIONS: Record<string, PositionInfo> = {
   GK: { role: 'Goalkeeper', group: 'GK' },
   CB: { role: 'Centre Back', group: 'DEF' },
   LB: { role: 'Full Back', group: 'DEF' }, RB: { role: 'Full Back', group: 'DEF' },
@@ -39,7 +43,7 @@ export const POSITIONS = {
   CF: { role: 'Striker', group: 'FWD' }, ST: { role: 'Striker', group: 'FWD' },
 };
 
-export const ATTRIBUTE_KEYS = [
+export const ATTRIBUTE_KEYS: string[] = [
   'pace', 'acceleration', 'sprintSpeed', 'shooting', 'finishing', 'longShots', 'passing', 'vision', 'crossing',
   'dribbling', 'ballControl', 'agility', 'strength', 'stamina', 'jumping', 'heading', 'defensiveAwareness',
   'tackling', 'interceptions', 'gkDiving', 'gkReflexes', 'gkHandling', 'gkPositioning', 'gkKicking',
@@ -49,7 +53,7 @@ export const ATTRIBUTE_KEYS = [
 ];
 
 /** Attribute groups as shown on player cards (label, key). */
-export const ATTRIBUTE_GROUPS = [
+export const ATTRIBUTE_GROUPS: [string, [string, string][]][] = [
   ['Physical', [['Acceleration', 'acceleration'], ['Sprint speed', 'sprintSpeed'], ['Strength', 'strength'],
     ['Balance', 'balance'], ['Stamina', 'stamina'], ['Agility', 'agility'], ['Jumping', 'jumping']]],
   ['Technical', [['Ball control', 'ballControl'], ['First touch', 'firstTouch'], ['Dribbling', 'dribbling'],
@@ -63,7 +67,7 @@ export const ATTRIBUTE_GROUPS = [
 ];
 
 // Weights for the overall rating by role (normalised when used).
-const OVERALL_WEIGHTS = {
+const OVERALL_WEIGHTS: Record<string, Record<string, number>> = {
   GK: { gkReflexes: 3, gkDiving: 3, gkHandling: 2.5, gkPositioning: 2.5, gkKicking: 1 },
   'Centre Back': { tackling: 3, marking: 3, interceptions: 2, positioning: 2, defensiveAwareness: 2, strength: 2, heading: 1.5, jumping: 1, shortPassing: 1, pace: 0.5 },
   'Full Back': { pace: 2, sprintSpeed: 1, stamina: 1.5, tackling: 2, marking: 1.5, interceptions: 1.5, crossing: 1.5, shortPassing: 1, dribbling: 1 },
@@ -73,10 +77,10 @@ const OVERALL_WEIGHTS = {
   Winger: { pace: 2, sprintSpeed: 1.5, acceleration: 1.5, dribbling: 3, ballControl: 2, crossing: 2, agility: 1.5, finishing: 1, shortPassing: 1 },
   Striker: { finishing: 3.5, shotPower: 2, shooting: 1.5, heading: 1.5, ballControl: 2, firstTouch: 1, acceleration: 1, sprintSpeed: 1, strength: 1, positioning: 0.5 },
 };
-const roleOf = (position) => (position === 'GK' ? 'GK' : POSITIONS[position]?.role || 'Central Midfielder');
+const roleOf = (position: string): string => (position === 'GK' ? 'GK' : POSITIONS[position]?.role || 'Central Midfielder');
 
 // Attribute offsets from the overall rating, by role.
-const PROFILE = {
+const PROFILE: Record<string, Record<string, number>> = {
   GK: { pace: -30, acceleration: -28, sprintSpeed: -30, shooting: -60, finishing: -65, longShots: -60, passing: -30, vision: -30, crossing: -55, dribbling: -50, ballControl: -40, agility: -20, strength: -15, stamina: -40, jumping: -10, heading: -55, defensiveAwareness: -60, tackling: -65, interceptions: -60, gkDiving: 1, gkReflexes: 2, gkHandling: -1, gkPositioning: 0, gkKicking: -9 },
   'Centre Back': { pace: -12, acceleration: -14, sprintSpeed: -10, shooting: -38, finishing: -42, longShots: -34, passing: -14, vision: -22, crossing: -28, dribbling: -20, ballControl: -12, agility: -18, strength: 3, stamina: -6, jumping: 0, heading: 2, defensiveAwareness: 2, tackling: 2, interceptions: 1 },
   'Full Back': { pace: 2, acceleration: 2, sprintSpeed: 2, shooting: -24, finishing: -30, longShots: -24, passing: -6, vision: -12, crossing: -1, dribbling: -6, ballControl: -6, agility: -4, strength: -10, stamina: 4, jumping: -10, heading: -14, defensiveAwareness: -4, tackling: -3, interceptions: -4 },
@@ -87,15 +91,15 @@ const PROFILE = {
   Striker: { pace: -2, acceleration: -2, sprintSpeed: -1, shooting: 1, finishing: 3, longShots: -6, passing: -14, vision: -12, crossing: -20, dribbling: -6, ballControl: -2, agility: -8, strength: -2, stamina: -8, jumping: -6, heading: -3, defensiveAwareness: -52, tackling: -52, interceptions: -50 },
 };
 
-function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
-export const slug = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function hash(s: unknown): number { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
+export const slug = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 
 /** Full attribute set derived from position + overall (+ optional pace and edits). */
-export function deriveAttributes(playerId, position, overall, pace, edits) {
+export function deriveAttributes(playerId: string, position: string, overall: number, pace?: number | null, edits?: Attributes | null): Attributes {
   const role = POSITIONS[position]?.role || 'Central Midfielder';
   const prof = position === 'GK' ? PROFILE.GK : PROFILE[role];
-  const a = {};
+  const a: Attributes = {};
   for (const k of ATTRIBUTE_KEYS) {
     if (k.startsWith('gk')) {
       a[k] = position === 'GK' ? clamp(overall + (prof[k] || 0) + ((hash(playerId + k) % 7) - 3), 30, 99) : clamp(8 + (hash(playerId + k) % 10), 5, 20);
@@ -121,7 +125,7 @@ export function deriveAttributes(playerId, position, overall, pace, edits) {
   return merged;
 }
 
-const DERIVED = {
+const DERIVED: Record<string, (a: Attributes) => number> = {
   balance: (a) => a.agility * 0.6 + a.strength * 0.25 + a.ballControl * 0.15,
   shortPassing: (a) => a.passing * 0.8 + a.ballControl * 0.2 + 1,
   longPassing: (a) => a.passing * 0.5 + a.vision * 0.3 + a.crossing * 0.2,
@@ -136,7 +140,7 @@ const DERIVED = {
  * Overall rating from the attributes that matter for a position. Calibrated
  * so unedited attributes reproduce the listed rating; edits move it.
  */
-export function computeOverall(attributes, position, listedOverall, playerId = null, pace = null) {
+export function computeOverall(attributes: Attributes, position: string, listedOverall?: number | null, playerId: string | null = null, pace: number | null = null): number {
   const role = roleOf(position);
   const w = OVERALL_WEIGHTS[role] || OVERALL_WEIGHTS['Central Midfielder'];
   let sum = 0, ws = 0;
@@ -153,26 +157,26 @@ export function computeOverall(attributes, position, listedOverall, playerId = n
 }
 
 // ---------- normalise seed data ----------
-function parseRoster(text) {
+function parseRoster(text: string) {
   return text.trim().split('\n').map((line) => {
     const [name, position, ovr, number, nat, foot, pace] = line.split('|').map((x) => x.trim());
-    return { name, position, overall: Number(ovr), number: Number(number), nat, foot: foot === 'L' ? 'Left' : 'Right', pace: pace ? Number(pace) : null };
+    return { name, position, overall: Number(ovr), number: Number(number), nat, foot: (foot === 'L' ? 'Left' : 'Right') as 'Left' | 'Right', pace: pace ? Number(pace) : null };
   });
 }
 
-function buildTables() {
-  const t = {
+function buildTables(): Tables {
+  const t: Tables = {
     clubs: [], club_aliases: [], club_logos: [], national_teams: [], stadiums: [], kits: [],
     players: [], player_aliases: [], rosters: [], roster_members: [], formations: [], competitions: [],
   };
   const stadiumIds = new Map();
-  const addStadium = (name, city, capacity) => {
+  const addStadium = (name: string, city?: string | null, capacity?: number | null): string => {
     const id = slug(name);
     if (!stadiumIds.has(id)) { stadiumIds.set(id, true); t.stadiums.push({ id, name, city: city || null, capacity: capacity || null }); }
     return id;
   };
-  const addKits = (teamId, kits) => {
-    for (const type of ['home', 'away', 'third']) {
+  const addKits = (teamId: string, kits: SeedKits): void => {
+    for (const type of ['home', 'away', 'third'] as const) {
       const k = kits[type] || kits.away;
       const [design, shirt, secondary, shorts, socks] = k;
       t.kits.push({ id: `${teamId}:${type}`, team_id: teamId, type, design, primary: shirt, secondary, accent: secondary, shorts, socks, number_style: 'block', sleeves: design === 'sleeves' ? secondary : shirt });
@@ -193,8 +197,8 @@ function buildTables() {
     t.club_logos.push({ id: `${n.id}:parody`, team_id: n.id, universe: 'parody', path: `assets/clubs/logos/${n.id}-parody.svg`, licensed: false });
     addKits(n.id, n.kits);
   }
-  const playerIndex = new Map();
-  const personIds = new Map();
+  const playerIndex = new Map<string, Tables['players'][number]>();
+  const personIds = new Map<string, string>();
   for (const [era, byTeam] of Object.entries(ROSTER_SOURCES)) {
     for (const [teamId, text] of Object.entries(byTeam)) {
       const rosterId = `${era}:${teamId}`;
@@ -208,7 +212,7 @@ function buildTables() {
         if (!pid) {
           pid = playerIndex.has(base) ? `${base}-${row.nat.toLowerCase()}` : base;
           personIds.set(natKey, pid);
-          const player = { id: pid, name: row.name, nationality: row.nat, preferred_foot: row.foot, primary_position: row.position, group: POSITIONS[row.position]?.group || 'MID', namesake: pid !== base };
+          const player: Tables['players'][number] = { id: pid, name: row.name, nationality: row.nat, preferred_foot: row.foot, primary_position: row.position, group: POSITIONS[row.position]?.group || 'MID', namesake: pid !== base };
           playerIndex.set(pid, player);
           t.players.push(player);
         }
@@ -235,16 +239,21 @@ function buildTables() {
 export const DB = buildTables();
 
 // Indexes
-const byId = (rows) => new Map(rows.map((r) => [r.id, r]));
+const byId = <T extends { id: string }>(rows: T[]): Map<string, T> => new Map(rows.map((r) => [r.id, r]));
+function groupBy(rows: RosterMemberRow[], key: (r: RosterMemberRow) => string): Map<string, RosterMemberRow[]> {
+  const m = new Map<string, RosterMemberRow[]>();
+  for (const r of rows) { const k = key(r); const list = m.get(k); if (list) list.push(r); else m.set(k, [r]); }
+  return m;
+}
 export const IDX = {
   clubs: byId(DB.clubs), nations: byId(DB.national_teams), stadiums: byId(DB.stadiums), kits: byId(DB.kits),
   players: byId(DB.players), rosters: byId(DB.rosters),
   aliasesByTeam: new Map(DB.club_aliases.map((a) => [a.club_id, a])),
   aliasesByPlayer: new Map(DB.player_aliases.map((a) => [a.player_id, a])),
-  membersByRoster: DB.roster_members.reduce((m, r) => { (m.get(r.roster_id) || m.set(r.roster_id, []).get(r.roster_id)).push(r); return m; }, new Map()),
-  membersByPlayer: DB.roster_members.reduce((m, r) => { (m.get(r.player_id) || m.set(r.player_id, []).get(r.player_id)).push(r); return m; }, new Map()),
+  membersByRoster: groupBy(DB.roster_members, (r) => r.roster_id),
+  membersByPlayer: groupBy(DB.roster_members, (r) => r.player_id),
 };
-export const teamRecord = (id) => IDX.clubs.get(id) || IDX.nations.get(id) || null;
-export const allTeamRecords = () => [...DB.clubs, ...DB.national_teams];
-export const eraLabel = (id) => (ERAS.find((e) => e.id === id) || ERAS[0]).label;
-export const hasRoster = (teamId, era) => IDX.rosters.has(`${era}:${teamId}`);
+export const teamRecord = (id: string): TeamRow | null => IDX.clubs.get(id) || IDX.nations.get(id) || null;
+export const allTeamRecords = (): TeamRow[] => [...DB.clubs, ...DB.national_teams];
+export const eraLabel = (id: string): string => (ERAS.find((e) => e.id === id) || ERAS[0]).label;
+export const hasRoster = (teamId: string, era: string): boolean => IDX.rosters.has(`${era}:${teamId}`);

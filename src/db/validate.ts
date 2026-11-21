@@ -1,11 +1,13 @@
 // Database validation shared by the in-game "Database check" and
 // scripts/validate-db.mjs. Returns { errors, warnings, stats }.
-import { DB, IDX, POSITIONS } from './index.js';
+import { DB, IDX, POSITIONS } from './index.ts';
 
-export function validateDatabase() {
-  const errors = [], warnings = [];
-  const dupes = (rows, label) => {
-    const seen = new Set();
+export interface ValidationReport { errors: string[]; warnings: string[]; stats: Record<string, number | string> }
+
+export function validateDatabase(): ValidationReport {
+  const errors: string[] = [], warnings: string[] = [];
+  const dupes = (rows: { id: string }[], label: string) => {
+    const seen = new Set<string>();
     for (const r of rows) { if (seen.has(r.id)) errors.push(`Duplicate ${label} ID: ${r.id}`); seen.add(r.id); }
   };
   for (const [table, rows] of Object.entries(DB)) dupes(rows, table);
@@ -29,7 +31,7 @@ export function validateDatabase() {
     if (members.length < 18) warnings.push(`Roster ${r.id} has ${members.length} players (target 18)`);
     if (members.length < 15) errors.push(`Roster ${r.id} has only ${members.length} players (15 needed to play)`);
     if (!members.some((m) => m.position === 'GK')) errors.push(`Roster ${r.id} has no goalkeeper`);
-    const nums = new Map();
+    const nums = new Map<number, string>();
     for (const m of members) {
       if (nums.has(m.shirt_number)) errors.push(`Roster ${r.id}: shirt ${m.shirt_number} used by ${nums.get(m.shirt_number)} and ${m.player_id}`);
       nums.set(m.shirt_number, m.player_id);
@@ -46,7 +48,7 @@ export function validateDatabase() {
   for (const p of DB.players) if (p.namesake) warnings.push(`Namesake kept separate: ${p.name} (${p.nationality}) has ID ${p.id}`);
   // Same surname + same nationality may be one
   // person spelled two ways (would split his records).
-  const bySurname = new Map();
+  const bySurname = new Map<string, [string, string][]>();
   for (const p of DB.players) {
     const parts = p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(' ');
     if (parts.length < 2) continue;
@@ -59,7 +61,7 @@ export function validateDatabase() {
     }
     bySurname.set(key, [...(bySurname.get(key) || []), [first, p.id]]);
   }
-  const parody = new Map();
+  const parody = new Map<string, string>();
   for (const a of DB.player_aliases) {
     if (parody.has(a.name)) errors.push(`Parody name "${a.name}" used twice (${parody.get(a.name)}, ${a.player_id})`);
     parody.set(a.name, a.player_id);

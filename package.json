@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "prebuild": "node scripts/generate-assets.mjs",
+    "prebuild": "tsx scripts/generate-assets.mjs",
     "preview": "vite preview",
-    "assets": "node scripts/generate-assets.mjs",
+    "assets": "tsx scripts/generate-assets.mjs",
     "db:validate": "tsx scripts/validate-db.mjs",
     "test": "tsx tests/physics.test.mjs && tsx tests/mechanics.test.mjs && tsx tests/character.test.mjs && tsx tests/sim.test.mjs && tsx tests/db.test.mjs && tsx scripts/validate-db.mjs",
     "typecheck": "tsc --noEmit"

@@ -8,13 +8,13 @@
 import './frontend.css';
 import { trophySVG, ballSVG, esc, shade } from './art.js';
 import { playerSVG, coverSVG, customCoverUrls, loadUserImages } from './hero.js';
-import { DB, IDX, ATTRIBUTE_KEYS, ATTRIBUTE_GROUPS, POSITIONS, eraLabel, ERAS } from '../db/index.js';
+import { DB, IDX, ATTRIBUTE_KEYS, ATTRIBUTE_GROUPS, POSITIONS, eraLabel, ERAS } from '../db/index.ts';
 import { playerIdentity } from '../game/players/identity.ts';
 import { sharedPlayerViewer, PlayerViewer, VIEWER_ANIMS } from '../render/playerViewer.js';
-import { playerCard, kitUrl, kitTypes, kitFor, crestUrl, teamDisplayName } from '../db/teams.js';
-import { kitSVG } from '../db/crests.js';
-import { validateDatabase } from '../db/validate.js';
-import { ls, exportUserData, importUserData } from '../state/store.js';
+import { playerCard, kitUrl, kitTypes, kitFor, crestUrl, teamDisplayName } from '../db/teams.ts';
+import { kitSVG } from '../db/crests.ts';
+import { validateDatabase } from '../db/validate.ts';
+import { ls, exportUserData, importUserData } from '../state/store.ts';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);

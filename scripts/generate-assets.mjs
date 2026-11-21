@@ -3,11 +3,11 @@
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLUBS } from '../src/db/seed/clubs.js';
-import { NATIONS } from '../src/db/seed/nations.js';
-import { DB } from '../src/db/index.js';
-import { clubCrestSVG, nationCrestSVG, kitSVG } from '../src/db/crests.js';
-import { TEAMS as DECADES } from '../src/data/teams.js';
+import { CLUBS } from '../src/db/seed/clubs.ts';
+import { NATIONS } from '../src/db/seed/nations.ts';
+import { DB } from '../src/db/index.ts';
+import { clubCrestSVG, nationCrestSVG, kitSVG } from '../src/db/crests.ts';
+import { TEAMS as DECADES } from '../src/data/teams.ts';
 import { crestSVG } from '../src/ui/art.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'assets');

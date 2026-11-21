@@ -1,22 +1,25 @@
 // Original crest and kit artwork generator. Produces standalone SVG strings
 // (used by scripts/generate-assets.mjs to write files, and at runtime as a
 // fallback). The designs are club-INSPIRED originals, not official badges.
+import type { FlagSpec, SeedClub, SeedNation } from '../types/db.ts';
+import type { Kit } from '../types/game.ts';
 
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-function lum(hex) {
+const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = (s: unknown): string => String(s).replace(/[&<>"']/g, (c) => ESC[c]);
+function lum(hex: string): number {
   const n = parseInt(hex.slice(1), 16);
   return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
 }
-function shade(hex, amt) {
+function shade(hex: string, amt: number): string {
   const n = parseInt(hex.slice(1), 16);
-  const f = (v) => Math.max(0, Math.min(255, Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt)));
+  const f = (v: number) => Math.max(0, Math.min(255, Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt)));
   return `#${[f((n >> 16) & 255), f((n >> 8) & 255), f(n & 255)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
-const ink = (hex) => (lum(hex) > 0.6 ? '#101828' : '#ffffff');
-function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
+const ink = (hex: string): string => (lum(hex) > 0.6 ? '#101828' : '#ffffff');
+function hash(s: unknown): number { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
 
 // ---------- outer shapes (viewBox 0 0 200 220) ----------
-const SHAPES = {
+const SHAPES: Record<string, string> = {
   shield: 'M100 8 L184 30 C186 96 170 160 100 212 C30 160 14 96 16 30 Z',
   crest: 'M20 14 L180 14 L180 104 C180 160 140 194 100 212 C60 194 20 160 20 104 Z',
   round: 'M100 10 A100 100 0 0 1 100 210 A100 100 0 0 1 100 10 Z',
@@ -25,7 +28,7 @@ const SHAPES = {
 };
 
 // ---------- field patterns ----------
-function pattern(kind, c1, c2) {
+function pattern(kind: string, c1: string, c2: string): string {
   switch (kind) {
     case 'stripes': return [0, 1, 2, 3, 4].map((i) => `<rect x="${i * 44 - 8}" y="0" width="22" height="230" fill="${c2}"/>`).join('');
     case 'pinstripes': return [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<rect x="${i * 24}" y="0" width="7" height="230" fill="${c2}"/>`).join('');
@@ -49,7 +52,7 @@ function pattern(kind, c1, c2) {
 }
 
 // ---------- emblems (drawn in a 100x100 box) ----------
-const EMBLEMS = {
+const EMBLEMS: Record<string, string | null> = {
   ball: `<circle cx="50" cy="50" r="40" fill="#fff" stroke="#111" stroke-width="3"/><path d="M50 26 L66 38 L60 58 L40 58 L34 38 Z" fill="#111"/><path d="M50 26 V12 M66 38 L82 32 M60 58 L70 76 M40 58 L30 76 M34 38 L18 32" stroke="#111" stroke-width="3"/>`,
   crown: `<path d="M12 72 L18 30 L36 50 L50 20 L64 50 L82 30 L88 72 Z" fill="currentColor"/><rect x="12" y="74" width="76" height="12" rx="3" fill="currentColor"/><circle cx="18" cy="28" r="5" fill="currentColor"/><circle cx="50" cy="16" r="6" fill="currentColor"/><circle cx="82" cy="28" r="5" fill="currentColor"/>`,
   devil: `<path d="M30 30 L20 8 L40 24 Z M70 30 L80 8 L60 24 Z" fill="currentColor"/><path d="M50 22 C72 22 80 40 76 58 C72 74 60 86 50 92 C40 86 28 74 24 58 C20 40 28 22 50 22 Z" fill="currentColor"/><path d="M74 60 C90 66 92 82 84 92 L80 84 C84 78 82 72 72 68 Z" fill="currentColor"/><path d="M38 46 L46 50 M62 46 L54 50" stroke="#000" stroke-width="4" opacity=".5"/>`,
@@ -114,7 +117,7 @@ const EMBLEMS = {
   monogram: null, // drawn as stylised letters
 };
 
-function emblemSVG(name, color, mono) {
+function emblemSVG(name: string, color: string, mono?: string): string {
   if (name === 'monogram' || !EMBLEMS[name]) {
     const t = esc((mono || '?').slice(0, 4));
     const size = t.length > 3 ? 30 : t.length > 2 ? 38 : t.length > 1 ? 50 : 66;
@@ -127,15 +130,16 @@ function emblemSVG(name, color, mono) {
  * Club crest SVG. spec = club.crest, colors = [primary, secondary, accent].
  * parody adds a wobble, a cheeky monogram and a little "®-free" seal.
  */
-export function clubCrestSVG(club, { parody = false } = {}) {
+export function clubCrestSVG(club: SeedClub, { parody = false } = {}): string {
   const spec = club.crest;
   const id = `c${hash(club.id + (parody ? 'p' : ''))}`;
   const [c1, c2, c3] = club.colors;
-  const shapeName = parody ? ({ shield: 'oval', round: 'crest', oval: 'diamond', crest: 'round', diamond: 'shield' }[spec.shape] || 'shield') : spec.shape;
+  const PARODY_SHAPE: Record<string, string> = { shield: 'oval', round: 'crest', oval: 'diamond', crest: 'round', diamond: 'shield' };
+  const shapeName = parody ? (PARODY_SHAPE[spec.shape] || 'shield') : spec.shape;
   const outline = SHAPES[shapeName] || SHAPES.shield;
   const field1 = lum(c1) > 0.92 && lum(c2) > 0.6 ? shade(c1, -0.08) : c1;
   const emblemColor = lum(c3) > 0.35 && Math.abs(lum(c3) - lum(c1)) > 0.2 ? c3 : (lum(c1) > 0.6 ? '#101828' : '#ffffff');
-  const mono = parody ? club.parody.replace(/[^A-Za-z ]/g, '').split(' ').filter(Boolean).map((w) => w[0]).join('').slice(0, 3).toUpperCase() : spec.mono;
+  const mono = parody ? club.parody.replace(/[^A-Za-z ]/g, '').split(' ').filter(Boolean).map((w: string) => w[0]).join('').slice(0, 3).toUpperCase() : spec.mono;
   const medallion = spec.shape === 'round' || shapeName === 'round';
   const ribbon = esc((parody ? club.parody : club.short).toUpperCase());
   const rsize = ribbon.length > 16 ? 12 : ribbon.length > 11 ? 14 : 17;
@@ -165,7 +169,7 @@ ${parody ? `<g transform="translate(150 178) rotate(14)"><circle r="20" fill="#f
 }
 
 // ---------- national team crest: flag field + emblem ----------
-function flagSVG(flag, w = 200, h = 230) {
+function flagSVG(flag: FlagSpec, w = 200, h = 230): string {
   const [layout, a, b, c] = flag;
   switch (layout) {
     case 'v3': return `<rect width="${w / 3}" height="${h}" fill="${a}"/><rect x="${w / 3}" width="${w / 3}" height="${h}" fill="${b}"/><rect x="${(2 * w) / 3}" width="${w / 3}" height="${h}" fill="${c}"/>`;
@@ -203,7 +207,7 @@ function flagSVG(flag, w = 200, h = 230) {
   }
 }
 
-export function nationCrestSVG(nation, { parody = false } = {}) {
+export function nationCrestSVG(nation: SeedNation, { parody = false } = {}): string {
   const id = `n${hash(nation.id + (parody ? 'p' : ''))}`;
   const outline = parody ? SHAPES.round : SHAPES.crest;
   const emblemColor = '#ffffff';
@@ -227,7 +231,7 @@ ${parody ? `<g transform="translate(152 40) rotate(14)"><circle r="18" fill="#ff
 }
 
 // ---------- kit (shirt) artwork ----------
-export function kitSVG(kit) {
+export function kitSVG(kit: Pick<Kit, 'shirt' | 'shorts' | 'socks'> & { design?: string; secondary?: string }): string {
   const { design, shirt, secondary, shorts, socks } = kit;
   const id = `k${hash(JSON.stringify(kit))}`;
   const body = 'M60 18 L80 10 C88 24 112 24 120 10 L140 18 L178 40 L164 76 L146 68 L146 170 L54 170 L54 68 L36 76 L22 40 Z';

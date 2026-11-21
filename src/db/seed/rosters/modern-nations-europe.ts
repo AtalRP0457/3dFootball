@@ -1,7 +1,9 @@
 // Modern Football (2024): European national team squads (Euro 2024 / autumn
-// 2024 Nations League call-ups). Format: see modern-eng.js. Shirt numbers are
+// 2024 Nations League call-ups). Format: see modern-eng.ts. Shirt numbers are
 // tournament numbers where known.
-export default {
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   'n-fra': `Mike Maignan|GK|87|16|FRA
 Brice Samba|GK|80|23|FRA
 William Saliba|CB|87|17|FRA
@@ -446,3 +448,5 @@ Vangelis Pavlidis|ST|78|3|GRE
 Giannis Konstantelias|CAM|71|17|GRE
 Anastasios Douvikas|ST|72|22|GRE`,
 };
+
+export default rosters;

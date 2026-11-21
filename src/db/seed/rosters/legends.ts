@@ -1,6 +1,8 @@
 // All-Time Legends roster profile: each club's greatest players at their peak.
-// Ratings are this game's own estimates. Format: see modern-eng.js.
-export default {
+// Ratings are this game's own estimates. Format: see modern-eng.ts.
+import type { RosterSource } from '../../../types/db.ts';
+
+const rosters: RosterSource = {
   fcb: `Víctor Valdés|GK|88|1|ESP
 Andoni Zubizarreta|GK|85|13|ESP
 Carles Puyol|CB|90|5|ESP
@@ -183,3 +185,5 @@ Samuel Eto'o|ST|89|14|CMR
 Zlatan Ibrahimović|ST|90|15|SWE
 Diego Milito|ST|88|22|ARG`,
 };
+
+export default rosters;
