@@ -717,10 +717,14 @@ export function choosePassTarget(state: MatchState, p: Player, dx: number, dz: n
   return best;
 }
 
-export function doPass(state: MatchState, p: Player, target: Player | null, opts: { kind?: PassKind; driven?: boolean } = {}) {
+/**
+ * Play a pass. Returns false only when the engine could not start the kick
+ * yet (player busy, e.g. stumbling or getting up): the caller may retry.
+ */
+export function doPass(state: MatchState, p: Player, target: Player | null, opts: { kind?: PassKind; driven?: boolean } = {}): boolean {
   const b = state.ball;
   const team = state.teams[p.team];
-  if (!target) return;
+  if (!target) return true;
   // Offside position is judged when the ball is played. A player must be in
   // the opponents' half and ahead of both the ball and the second-last rival.
   const restartExempt = b.restartNoOffsideBy === p;
@@ -802,18 +806,19 @@ export function doPass(state: MatchState, p: Player, target: Player | null, opts
       const e = (elev * Math.PI) / 180;
       vel = { x: dir.x * s * Math.cos(e), y: s * Math.sin(e), z: dir.z * s * Math.cos(e) };
     }
-    if (p.throwIn || p.holding) { eng.hands(p, vel, p.throwIn ? 'throw-in' : 'keeper throw', finish); return; }
+    if (p.throwIn || p.holding) { eng.hands(p, vel, p.throwIn ? 'throw-in' : 'keeper throw', finish); return true; }
     const kind: KickKind = plan.kind === 'through' ? 'throughBall' : plan.kind === 'ground' ? (opts.driven ? 'drivenPass' : 'shortPass')
       : d > 30 ? 'longPass' : 'lobPass';
-    eng.kick(p, plan.kind === 'through' ? 'through' : plan.kind === 'ground' ? 'pass' : 'lob', kind, vel, finish);
-    return;
+    return eng.kick(p, plan.kind === 'through' ? 'through' : plan.kind === 'ground' ? 'pass' : 'lob', kind, vel, finish);
   }
   b.vel.x = plan.vel.x; b.vel.y = plan.vel.y; b.vel.z = plan.vel.z;
   if (plan.top === null) setRollingSpin(b); else setKickSpin(b, plan.top, 0);
   finish();
+  return true;
 }
 
-export function doShot(state: MatchState, p: Player, power: number, aimInput = 0, type: ShotType = 'normal') {
+/** Take a shot. Returns false when the engine could not start the kick yet (see doPass). */
+export function doShot(state: MatchState, p: Player, power: number, aimInput = 0, type: ShotType = 'normal'): boolean {
   const b = state.ball;
   const team = state.teams[p.team];
   const penaltyShot = state.penalty?.active && state.penalty.shooter === p;
@@ -853,12 +858,12 @@ export function doShot(state: MatchState, p: Player, power: number, aimInput = 0
   };
   if (state.engine) {
     // The planner aimed the shot; the engine strikes it at the contact frame.
-    state.engine.kick(p, 'shot', shotKind(plan.type), plan.vel, finish);
-    return;
+    return state.engine.kick(p, 'shot', shotKind(plan.type), plan.vel, finish);
   }
   b.vel.x = plan.vel.x; b.vel.y = plan.vel.y; b.vel.z = plan.vel.z;
   setKickSpin(b, plan.top, plan.side);
   finish();
+  return true;
 }
 
 function sendOff(state: MatchState, p: Player, secondYellow: boolean = false) {
@@ -2070,17 +2075,28 @@ export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
       else a = p.queuedAction.action;
     }
     if (!a) continue;
-    if (state.engine && (a.type === 'pass' || a.type === 'shoot') && state.engine.isKicking(p)) continue;
+    if (state.engine && (a.type === 'pass' || a.type === 'shoot') && state.engine.isKicking(p)) {
+      // Already striking or running onto the ball: this press is that kick.
+      p.queuedAction = null;
+      continue;
+    }
     if (!state.engine && (a.type === 'pass' || a.type === 'shoot') && b.owner === p && !canKick(p, b)) {
       if (!p.queuedAction || p.queuedAction.action !== a) p.queuedAction = { action: a, ttl: 1.6 };
       continue;
     }
+    const queued = p.queuedAction?.action === a ? p.queuedAction : null;
     p.queuedAction = null;
-    if (a.type === 'pass' && b.owner === p) doPass(state, p, a.target, { kind: a.kind, driven: a.driven });
+    let started = true;
+    if (a.type === 'pass' && b.owner === p) started = doPass(state, p, a.target, { kind: a.kind, driven: a.driven });
     else if (a.type === 'shoot' && b.owner === p && p.throwIn) {
       // You can't shoot from a throw-in: throw it to a teammate instead.
-      doPass(state, p, choosePassTarget(state, p, p.face.x, p.face.z));
-    } else if (a.type === 'shoot' && b.owner === p) doShot(state, p, a.power, a.aim || 0, a.shotType || 'normal');
+      started = doPass(state, p, choosePassTarget(state, p, p.face.x, p.face.z));
+    } else if (a.type === 'shoot' && b.owner === p) started = doShot(state, p, a.power, a.aim || 0, a.shotType || 'normal');
+    // The engine can't start the kick yet (stumbling after a bump, falling and
+    // getting up, finishing a turn): keep a human's press while he keeps the
+    // ball and strike as soon as he can, instead of silently dropping it.
+    // 2.5 s covers a fall plus getting up; set-piece takers wait a bit longer.
+    if (!started && p.human) p.queuedAction = queued ?? { action: a, ttl: p.mustPass ? 3 : 2.5 };
     else if (a.type === 'tackle') doTackle(state, p);
     if (state.phase !== 'play') break;
   }

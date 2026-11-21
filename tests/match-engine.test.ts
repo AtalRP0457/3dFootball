@@ -119,5 +119,67 @@ check('Stage 4 · 22 players: performance', ms < 4, `${ms.toFixed(2)} ms per fix
   s.engine.dispose();
 }
 
+// A human press is never silently dropped: the strike happens as soon as the
+// player can make it.
+{
+  /** P1 on the ball in open play, `facing` ±1 along x; one teammate to pass to and the keeper. */
+  const setup = (facing: number) => {
+    const s = createMatch({ home: team('fcb'), away: team('rma'), controllers: ['p1', 'ai'], difficulty: 'normal', duration: 240 });
+    for (const p of s.players) if (p.onPitch && !(p.team === 0 && [4, 9].includes(p.idx)) && !(p.team === 1 && p.idx === 0)) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
+    s.engine = new MatchPhysics(s);
+    while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+    for (const p of s.players) { p.mustPass = false; p.mustPassTimer = 0; }
+    s.ball.restartDoubleTouchBy = null;
+    const me = s.players.find((p) => p.team === 0 && p.idx === 4)!;
+    s.teams[0].controlled = me;
+    me.pos.x = HALF_L - 24; me.pos.z = 0; me.face.x = facing; me.face.z = 0;
+    s.ball.pos.x = me.pos.x + 0.55 * facing; s.ball.pos.z = 0.12; s.ball.pos.y = 0.11;
+    s.ball.vel.x = s.ball.vel.y = s.ball.vel.z = 0;
+    s.ball.owner = me;
+    for (let i = 0; i < 20; i++) stepMatch(s, { p1: {} }, FIXED_DT);
+    return { s, me };
+  };
+  const press = (s: MatchState, kind: 'shot' | 'pass', stick: { mx: number; mz: number; sprint?: boolean }, frames: number) => {
+    let done = false;
+    for (let i = 0; i < frames; i++) {
+      const f = kind === 'shot' ? { ...stick, shootPressed: i === 0, shootHeld: i < 12 } : { ...stick, passPressed: i === 0 };
+      stepMatch(s, { p1: f }, FIXED_DT);
+      for (const e of s.events) if (e.type === kind && e.human) done = true;
+      s.events.length = 0;
+    }
+    return done;
+  };
+  const shoot = (s: MatchState, stick: { mx: number; mz: number }, frames: number) => press(s, 'shot', stick, frames);
+  // 1) Shoot while stumbling, or while down after a fall: struck once he recovers.
+  for (const clip of ['stumble', 'fall'] as const) {
+    const { s, me } = setup(1);
+    const c = s.engine!.controllerOf(me)!;
+    c.sm.start(clip, { foot: 'R', force: true });
+    const shot = s.ball.owner === me && shoot(s, { mx: 1, mz: 0 }, 200);
+    check(`Human on the engine: shot pressed during a ${clip} still happens`, shot, shot ? `struck after the ${clip === 'fall' ? 'fall and get-up' : 'stumble'}` : `no shot (owner ${s.ball.owner?.name ?? 'none'})`);
+    s.engine!.dispose();
+  }
+  // 2) Pass and shoot while dribbling in every direction, jogging and
+  // sprinting: he settles or lines up the ball and strikes; a swing that
+  // misses is retried. (Before this, about a third of these presses did nothing.)
+  {
+    let tried = 0, dropped = 0;
+    const missed: string[] = [];
+    for (const kind of ['shot', 'pass'] as const) for (let deg = 0; deg < 360; deg += 45) for (const sprint of [false, true]) {
+      const a = (deg * Math.PI) / 180, fx = Math.cos(a), fz = Math.sin(a);
+      const { s, me } = setup(1);
+      me.face.x = fx; me.face.z = fz;
+      for (let i = 0; i < 30; i++) stepMatch(s, { p1: { mx: fx, mz: fz, sprint } }, FIXED_DT);
+      if (s.ball.owner === me) {
+        tried++;
+        if (!press(s, kind, { mx: fx, mz: fz, sprint }, 150)) { dropped++; missed.push(`${kind} ${deg}° ${sprint ? 'sprint' : 'jog'}`); }
+      }
+      s.engine!.dispose();
+    }
+    check('Human on the engine: every pass/shot press while dribbling is played', tried >= 24 && dropped === 0,
+      dropped ? `${dropped}/${tried} presses did nothing: ${missed.join(', ')}` : `${tried}/${tried} presses struck (8 directions, jog and sprint)`);
+  }
+}
+
 console.log(failed ? `\n${failed} match-engine check(s) failed` : '\nall match-engine checks passed');
 process.exit(failed ? 1 : 0);
