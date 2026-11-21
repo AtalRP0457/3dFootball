@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "assets": "node scripts/generate-assets.mjs",
     "db:validate": "node scripts/validate-db.mjs",
-    "test": "node tests/sim.test.mjs && node tests/db.test.mjs && node scripts/validate-db.mjs"
+    "test": "node tests/physics.test.mjs && node tests/mechanics.test.mjs && node tests/sim.test.mjs && node tests/db.test.mjs && node scripts/validate-db.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"

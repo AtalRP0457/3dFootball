@@ -8,6 +8,7 @@ import { createFrontend } from './ui/frontend.js';
 import { Input } from './game/input.js';
 import { createRenderer } from './render/scene.js';
 import { MatchAudio } from './render/audio.js';
+import { stopBall } from './game/physics/ballPhysics.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -531,7 +532,7 @@ function startTutorialState() {
   for (const p of match.players) p.mustPass = false;
   b.owner = null;
   b.pos.x = 8; b.pos.z = 7; b.pos.y = 0.22;
-  b.vel.x = b.vel.y = b.vel.z = 0;
+  stopBall(b);
   renderTutorial();
 }
 
@@ -622,7 +623,7 @@ function setupDrillRound() {
   victim.face.x = -1; victim.face.z = 0;
   victim.drillNoPass = true;
   b.owner = victim; b.lastTouch = victim; b.intended = null; b.shotLive = false;
-  b.vel.x = b.vel.y = b.vel.z = 0;
+  stopBall(b);
   b.pos.x = victim.pos.x - 0.75; b.pos.z = victim.pos.z; b.pos.y = 0.22;
   setControlled(match, me, mine);
   me.seenOpponentOwner = victim; // don't auto-switch away from your defender
@@ -1168,6 +1169,8 @@ function snapshotForRender(state) {
     pos: { ...p.pos },
     vel: { ...p.vel },
     face: { ...p.face },
+    acc: p.acc ? { ...p.acc } : undefined,
+    prevPos: null,
   }));
   const playerById = (player) => player ? players[player.id] : null;
   const teams = state.teams.map((team) => ({
@@ -1183,6 +1186,8 @@ function snapshotForRender(state) {
       ...state.ball,
       pos: { ...state.ball.pos },
       vel: { ...state.ball.vel },
+      spin: state.ball.spin ? { ...state.ball.spin } : undefined,
+      prevPos: null,
       owner: playerById(state.ball.owner),
     },
   };
@@ -1282,8 +1287,8 @@ function handleEvents() {
 }
 
 const KEYS = {
-  p1: { move: 'W A S D', pass: 'F', shoot: 'G', sprint: 'L-Shift' },
-  p2: { move: 'Arrows', pass: '.', shoot: '/', sprint: 'R-Shift' },
+  p1: { move: 'W A S D', pass: 'F', shoot: 'G', sprint: 'L-Shift', loft: 'V', through: 'R', finesse: 'H', chip: 'T' },
+  p2: { move: 'Arrows', pass: '.', shoot: '/', sprint: 'R-Shift', loft: ',', through: ';', finesse: "'", chip: ']' },
 };
 const k = (t) => `<kbd>${t}</kbd>`;
 
@@ -1300,7 +1305,8 @@ function promptsFor(id, team) {
     items.push(`${k(K.move)} aim`, `${k(K.pass)} <span class="act">${p.throwIn ? 'Throw' : 'Pass'}</span> → ${nextName}`);
   } else if (b.owner === p) {
     items.push(`${k(K.pass)} <span class="act">Pass</span> → ${nextName}`,
-      `hold ${k(K.shoot)} <span class="act">Shoot</span>`, `${k(K.sprint)} Sprint`);
+      `${k(K.through)} Through ${k(K.loft)} Lob`,
+      `hold ${k(K.shoot)} <span class="act">Shoot</span> ${k(K.finesse)} Curl ${k(K.chip)} Chip`, `${k(K.sprint)} Sprint`);
   } else if (b.owner && b.owner.team !== team.index && (b.owner.holding || b.owner.mustPass)) {
     items.push(b.owner.holding ? '<span class="act">Keeper has it in his hands: get back into position</span>'
       : '<span class="act">Wait for the restart</span>', `${k(K.pass)} Switch \u2192 ${nextName}`);
@@ -1500,7 +1506,10 @@ function frame(now) {
       if (frameIndex >= replayFrames.length) finishReplay();
       else renderState = replayFrames[frameIndex];
     }
-    renderer.update(renderState, blocked && !replayFrames ? 0 : dt);
+    // Interpolate between the last two physics steps (replay frames are
+    // already snapshots, so they are drawn as-is).
+    const alpha = renderState === match && !blocked ? Math.min(1, acc / FIXED_DT) : 1;
+    renderer.update(renderState, blocked && !replayFrames ? 0 : dt, alpha);
     updateHud(dt);
   } else {
     renderer.renderIdle(dt);

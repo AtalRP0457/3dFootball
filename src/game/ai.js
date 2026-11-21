@@ -5,7 +5,8 @@
 // the opponent's goal and az is mirrored the same way, so the same rules
 // work for both teams.
 
-import { HALF_L, HALF_W, GOAL, BOX, ROLL_DECEL, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.js';
+import { HALF_L, HALF_W, GOAL, BOX, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.js';
+import { predictGroundBall, samplePath } from './physics/ballPhysics.js';
 
 const len = (x, z) => Math.hypot(x, z);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -13,24 +14,29 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a = -1, b = 1) => a + Math.random() * (b - a);
 
 function runSpeed(p) {
-  return 4.6 + (p.stats.spd / 100) * 2.6;
+  return p.phys ? p.phys.runSpeed : 4.6 + (p.stats.spd / 100) * 2.6;
 }
 
-/** Where a free ball will be after t seconds (rolling approximation). */
+/**
+ * Where a free ball will be after t seconds. Uses the per-step simulated path
+ * (spin, bounces, rolling) when the match has computed one, otherwise the
+ * closed-form rolling model.
+ */
 function predictBall(b, t) {
-  if (b.owner) return { x: b.pos.x + b.vel.x * t, z: b.pos.z + b.vel.z * t };
-  const h = len(b.vel.x, b.vel.z);
-  if (h < 0.05) return { x: b.pos.x, z: b.pos.z };
-  const a = ROLL_DECEL + h * 0.15;
-  const tt = Math.min(t, h / a);
-  const d = h * tt - 0.5 * a * tt * tt;
-  return { x: b.pos.x + (b.vel.x / h) * d, z: b.pos.z + (b.vel.z / h) * d };
+  if (b.owner) return { x: b.pos.x + b.vel.x * t, z: b.pos.z + b.vel.z * t, y: b.pos.y };
+  if (b.path) return samplePath(b.path, t);
+  return { ...predictGroundBall(b, t), y: b.pos.y };
 }
 
-export function interceptPoint(p, b) {
+/**
+ * Earliest point on the ball's path the player can get to while it is low
+ * enough to play (so receivers run to where a lofted ball comes down).
+ */
+export function interceptPoint(p, b, reachH = 1.3) {
   const s = runSpeed(p) * 1.2;
-  for (let t = 0; t <= 3; t += 0.1) {
+  for (let t = 0; t <= 3 + 1e-9; t += 0.1) {
     const q = predictBall(b, t);
+    if ((q.y ?? 0) > reachH) continue;
     if (dist(p.pos, q) <= s * t + 0.6) return q;
   }
   return predictBall(b, 3);
@@ -262,6 +268,38 @@ function offBallAI(state, p, team, c, dt) {
   setMove(p, ax * dir, az * dir, sprint, 2);
 }
 
+/**
+ * AI shot selection: low and placed up close, finesse from an angle, a chip
+ * when the keeper is well off his line, power from distance.
+ */
+function chooseShotType(state, p, dGoal, gk) {
+  const team = state.teams[p.team];
+  const goalX = HALF_L * team.dir;
+  const prof = p.phys;
+  const r = Math.random();
+  if (gk && dGoal > 12 && dGoal < 26 && Math.abs(gk.pos.x - goalX) > 6 && r < 0.6) return 'chip';
+  if (Math.abs(p.pos.z) > 6 && dGoal < 22 && r < 0.45 + (prof ? prof.shotAccuracy * 0.2 : 0)) return 'finesse';
+  if (dGoal > 22 && r < 0.5) return 'power';
+  if (dGoal < 12 && r < 0.5) return 'low';
+  return 'normal';
+}
+
+/** AI pass selection: through balls for runners, lofted over blocked lanes. */
+function passKind(state, p, target) {
+  const dir = state.teams[p.team].dir;
+  const d = dist(p.pos, target.pos);
+  const ahead = (target.pos.x - p.pos.x) * dir;
+  const running = target.vel.x * dir > 3;
+  let blocked = false;
+  for (const o of opponents(state, p)) {
+    if (segmentDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, target.pos.x, target.pos.z) < 1.3
+        && dist(o.pos, p.pos) > 1.2) { blocked = true; break; }
+  }
+  if (target.role !== 'GK' && ahead > 6 && running && !blocked && d < 30) return 'through';
+  if (blocked && d > 12) return 'lofted';
+  return undefined; // let the engine pick ground / lofted by distance
+}
+
 // ---------- outfield, with the ball ----------
 function withBallAI(state, p, team, dt) {
   const dir = team.dir;
@@ -307,12 +345,13 @@ function withBallAI(state, p, team, dt) {
           type: 'shoot',
           power: clamp(0.55 + (38 - dGoal) / 70 + rand(0, 0.15), 0.45, 0.9),
           aim: away * rand(0.35, 0.9),
+          shotType: chooseShotType(state, p, dGoal, gk),
         };
         return;
       }
     }
     const bp = bestPass(state, p, false) || bestPass(state, p, true);
-    if (bp) it.action = { type: 'pass', target: bp.target };
+    if (bp) it.action = { type: 'pass', target: bp.target, kind: passKind(state, p, bp.target) };
     return;
   }
 
@@ -327,6 +366,7 @@ function withBallAI(state, p, team, dt) {
         type: 'shoot',
         power: clamp(0.4 + dGoal / 40 + rand(0, 0.2), 0.3, 0.95),
         aim: away * rand(0.45, 1),
+        shotType: chooseShotType(state, p, dGoal, gk),
       };
       return;
     }
@@ -335,7 +375,7 @@ function withBallAI(state, p, team, dt) {
   const bp = bestPass(state, p);
   if (!bp) return;
   if ((press < 2.6 && Math.random() < 0.6) || (bp.score > 7 && Math.random() < 0.3)) {
-    it.action = { type: 'pass', target: bp.target };
+    it.action = { type: 'pass', target: bp.target, kind: passKind(state, p, bp.target) };
   }
 }
 
@@ -352,7 +392,7 @@ function keeperAI(state, p, team, dt) {
     p.holdTimer -= dt;
     if (p.holdTimer <= 0) {
       const bp = bestPass(state, p);
-      if (bp) it.action = { type: 'pass', target: bp.target };
+      if (bp) it.action = { type: 'pass', target: bp.target, kind: passKind(state, p, bp.target) };
       p.holdTimer = 0.5;
     }
     return;

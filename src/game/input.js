@@ -1,5 +1,8 @@
 // Keyboard and gamepad input. Produces one input object per human player
-// each fixed step: { mx, mz, sprint, passPressed, shootHeld, shootPressed }.
+// each fixed step: { mx, mz, sprint, passPressed, loftPressed, throughPressed,
+// shootHeld, shootPressed, finesseHeld, chipHeld }.
+// Finesse and chip keys are shoot buttons of their own: hold to charge,
+// release to shoot that kind of shot.
 // mx: -1 left .. +1 right on screen. mz: -1 up (far touchline) .. +1 down.
 //
 // P1 always uses W A S D, P2 always uses the arrow keys.
@@ -8,10 +11,12 @@ export const BINDINGS = {
   p1: {
     up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
     pass: ['KeyF', 'Space'], shoot: ['KeyG'], sprint: ['ShiftLeft'],
+    loft: ['KeyV'], through: ['KeyR'], finesse: ['KeyH'], chip: ['KeyT'],
   },
   p2: {
     up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
     pass: ['Period', 'Numpad1'], shoot: ['Slash', 'Numpad2'], sprint: ['ShiftRight', 'Numpad0'],
+    loft: ['Comma', 'Numpad4'], through: ['Semicolon', 'Numpad5'], finesse: ['Quote', 'Numpad3'], chip: ['BracketRight', 'Numpad6'],
   },
 };
 
@@ -21,11 +26,13 @@ const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b
 // unusual: map by the printed key or the legacy keyCode instead.
 const BY_KEY = {
   w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', f: 'KeyF', g: 'KeyG',
-  ' ': 'Space', '.': 'Period', '/': 'Slash',
+  v: 'KeyV', r: 'KeyR', h: 'KeyH', t: 'KeyT',
+  ' ': 'Space', '.': 'Period', '/': 'Slash', ',': 'Comma', ';': 'Semicolon', "'": 'Quote', ']': 'BracketRight',
   arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
 };
 const BY_KEYCODE = {
   87: 'KeyW', 65: 'KeyA', 83: 'KeyS', 68: 'KeyD', 70: 'KeyF', 71: 'KeyG',
+  86: 'KeyV', 82: 'KeyR', 72: 'KeyH', 84: 'KeyT', 188: 'Comma', 186: 'Semicolon', 222: 'Quote', 221: 'BracketRight',
   32: 'Space', 190: 'Period', 191: 'Slash', 38: 'ArrowUp', 40: 'ArrowDown', 37: 'ArrowLeft', 39: 'ArrowRight',
 };
 
@@ -100,8 +107,12 @@ export class Input {
     mz += (this.anyDown(b.down) ? 1 : 0) - (this.anyDown(b.up) ? 1 : 0);
     let sprint = this.anyDown(b.sprint);
     let passPressed = this.anyPressed(b.pass);
-    let shootHeld = this.anyDown(b.shoot);
-    let shootPressed = this.anyPressed(b.shoot);
+    let loftPressed = this.anyPressed(b.loft);
+    let throughPressed = this.anyPressed(b.through);
+    let finesseHeld = this.anyDown(b.finesse);
+    let chipHeld = this.anyDown(b.chip);
+    let shootHeld = this.anyDown(b.shoot) || finesseHeld || chipHeld;
+    let shootPressed = this.anyPressed(b.shoot) || this.anyPressed(b.finesse) || this.anyPressed(b.chip);
     for (const i of padIndexes) {
       const pad = this.pads && this.pads[i];
       if (!pad) continue;
@@ -114,6 +125,11 @@ export class Input {
       if (btn(15)) mx += 1;
       const pr = this.padPressed[i] || [];
       passPressed = passPressed || !!pr[0];
+      throughPressed = throughPressed || !!pr[2];
+      loftPressed = loftPressed || !!pr[3];
+      // LB / LT held while shooting: finesse / chip.
+      finesseHeld = finesseHeld || (btn(1) && btn(4));
+      chipHeld = chipHeld || (btn(1) && btn(6));
       shootHeld = shootHeld || btn(1);
       shootPressed = shootPressed || !!pr[1];
       sprint = sprint || btn(7) || btn(5);
@@ -128,7 +144,7 @@ export class Input {
     }
     const l = Math.hypot(mx, mz);
     if (l > 1) { mx /= l; mz /= l; }
-    return { mx, mz, sprint, passPressed, shootHeld, shootPressed };
+    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
   }
 
   /** Gamepad Start/Options button, used for pause. */

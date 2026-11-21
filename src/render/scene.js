@@ -491,6 +491,8 @@ export function createRenderer(canvasEl) {
   ballShadow.position.y = 0.035;
   scene.add(ballShadow);
   const prevBall = new THREE.Vector3();
+  const spinAxis = new THREE.Vector3();
+  const spinQuat = new THREE.Quaternion();
 
   // Arrow above each human's current player (cyan = P1, pink = P2).
   const markers = {};
@@ -580,14 +582,23 @@ export function createRenderer(canvasEl) {
     return camMode;
   }
 
-  function update(state, dt) {
+  // Blend between the previous and current physics step so motion is smooth
+  // at any display refresh rate. Teleports (restarts) are not blended.
+  const lerpPos = (prev, cur, alpha, key) => {
+    if (!prev || alpha >= 1) return cur[key];
+    return prev[key] + (cur[key] - prev[key]) * alpha;
+  };
+  const blendable = (prev, cur) => !!prev && Math.abs(prev.x - cur.x) + Math.abs(prev.z - cur.z) < 3;
+
+  function update(state, dt, alpha = 1) {
     time += dt;
     // Players
     state.players.forEach((p, i) => {
       const m = playerMeshes[i];
       if (!m) return;
       m.root.visible = p.onPitch && !p.sentOff;
-      m.root.position.set(p.pos.x, 0, p.pos.z);
+      const pa = blendable(p.prevPos, p.pos) ? alpha : 1;
+      m.root.position.set(lerpPos(p.prevPos, p.pos, pa, 'x'), 0, lerpPos(p.prevPos, p.pos, pa, 'z'));
       m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
       const sp = Math.hypot(p.vel.x, p.vel.z);
       // Legs follow game speed, so slow motion looks like slow motion.
@@ -601,6 +612,10 @@ export function createRenderer(canvasEl) {
       if (p.kickAnim > 0) {
         const k = Math.sin((1 - p.kickAnim / 0.3) * Math.PI);
         m.legs[1].rotation.x = -1.3 * k;
+      } else if (p.touchAnim > 0) {
+        // Dribble touch: a short prod of the leg, synced to the touch event.
+        const k = Math.sin((1 - p.touchAnim / 0.22) * Math.PI);
+        m.legs[1].rotation.x = Math.min(m.legs[1].rotation.x, -0.55 * k);
       }
       // Keeper dive / stumble tilt
       let tilt = 0, drop = 0;
@@ -613,6 +628,14 @@ export function createRenderer(canvasEl) {
         m.arms[0].rotation.z = 0; m.arms[1].rotation.z = 0;
         if (p.stun > 0) tilt = 0.25;
       }
+      // Lean with the physics: forward into acceleration, back when braking,
+      // and into the turn (centripetal acceleration).
+      const acc = p.acc || { x: 0, z: 0 };
+      const fwdAcc = acc.x * p.face.x + acc.z * p.face.z;
+      const sideAcc = acc.x * p.face.z - acc.z * p.face.x;
+      const pitch = THREE.MathUtils.clamp(fwdAcc * 0.022, -0.22, 0.26);
+      if (p.dive <= 0) tilt += THREE.MathUtils.clamp(sideAcc * 0.018, -0.2, 0.2);
+      m.body.rotation.x += (pitch - m.body.rotation.x) * Math.min(1, dt * 10);
       m.body.rotation.z += (tilt - m.body.rotation.z) * Math.min(1, dt * 14);
       m.body.position.y += (drop - m.body.position.y) * Math.min(1, dt * 14);
       // Keeper holding the ball: arms forward
@@ -631,18 +654,28 @@ export function createRenderer(canvasEl) {
 
     // Ball: position and rolling spin from displacement
     const b = state.ball;
-    ball.position.set(b.pos.x, b.pos.y, b.pos.z);
+    const ba = blendable(b.prevPos, b.pos) ? alpha : 1;
+    ball.position.set(lerpPos(b.prevPos, b.pos, ba, 'x'), lerpPos(b.prevPos, b.pos, ba, 'y'), lerpPos(b.prevPos, b.pos, ba, 'z'));
     if (b.owner && b.owner.holding) ball.position.y = 1.05; // in the keeper's hands
     const ballHeight = Math.max(0, ball.position.y - BALL_R);
     ballShadow.position.x = ball.position.x;
     ballShadow.position.z = ball.position.z;
     ballShadow.scale.setScalar(1 + Math.min(0.45, ballHeight * 0.08));
     ballShadow.material.opacity = Math.max(0.12, 0.42 - ballHeight * 0.045);
-    const dx = ball.position.x - prevBall.x, dz = ball.position.z - prevBall.z;
-    const d = Math.hypot(dx, dz);
-    if (d > 1e-5 && d < 5) {
-      const axis = new THREE.Vector3(dz / d, 0, -dx / d);
-      ball.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, d / BALL_R));
+    // Rotation comes from the physics spin (rolling, topspin, curl). Old
+    // replay frames without spin fall back to rolling from displacement.
+    const w = b.spin;
+    const wl = w ? Math.hypot(w.x, w.y, w.z) : 0;
+    if (w && wl > 1e-3) {
+      spinAxis.set(w.x / wl, w.y / wl, w.z / wl);
+      ball.quaternion.premultiply(spinQuat.setFromAxisAngle(spinAxis, wl * dt * (state.timeScale || 1)));
+    } else if (!w) {
+      const dx = ball.position.x - prevBall.x, dz = ball.position.z - prevBall.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 1e-5 && d < 5) {
+        spinAxis.set(dz / d, 0, -dx / d);
+        ball.quaternion.premultiply(spinQuat.setFromAxisAngle(spinAxis, d / BALL_R));
+      }
     }
     prevBall.copy(ball.position);
 
@@ -669,7 +702,10 @@ export function createRenderer(canvasEl) {
       const p = team && team.controlled;
       const arrow = markers[id].arrow;
       arrow.visible = !!p && live;
-      if (arrow.visible) arrow.position.set(p.pos.x, 2.35 + Math.sin(time * 5) * 0.08, p.pos.z);
+      if (arrow.visible) {
+        const mp = playerMeshes[state.players.indexOf(p)]?.root.position;
+        arrow.position.set(mp ? mp.x : p.pos.x, 2.35 + Math.sin(time * 5) * 0.08, mp ? mp.z : p.pos.z);
+      }
     }
 
     // Camera

@@ -494,6 +494,9 @@ console.log('Keep run after release');
   // Our keeper holds the ball (so nobody can take it) while we make a run.
   s.ball.owner = gk; gk.holding = true; gk.mustPass = true; gk.holdTimer = 99; gk.mustPassTimer = -99;
   setControlled(s, team, mid);
+  // Run down an open channel: with real player contacts, sprinting straight
+  // into an opponent standing on the halfway line stops the run.
+  mid.pos.z = 15;
   for (let i = 0; i < 120; i++) stepMatch(s, { p1: { mx: 1, mz: 0, sprint: true } }, FIXED_DT);
   const releasedAx = mid.pos.x;
   stepMatch(s, { p1: { passPressed: true } }, FIXED_DT); // switch away
