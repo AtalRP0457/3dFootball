@@ -23,7 +23,7 @@ import type { PlayerController } from '../../packages/game-engine/player/PlayerC
 import type { KickCommand } from '../../packages/game-engine/player/PlayerBallInteraction.ts';
 import { emptyInput, type KickKind, type PlayerAttributes, type PoseData } from '../../packages/game-engine/player/PlayerTypes.ts';
 import { REFERENCE_ATTRIBUTES } from '../../packages/game-engine/player/PlayerAttributes.ts';
-import type { MatchState, Player, Vec2, Vec3 } from '../types/game.ts';
+import type { BallPathPoint, MatchState, Player, Vec2, Vec3 } from '../types/game.ts';
 import { GOAL, HALF_L, HALF_W, PITCH } from './constants.ts';
 
 let ready = false;
@@ -435,6 +435,27 @@ export class MatchPhysics {
     const d = Math.hypot(aim.x - from.x, aim.z - from.z);
     const a = this.sim.cal.ball.rollingResistance * this.sim.cal.world.gravity;
     return Math.sqrt(2 * a * d + arrive * arrive);
+  }
+
+  /** Rolling arrival time under this engine's actual constant grass drag. */
+  groundPassTime(distance: number, kind: 'ground' | 'through', driven = false): number {
+    const d = Math.max(0, distance);
+    const arrive = kind === 'through'
+      ? Math.max(2.8, Math.min(6.2, 3.1 + d * 0.075))
+      : driven ? Math.max(7.5, Math.min(12, 7 + d * 0.12))
+        : Math.max(3.2, Math.min(8, 4 + d * 0.1));
+    const a = this.sim.cal.ball.rollingResistance * this.sim.cal.world.gravity;
+    const start = Math.sqrt(2 * a * d + arrive * arrive);
+    return a > 0 ? (start - arrive) / a : d / Math.max(arrive, 0.1);
+  }
+
+  /** Match-coordinate trajectory from the same model Rapier advances. */
+  ballPath(pos: Vec3, vel: Vec3, spin: Vec3, horizon = 3): BallPathPoint[] {
+    return predictTrajectory(toE3(pos), toE3(vel), toE3(spin), this.sim.cal.ball, this.sim.cal.world.gravity, horizon, 1 / 60)
+      .map((point) => {
+        const p = toM3(point.p);
+        return { t: point.t, x: p.x, y: p.y, z: p.z };
+      });
   }
 
   /** Speed at a launch angle so the engine ball (drag + spin) lands at `aim`. */

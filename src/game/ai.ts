@@ -38,12 +38,12 @@ function predictBall(b: Ball, t: number): { x: number; z: number; y: number } {
  */
 export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
   const s = runSpeed(p) * 1.2;
-  for (let t = 0; t <= 3 + 1e-9; t += 0.1) {
+  for (let t = 0; t <= 5 + 1e-9; t += 0.1) {
     const q = predictBall(b, t);
     if ((q.y ?? 0) > reachH) continue;
     if (dist(p.pos, q) <= s * t + 0.6) return q;
   }
-  return predictBall(b, 3);
+  return predictBall(b, 5);
 }
 
 /**
@@ -54,7 +54,7 @@ export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
  */
 export function receivePoint(p: Player, b: Ball, reachH = 1.3): { x: number; z: number; t: number } {
   const pace = Math.min(runSpeed(p) * 0.6, 3.8);
-  for (let t = 0.05; t <= 3 + 1e-9; t += 0.05) {
+  for (let t = 0.05; t <= 5 + 1e-9; t += 0.05) {
     const q = predictBall(b, t);
     if ((q.y ?? 0) > reachH) continue;
     if (dist(p.pos, q) <= pace * t + 0.7) return { x: q.x, z: q.z, t };
@@ -176,6 +176,12 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
   if (p.drillPassive) { p.aiState = 'drill (waiting)'; setMove(p, p.pos.x, p.pos.z); return; }
 
   // A pass is on its way to me: go and meet it.
+  const pending = b.pendingPass;
+  if (pending?.target === p && b.owner === pending.passer) {
+    p.aiState = 'move for pass';
+    setMove(p, pending.aim.x, pending.aim.z, true, 0.45);
+    return;
+  }
   if (b.intended === p && !b.owner) {
     p.aiState = 'receive pass';
     const q = interceptPoint(p, b);
@@ -294,12 +300,25 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
       az = baz * 0.3 + hz;
     }
   }
-  // Spacing: never pick a spot on top of a teammate.
+  // Add a bounded, order-independent separation force to the formation
+  // anchor. This keeps the shape while preventing several players from
+  // selecting the same support lane near the ball.
+  let sepX = 0, sepZ = 0;
   for (const o of state.players) {
     if (o === p || o.team !== p.team || !o.onPitch || o.sentOff || o.role === 'GK') continue;
     const ox = o.pos.x * dir, oz = o.pos.z * dir;
     const d = len(ax - ox, az - oz);
-    if (d < SPACING && d > 1e-3) { const k = (SPACING - d) / d; ax += (ax - ox) * k * 0.6; az += (az - oz) * k * 0.6; }
+    if (d < SPACING && d > 1e-3) {
+      const force = (SPACING - d) / SPACING;
+      sepX += ((ax - ox) / d) * force;
+      sepZ += ((az - oz) / d) * force;
+    }
+  }
+  const separation = len(sepX, sepZ);
+  if (separation > 1e-3) {
+    const amount = Math.min(3.2, separation * 2.1);
+    ax += (sepX / separation) * amount;
+    az += (sepZ / separation) * amount;
   }
   az = clamp(az, -HALF_W + 2, HALF_W - 2);
   setMove(p, ax * dir, az * dir, sprint, 2);

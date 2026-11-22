@@ -17,6 +17,15 @@ export type DribbleStyle = 'sticky' | 'touch';
 export type ShotType = 'normal' | 'power' | 'low' | 'finesse' | 'chip';
 export type PassKind = 'ground' | 'lofted' | 'through' | 'chip';
 export type Phase = 'kickoff' | 'play' | 'restart' | 'penalty' | 'goal' | 'halftime' | 'fulltime';
+export type MatchFlow = 'PLAYING' | 'GOAL_SCORED' | 'OUT_OF_BOUNDS_TRANSITION' | 'SET_PIECE_SETUP' | 'KICKOFF';
+export interface FlowTransition {
+  state: 'OUT_OF_BOUNDS_TRANSITION' | 'SET_PIECE_SETUP';
+  elapsed: number;
+  duration: number;
+  fromPlayers: Record<number, Vec2>;
+  fromBall: Vec3;
+  pendingRestart?: { type: string; team: number; spot: Vec2 };
+}
 
 /** Six legacy engine stats (0-99). */
 export interface EngineStats { spd: number; pas: number; sho: number; tac: number; dri: number; gk: number }
@@ -182,6 +191,7 @@ export interface Team {
   dir: 1 | -1;
   human: HumanId | null;
   controlled: Player | null;
+  manualKeeperControl?: boolean;
   next: Player | null;
   lastInput: { mx: number; mz: number };
   seenOpponentOwner: Player | null;
@@ -230,6 +240,8 @@ export interface Ball {
   passKind?: PassKind;
   passAim?: Vec2;
   path?: BallPathPoint[] | null;
+  /** Receiver and aim announced during the passer's contact-frame wind-up. */
+  pendingPass?: { passer: Player; target: Player; aim: Vec2; kind: PassKind; expiresAt: number } | null;
 }
 
 export interface MatchEvent { type: string; [key: string]: unknown }
@@ -260,6 +272,9 @@ export interface MatchState {
   penalty: PenaltyState | null;
   openingKickoff: number;
   phase: Phase;
+  /** Explicit gameplay flow, separate from the legacy presentation phase. */
+  flow: MatchFlow;
+  transition: FlowTransition | null;
   phaseTimer: number;
   halftimeDone: boolean;
   restart: { type: string; team: number } | null;
@@ -288,6 +303,7 @@ export interface MatchConfig {
 export interface InputFrame {
   mx?: number; mz?: number; sprint?: boolean;
   passPressed?: boolean; loftPressed?: boolean; throughPressed?: boolean; drivenPressed?: boolean;
+  keeperSwitchPressed?: boolean;
   shootHeld?: boolean; shootPressed?: boolean; finesseHeld?: boolean; chipHeld?: boolean;
 }
 export type Inputs = Partial<Record<HumanId, InputFrame | null>>;

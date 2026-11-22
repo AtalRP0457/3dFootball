@@ -13,6 +13,7 @@ export const BOX = { depth: 16.5, width: 40.32 }; // penalty area
 export const GOAL_AREA = { depth: 5.5, width: 18.32 };
 export const PENALTY_SPOT = 11;
 export const PENALTY_ARC_RADIUS = 9.15;
+export const CENTER_CIRCLE_RADIUS = 9.15;
 
 export const BALL_R = 0.11; // a real size-5 ball (22 cm across)
 export const GRAVITY = 9.81;

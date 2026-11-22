@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import {
-  PITCH, HALF_L, HALF_W, BOX, GOAL_AREA, PENALTY_SPOT, PENALTY_ARC_RADIUS,
+  PITCH, HALF_L, HALF_W, BOX, GOAL_AREA, PENALTY_SPOT, PENALTY_ARC_RADIUS, CENTER_CIRCLE_RADIUS,
 } from '../../game/constants.ts';
 
 export const MARGIN = 6; // grass beyond the lines (metres)
@@ -141,13 +141,15 @@ function addArc(pos, cx, cz, r, a0, a1, segs = 64) {
     const ri = r - LINE_W / 2, ro = r + LINE_W / 2;
     const p = (rr, t) => [cx + Math.cos(t) * rr, cz + Math.sin(t) * rr];
     const [ax, az] = p(ri, t0), [bx, bz] = p(ro, t0), [qx, qz] = p(ro, t1), [dx, dz] = p(ri, t1);
-    pos.push(ax, az, bx, bz, qx, qz, ax, az, qx, qz, dx, dz);
+    // The pitch is viewed from +Y. Reverse the radial-sector winding so its
+    // front face and explicit +Y normals agree (otherwise Three culls it).
+    pos.push(ax, az, qx, qz, bx, bz, ax, az, dx, dz, qx, qz);
   }
 }
 function addDisc(pos, cx, cz, r, segs = 20) {
   for (let i = 0; i < segs; i++) {
     const t0 = (i / segs) * Math.PI * 2, t1 = ((i + 1) / segs) * Math.PI * 2;
-    pos.push(cx, cz, cx + Math.cos(t0) * r, cz + Math.sin(t0) * r, cx + Math.cos(t1) * r, cz + Math.sin(t1) * r);
+    pos.push(cx, cz, cx + Math.cos(t1) * r, cz + Math.sin(t1) * r, cx + Math.cos(t0) * r, cz + Math.sin(t0) * r);
   }
 }
 function rect(pos, x0, z0, x1, z1) {
@@ -160,7 +162,7 @@ function markingsGeometry() {
   const hl = HALF_L, hw = HALF_W;
   rect(p2, -hl, -hw, hl, hw);
   addSegment(p2, 0, -hw, 0, hw);
-  addArc(p2, 0, 0, 9.15, 0, Math.PI * 2, 96);
+  addArc(p2, 0, 0, CENTER_CIRCLE_RADIUS, 0, Math.PI * 2, 96);
   addDisc(p2, 0, 0, 0.18);
   for (const sx of [-1, 1]) {
     const gx = sx * hl;

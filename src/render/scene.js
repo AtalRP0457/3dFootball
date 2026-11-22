@@ -276,7 +276,7 @@ export function createRenderer(canvasEl) {
         crestUrl: team.data?.crest,
         teamKey: `t${team.index}|${team.kit.shirt}|${team.kit.secondary}|${team.kit.design}`,
       });
-      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z }, hipsBindY: character.bones.hips?.position.y ?? 0.93, posed: false };
+      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z }, renderYaw: Math.atan2(p.face.x, p.face.z), hipsBindY: character.bones.hips?.position.y ?? 0.93, posed: false };
       m.ring = new THREE.Mesh(
         ringGeo,
         new THREE.MeshBasicMaterial({ color: RING.other, transparent: true, opacity: 0.85, depthWrite: false }),
@@ -314,7 +314,15 @@ export function createRenderer(canvasEl) {
    */
   function cameraTarget(state, dt = 0) {
     const mode = CAMERA_MODES[camMode] || CAMERA_MODES.broadcast;
-    const b = state.ball.pos, bv = state.ball.vel;
+    const tr = state.transition;
+    const u = tr ? THREE.MathUtils.clamp(tr.elapsed / tr.duration, 0, 1) : 1;
+    const eased = u * u * (3 - 2 * u);
+    const b = tr ? {
+      x: tr.fromBall.x + (state.ball.pos.x - tr.fromBall.x) * eased,
+      y: tr.fromBall.y + (state.ball.pos.y - tr.fromBall.y) * eased,
+      z: tr.fromBall.z + (state.ball.pos.z - tr.fromBall.z) * eased,
+    } : state.ball.pos;
+    const bv = state.ball.vel;
     const ctrl = controlledPlayer(state);
     let fx = b.x, fz = b.z;
     let spread = 0;
@@ -498,6 +506,9 @@ export function createRenderer(canvasEl) {
 
   function update(state, dt, alpha = 1, view = null) {
     time += dt;
+    const transition = state.transition;
+    const rawTransition = transition ? THREE.MathUtils.clamp(transition.elapsed / transition.duration, 0, 1) : 1;
+    const transitionT = rawTransition * rawTransition * (3 - 2 * rawTransition);
     // Advance the intro (real time); its last shot hands over to the match camera.
     if (intro) {
       intro.shotT += dt; intro.total += dt;
@@ -529,13 +540,19 @@ export function createRenderer(canvasEl) {
         return;
       }
       const pa = blendable(p.prevPos, p.pos) ? alpha : 1;
-      m.root.position.set(lerpPos(p.prevPos, p.pos, pa, 'x'), 0, lerpPos(p.prevPos, p.pos, pa, 'z'));
-      m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
+      let px = lerpPos(p.prevPos, p.pos, pa, 'x'), pz = lerpPos(p.prevPos, p.pos, pa, 'z');
+      const start = transition?.fromPlayers?.[p.id];
+      if (start) { px = start.x + (px - start.x) * transitionT; pz = start.z + (pz - start.z) * transitionT; }
+      m.root.position.set(px, 0, pz);
       // Body yaw rate, for turn-in-place steps.
       const yaw = Math.atan2(p.face.x, p.face.z), pyaw = Math.atan2(m.prevFace.x, m.prevFace.z);
       let dyaw = yaw - pyaw;
       if (dyaw > Math.PI) dyaw -= 2 * Math.PI; else if (dyaw < -Math.PI) dyaw += 2 * Math.PI;
       m.prevFace.x = p.face.x; m.prevFace.z = p.face.z;
+      let turn = yaw - m.renderYaw;
+      if (turn > Math.PI) turn -= 2 * Math.PI; else if (turn < -Math.PI) turn += 2 * Math.PI;
+      m.renderYaw += turn * (1 - Math.exp(-dt * 18));
+      const visualYaw = m.renderYaw;
       const gdt = dt * (state.timeScale || 1);
       m.yawRate = gdt > 0 ? m.yawRate * 0.8 + (dyaw / gdt) * 0.2 : (m.yawRate || 0);
       // Lean with the physics: forward into acceleration, back when braking,
@@ -568,13 +585,14 @@ export function createRenderer(canvasEl) {
       const usePose = p.pose && !(p.dive > 0 || p.holding || (p.throwIn && p.mustPass) || celebration);
       if (usePose) {
         const r = applyEnginePose(m.character, p.posePrev || p.pose, p.pose, pa, m.hipsBindY);
-        m.root.rotation.set(r.pitch, yaw + r.yawOffset, r.roll, 'YXZ');
+        m.root.rotation.set(r.pitch, visualYaw + r.yawOffset, r.roll, 'YXZ');
         m.root.position.y = r.lift;
         mesh.rotation.x = 0; mesh.rotation.z = 0;
         m.posed = true;
         return;
       }
-      if (m.posed) { m.root.rotation.set(0, yaw, 0); m.root.position.y = 0; m.posed = false; }
+      if (m.posed) { m.root.rotation.set(0, visualYaw, 0); m.root.position.y = 0; m.posed = false; }
+      else m.root.rotation.y = visualYaw;
       if (gdt > 0 && m.root.visible) {
         m.character.update(gdt, p, {
           owner: state.ball.owner === p,
@@ -589,10 +607,16 @@ export function createRenderer(canvasEl) {
     // Ball: position and rolling spin from displacement
     const b = state.ball;
     const ba = blendable(b.prevPos, b.pos) ? alpha : 1;
-    ball.position.set(lerpPos(b.prevPos, b.pos, ba, 'x'), lerpPos(b.prevPos, b.pos, ba, 'y'), lerpPos(b.prevPos, b.pos, ba, 'z'));
+    let bx = lerpPos(b.prevPos, b.pos, ba, 'x'), by = lerpPos(b.prevPos, b.pos, ba, 'y'), bz = lerpPos(b.prevPos, b.pos, ba, 'z');
+    if (transition) {
+      bx = transition.fromBall.x + (bx - transition.fromBall.x) * transitionT;
+      by = transition.fromBall.y + (by - transition.fromBall.y) * transitionT;
+      bz = transition.fromBall.z + (bz - transition.fromBall.z) * transitionT;
+    }
+    ball.position.set(bx, by, bz);
     // Ball in the hands (keeper, throw-in): between the two hands.
     const holder = b.owner && (b.owner.holding || (b.owner.throwIn && b.owner.mustPass)) ? b.owner : null;
-    if (holder) {
+    if (holder && !transition) {
       const hm = playerMeshes[state.players.indexOf(holder)];
       const hl = hm?.character.bones['hand.L'], hr = hm?.character.bones['hand.R'];
       if (hl && hr) {
