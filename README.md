@@ -3,6 +3,14 @@
 A 3D arcade soccer game in the spirit of FIFA 98, built with three.js.
 Ten decade teams (1910–2000) of all-time greats, 11-a-side in a 4-3-3 formation, played in the browser on localhost.
 
+<p align="center">
+  <img src="public/assets/covers/custom/haaland-player-reference.jpg" alt="Player cover reference" width="49%">
+  <img src="public/assets/covers/custom/stadium-reference.png" alt="Stadium cover reference" width="49%">
+</p>
+
+The title screen rotates these two supplied cover images. The same images are
+shown above as the project cover references.
+
 ## Run it
 
 You need Node.js 18 or newer.

@@ -7,3 +7,6 @@ public/assets/players/photos/*
 !public/assets/players/photos/README.md
 public/assets/covers/custom/*
 !public/assets/covers/custom/README.md
+!public/assets/covers/custom/manifest.json
+!public/assets/covers/custom/haaland-player-reference.jpg
+!public/assets/covers/custom/stadium-reference.png

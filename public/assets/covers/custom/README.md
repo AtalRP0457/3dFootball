@@ -1,14 +1,16 @@
-# Custom cover backgrounds (optional, local only)
+# Custom cover backgrounds
 
-Drop wide images (16:9, 1920x1080 or larger) in this folder and list them in
-`manifest.json`:
+The game includes two cover images in `manifest.json`. The title screen, hub,
+and team select rotate between them. To add another cover, place a wide image
+in this folder and add its filename to the manifest:
 
 ```json
 { "covers": ["cover-1.jpg", "cover-2.jpg", "cover-3.jpg"] }
 ```
 
-When this manifest exists, the title screen, the hub and team select rotate
-through these images instead of the generated covers.
+When this manifest exists, the title screen, hub, and team select use these
+images instead of the generated covers.
 
-Everything in this folder except this README is ignored by git, so images you
-add stay on your machine. Only commit images you have the rights to publish.
+The two listed cover files and the manifest are tracked by git. Other images
+added to this folder stay local by default. Only commit images you have the
+rights to publish.

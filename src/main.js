@@ -32,7 +32,7 @@ const DEFAULT_SETTINGS = {
   assist: 'assisted',
   dribbleStyle: 'sticky',
   physics: 'engine', // engine (Gold Standard: Rapier, shared player controller) | classic
-  camera: 'broadcast', // broadcast | close | wide
+  camera: 'close', // broadcast | close | wide
   graphics: 'high', // low | medium | high
   intro: 'on', // pre-match intro sequence
   cameraZoom: 1, // 0.8 … 1.3 (1 = default framing)

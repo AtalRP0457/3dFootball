@@ -31,7 +31,7 @@ const CAMERA_MODES = {
   wide: { label: 'Tactical', h: 34, back: 40, fov: 46, clampX: 20, follow: 0.1, pull: 0.25 },
 };
 export const CAMERA_ORDER = Object.keys(CAMERA_MODES);
-export const CAMERA_DEFAULTS = { mode: 'broadcast', zoom: 1 };
+export const CAMERA_DEFAULTS = { mode: 'close', zoom: 1 };
 export const cameraLabel = (mode) => CAMERA_MODES[mode]?.label || mode;
 
 function canvas(w, h) {

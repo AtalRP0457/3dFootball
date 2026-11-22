@@ -10,6 +10,15 @@ const { normalizeKey, Input } = await import('../src/game/input.ts');
 import { TEAMS } from '../src/data/teams.ts';
 import { FIXED_DT, HALF_L, HALF_W, BALL_R } from '../src/game/constants.ts';
 
+// Keep the randomized match/fuzz scenarios reproducible across CI runners.
+let randomState = 0x3df00d;
+Math.random = () => {
+  let t = randomState += 0x6d2b79f5;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+
 let failures = 0;
 function check(cond, msg) {
   if (!cond) { failures++; console.error('  FAIL:', msg); }

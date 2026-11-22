@@ -10,7 +10,7 @@
   "cornerLength": 24,
   "cornerInset": 3.5,
   "standExtra": 6,
-  "roof": { "clearance": 5, "frontOverhang": 6, "backExtra": 2, "trussEvery": 12 },
+  "roof": { "clearance": 5, "frontOverhang": 6, "backExtra": 2, "trussEvery": 8 },
   "tunnel": { "x": 0, "width": 4.2, "height": 2.7 },
   "dugouts": [-13, 13],
   "screens": { "width": 13, "height": 7 }
