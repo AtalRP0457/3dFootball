@@ -173,8 +173,31 @@ export function createRenderer(canvasEl) {
     arrow.rotation.x = Math.PI;
     arrow.visible = false;
     scene.add(arrow);
-    markers[id] = { arrow };
+    // Shot power meter above the shooter's head (billboarded): fills while
+    // shoot is held; green → yellow → red, with a tick at the accurate zone.
+    const meter = new THREE.Group();
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.11), new THREE.MeshBasicMaterial({ color: '#0b1220', transparent: true, opacity: 0.75, depthTest: false, fog: false }));
+    const fillGeo = new THREE.PlaneGeometry(1, 0.07);
+    fillGeo.translate(0.5, 0, 0);
+    const fill = new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: '#22c55e', transparent: true, depthTest: false, toneMapped: false, fog: false }));
+    fill.position.set(-0.47, 0, 0.001);
+    // Ticks at the shot-type thresholds (shooting.ts shotTypeFromCharge):
+    // low driven below 30 %, power shot above 88 %.
+    const ticks = [0.3, 0.88].map((x) => {
+      const tk = new THREE.Mesh(new THREE.PlaneGeometry(0.02, 0.13), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, depthTest: false, fog: false }));
+      tk.position.set(-0.47 + 0.94 * x, 0, 0.002);
+      return tk;
+    });
+    // Drawn on top of the scene in a fixed order: background, fill, ticks
+    // (all transparent, so they share one render list and renderOrder holds).
+    back.renderOrder = 10; fill.renderOrder = 11; for (const tk of ticks) tk.renderOrder = 12;
+    meter.scale.setScalar(1.5);
+    meter.add(back, fill, ...ticks);
+    meter.visible = false;
+    scene.add(meter);
+    markers[id] = { arrow, meter, fill };
   }
+  const meterCol = new THREE.Color();
   const ringGeo = new THREE.RingGeometry(0.55, 0.7, 40);
   const contactGeo = new THREE.CircleGeometry(0.55, 24);
   const contactMat = (() => {
@@ -522,6 +545,18 @@ export function createRenderer(canvasEl) {
         const mp = pm?.root.position;
         const top = (pm?.character.headHeight ?? 1.95) + 0.35;
         arrow.position.set(mp ? mp.x : p.pos.x, top + Math.sin(time * 5) * 0.08, mp ? mp.z : p.pos.z);
+      }
+      const { meter, fill } = markers[id];
+      const charge = p && live ? p.charge || 0 : 0;
+      meter.visible = charge > 0;
+      if (meter.visible) {
+        const pm = playerMeshes[state.players.indexOf(p)];
+        const mp = pm?.root.position;
+        meter.position.set(mp ? mp.x : p.pos.x, (pm?.character.headHeight ?? 1.95) + 0.75, mp ? mp.z : p.pos.z);
+        meter.quaternion.copy(camera.quaternion);
+        fill.scale.x = Math.max(0.001, charge) * 0.94;
+        meterCol.setHSL(0.33 * (1 - Math.max(0, charge - 0.35) / 0.65), 0.85, 0.5);
+        fill.material.color.copy(meterCol);
       }
     }
 

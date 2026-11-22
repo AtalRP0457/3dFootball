@@ -34,6 +34,27 @@ import {
   type PlayerInput, type PlayerSnapshot, type PlayerTuning, type PoseData,
 } from './PlayerTypes.ts';
 
+
+/** Seconds to fade from the previous pose when the action layer changes. */
+export const POSE_TRANSITION = 0.12;
+function clonePose(p: PoseData): PoseData {
+  const bones: PoseData['bones'] = {};
+  for (const k in p.bones) { const v = p.bones[k]; bones[k] = [v[0], v[1], v[2]]; }
+  return { ...p, bones };
+}
+/** Mix `from` into `p` with weight w (0 = p unchanged). Root yaw is left alone. */
+function blendPoseFrom(p: PoseData, from: PoseData, w: number): void {
+  for (const k in p.bones) {
+    const a = from.bones[k], b = p.bones[k];
+    if (!a) continue;
+    for (let i = 0; i < 3; i++) b[i] += (a[i] - b[i]) * w;
+  }
+  p.hipDrop += (from.hipDrop - p.hipDrop) * w;
+  p.lift += (from.lift - p.lift) * w;
+  p.pitch += (from.pitch - p.pitch) * w;
+  p.roll += (from.roll - p.roll) * w;
+}
+
 export interface PlayerSetup {
   id: string;
   name: string;
@@ -84,6 +105,10 @@ export class PlayerController implements InteractionActor {
   movement: MovementState = 'idle';
   gait: GaitParams = gaitFor(0);
   pose: PoseData = emptyPose();
+  /** Transition blend: the pose shown when the action last changed, fading out. */
+  private blendFrom: PoseData | null = null;
+  private blendT = 0;
+  private lastAction: unknown = null;
   colliding = false;
   /** Accepted kick being executed (until its contact frame). */
   kick: KickPlan | null = null;
@@ -251,6 +276,13 @@ export class PlayerController implements InteractionActor {
     const relV = { x: ball.curr.velocity.x - this.vel.x, z: ball.curr.velocity.z - this.vel.z };
     const coming = bl.dist > 0.5 ? -(relV.x * (ball.curr.position.x - this.pos.x) + relV.z * (ball.curr.position.z - this.pos.z)) / bl.dist : 0;
     const readiness = !this.hasBall && bl.dist < 12 && coming > 2 ? clamp((12 - bl.dist) / 8, 0, 1) : 0;
+    // An action that starts, ends or is cut short must not pop the skeleton:
+    // remember the last shown pose and fade from it.
+    if (this.sm.action !== this.lastAction) {
+      this.blendFrom = clonePose(this.pose);
+      this.blendT = 0;
+      this.lastAction = this.sm.action;
+    }
     this.pose = computePose({
       sm: this.sm, gait: this.gait, contact: this.contact, dims: this.dims, movement: this.sm.locomotion, speed, gaitYaw,
       accelForward: this.accel.x * f.x + this.accel.z * f.z, accelLeft: this.accel.x * f.z - this.accel.z * f.x,
@@ -258,6 +290,12 @@ export class PlayerController implements InteractionActor {
       lookYaw: bl.dist < 35 ? angleDiff(this.yaw, toBallYaw) : null,
       lookDown: this.hasBall ? 0.8 : bl.dist < 6 ? 0.3 : 0, defending: defend,
     });
+    if (this.blendFrom) {
+      this.blendT += dt;
+      const k = this.blendT / POSE_TRANSITION;
+      if (k >= 1) this.blendFrom = null;
+      else blendPoseFrom(this.pose, this.blendFrom, 1 - k * k * (3 - 2 * k));
+    }
     if (this.sm.action && SPIN_SKILLS.has(this.sm.action.clip.name)) {
       // Skills that turn the body hand their rotation to the physics yaw.
       this.yaw = this.actionYaw0 + this.pose.yawOffset;
@@ -279,8 +317,11 @@ export class PlayerController implements InteractionActor {
   private moveMode(ctx: StepContext | null): MoveMode {
     const a = this.sm.action;
     if (a) {
-      const mode: MoveMode = { kind: a.clip.move, control: a.clip.control, speedCap: a.clip.speedCap };
-      if (KICK_ACTIONS.has(a.clip.name)) mode.facing = headingOf(this.actionAim.x, this.actionAim.z);
+      const rec = this.sm.recovery;
+      // Follow-through after the ball has gone: control returns smoothly.
+      const control = a.clip.control + (1 - a.clip.control) * rec;
+      const mode: MoveMode = { kind: rec > 0 ? 'normal' : a.clip.move, control, speedCap: rec > 0 ? undefined : a.clip.speedCap };
+      if (KICK_ACTIONS.has(a.clip.name) && rec < 0.5) mode.facing = headingOf(this.actionAim.x, this.actionAim.z);
       return mode;
     }
     if (this.input.defend && this.hasBall) return { kind: 'dribble', speedCap: 2.6, facing: ctx ? this.shieldYaw(ctx) : undefined };

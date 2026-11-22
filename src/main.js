@@ -81,9 +81,17 @@ function persistSettings() {
 }
 
 // Developer options are remembered between visits (when the browser allows).
-const DEV_DEFAULTS = { speed: 75, debug: false };
+// The game runs in real time by default (100 %); the slider still slows it
+// down for practice.
+const DEV_DEFAULTS = { speed: 100, debug: false, v: 2 };
 const dev = { ...DEV_DEFAULTS };
-try { Object.assign(dev, JSON.parse(localStorage.getItem('legends-dev') || '{}')); } catch { /* ignore */ }
+try {
+  const saved = JSON.parse(localStorage.getItem('legends-dev') || '{}');
+  // Older saves recorded the previous 75 % default without anyone choosing
+  // it: move those to real time once.
+  if (!saved.v && saved.speed === 75) delete saved.speed;
+  Object.assign(dev, saved, { v: 2 });
+} catch { /* ignore */ }
 function saveDev() {
   try { localStorage.setItem('legends-dev', JSON.stringify(dev)); } catch { /* ignore */ }
 }
@@ -1354,8 +1362,8 @@ function handleEvents() {
 }
 
 const KEYS = {
-  p1: { move: 'W A S D', pass: 'F', shoot: 'G', sprint: 'L-Shift', loft: 'V', through: 'R', finesse: 'H', chip: 'T' },
-  p2: { move: 'Arrows', pass: '.', shoot: '/', sprint: 'R-Shift', loft: ',', through: ';', finesse: "'", chip: ']' },
+  p1: { move: 'W A S D', pass: 'F', shoot: 'G', sprint: 'L-Shift', loft: 'V', through: 'R', driven: 'E', finesse: 'H', chip: 'T' },
+  p2: { move: 'Arrows', pass: '.', shoot: '/', sprint: 'R-Shift', loft: ',', through: ';', driven: '\\', finesse: "'", chip: ']' },
 };
 const k = (t) => `<kbd>${t}</kbd>`;
 
@@ -1372,7 +1380,7 @@ function promptsFor(id, team) {
     items.push(`${k(K.move)} aim`, `${k(K.pass)} <span class="act">${p.throwIn ? 'Throw' : 'Pass'}</span> → ${nextName}`);
   } else if (b.owner === p) {
     items.push(`${k(K.pass)} <span class="act">Pass</span> → ${nextName}`,
-      `${k(K.through)} Through ${k(K.loft)} Lob`,
+      `${k(K.driven)} Driven ${k(K.through)} Through ${k(K.loft)} Lob / Cross`,
       `hold ${k(K.shoot)} <span class="act">Shoot</span> ${k(K.finesse)} Curl ${k(K.chip)} Chip`, `${k(K.sprint)} Sprint`);
   } else if (b.owner && b.owner.team !== team.index && (b.owner.holding || b.owner.mustPass)) {
     items.push(b.owner.holding ? '<span class="act">Keeper has it in his hands: get back into position</span>'
@@ -1380,6 +1388,9 @@ function promptsFor(id, team) {
   } else if (b.owner && b.owner.team !== team.index) {
     items.push(team.tackleTarget ? `${k(K.shoot)} <span class="act">TACKLE NOW!</span>` : `${k(K.shoot)} Tackle (get close)`,
       `${k(K.pass)} Switch → ${nextName}`, `${k(K.sprint)} Sprint`);
+  } else if (!b.owner && b.intended === p) {
+    // The ball is on its way: a press now is a first-time action.
+    items.push(`${k(K.pass)} <span class="act">First-time pass</span>`, `hold ${k(K.shoot)} <span class="act">First-time shot</span>`);
   } else if (b.owner) {
     items.push(`${k(K.move)} Get open`, `${k(K.pass)} Switch → ${nextName}`);
   } else {
@@ -1412,7 +1423,16 @@ function updateDebug() {
     lines.push(`   you: ${p ? p.name : '-'}${p && p.assisting ? ` [assist: ${p.assisting}]` : ''}`);
     lines.push(`   next: ${team.next ? team.next.name : '-'}   in tackle range: ${team.tackleTarget ? team.tackleTarget.name : 'no'}`);
     lines.push(`   tackles won ${team.tackles.won}/${team.tackles.tries}  last: ${team.tackles.last || '-'}  cooldown ${p ? f(p.tackleCd) : '-'}`);
+    if (p) {
+      // Input buffer and engine action state for the controlled player.
+      const q = p.queuedAction;
+      const qa = q ? `${q.action.type}${q.action.kind ? '/' + q.action.kind : ''}${q.action.receive ? ' first-time' : ''} ttl ${f(q.ttl)}s` : '-';
+      const c = match.engine?.controllerOf(p);
+      const act = c ? `${c.sm.current}${c.sm.busy ? ' (busy)' : c.sm.recovery > 0 ? ` (recovering ${Math.round(c.sm.recovery * 100)}%)` : ''}${c.buffered ? ' [kick buffered]' : c.kick ? ' [kicking]' : ''}` : '-';
+      lines.push(`   buffered: ${qa}   action: ${act}   charge ${f(p.charge || 0)}`);
+    }
   }
+  lines.push(`intended receiver: ${b.intended ? b.intended.name : '-'}   last pass: ${b.passKind || '-'}`);
   const bs = Math.hypot(b.vel.x, b.vel.z);
   lines.push(`ball (${f(b.pos.x)}, ${f(b.pos.y)}, ${f(b.pos.z)}) ${f(bs)} m/s  owner: ${b.owner ? b.owner.name : '-'}`);
   lines.push('AI:');

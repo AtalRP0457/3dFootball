@@ -80,7 +80,8 @@ export const CHECKS: Check[] = [
     const { sim, p } = await noBall();
     let t95 = -1, v05 = 0;
     for (let i = 0; i < 360; i++) { p.input = { ...emptyInput(), move: { x: 0, z: 1 }, sprint: true }; sim.step(); if (i === 29) v05 = p.speed; if (t95 < 0 && p.speed > 0.95 * p.tuning.sprintSpeed) t95 = sim.time; }
-    return { pass: t95 > 2 && t95 < 4.5 && v05 < 5, detail: `${f(v05)} m/s after 0.5 s, 95% of top speed after ${f(t95)} s` };
+    // Game-tuned (quicker than a track sprint) but still gradual: no instant top speed.
+    return { pass: t95 > 1.3 && t95 < 3 && v05 < 5, detail: `${f(v05)} m/s after 0.5 s, 95% of top speed after ${f(t95)} s` };
   } },
   { id: 6, name: 'Deceleration preserves momentum', run: async () => {
     const { sim, p } = await noBall();
@@ -88,7 +89,9 @@ export const CHECKS: Check[] = [
     const z0 = p.pos.z; let t = 0;
     while (p.speed > 0.05 && t < 6) { p.input = emptyInput(); sim.step(); t += 1 / 60; }
     const d = p.pos.z - z0;
-    return { pass: d > 5 && t > 1.2, detail: `released at sprint: stopped after ${f(t)} s and ${f(d)} m` };
+    // Releasing the stick stops the player with a few braking steps, but
+    // momentum still carries him on: never an instant stop.
+    return { pass: d > 3 && d < 6 && t > 0.8 && t < 1.5, detail: `released at sprint: stopped after ${f(t)} s and ${f(d)} m` };
   } },
   { id: 7, name: 'Turning has inertia (180° at sprint)', run: async () => {
     const { sim, p } = await noBall();

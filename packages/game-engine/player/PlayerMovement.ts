@@ -41,6 +41,8 @@ export interface MoveResult {
 }
 
 const D2R = Math.PI / 180;
+/** Share of full braking used when the stick is released (1 = emergency stop). */
+export const STOP_BRAKE = 0.85;
 
 export function targetSpeedFor(input: PlayerInput, t: PlayerTuning, stamina: number): number {
   return baseTargetSpeed(input, t, stamina) * (input.speedScale ?? 1);
@@ -84,8 +86,9 @@ export function stepMovement(s: MoveState, input: PlayerInput, t: PlayerTuning, 
     const dl = Math.hypot(dvx, dvz), step = Math.min(dl, a * dt + t.brakeDecel * 0.4 * dt);
     if (dl > 1e-6) { vx += (dvx / dl) * step; vz += (dvz / dl) * step; }
   } else if (target <= 0.01) {
-    // No input: coast down, keeping direction (momentum).
-    const decel = mode.kind === 'action' ? t.brakeDecel * 0.5 : t.coastDecel;
+    // No input: the player stops himself (a few quick braking steps), keeping
+    // direction. Only during an action does he coast more softly.
+    const decel = mode.kind === 'action' ? t.brakeDecel * 0.5 : t.brakeDecel * STOP_BRAKE;
     const ns = Math.max(0, speed - decel * dt);
     if (speed > 1e-6) { vx *= ns / speed; vz *= ns / speed; }
     braking = speed > 0.5;
@@ -98,9 +101,10 @@ export function stepMovement(s: MoveState, input: PlayerInput, t: PlayerTuning, 
   } else {
     const vh = { x: vx / speed, z: vz / speed };
     const theta = Math.abs(angleDiff(headingOf(vh.x, vh.z), headingOf(dir.x, dir.z)));
-    if (theta > 110 * D2R && speed > 3.2) {
-      // Plant and brake before reversing direction.
-      speed = Math.max(0, speed - t.brakeDecel * dt);
+    if (theta > 110 * D2R) {
+      // Plant and brake before reversing direction (down to a step-off speed,
+      // then push off the other way) instead of running a wide loop.
+      speed = Math.max(0, speed - t.brakeDecel * 1.15 * dt);
       vx = vh.x * speed; vz = vh.z * speed;
       braking = true;
     } else {

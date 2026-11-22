@@ -486,13 +486,51 @@ export function setupKickoff(state: MatchState, teamIdx: number) {
   b.freeKickGoalRestrictedBy = null;
   taker.mustPass = true; taker.mustPassTimer = 0;
   for (const t of state.teams) setControlled(state, t, t.index === teamIdx ? taker : nearestTo(state, t.index, b.pos));
+  clearActionBuffers(state);
   state.phase = 'kickoff';
   state.phaseTimer = 1.2;
   setBanner(state, 'KICK OFF', 1.2);
 }
 
+/**
+ * Drop every buffered press and shot charge. Called at each stoppage so a
+ * press made before the whistle never fires into the restart.
+ */
+function clearActionBuffers(state: MatchState): void {
+  for (const p of state.players) { p.queuedAction = null; p.charge = 0; p.chargeType = null; p.intent.action = null; }
+}
+
+/** Seconds a pass/shot pressed before the ball arrives stays valid. */
+export const RECEIVE_BUFFER = 0.9;
+/** Loose balls further than this are never steered onto by assist (m). */
+export const ASSIST_STEER_RANGE = 18;
+
+/**
+ * Is the free ball coming to this player (pass to him, or a ball that will
+ * pass within reach soon)? Then a pass/shot press is a first-time action, not
+ * a player switch.
+ */
+function ballComingTo(state: MatchState, p: Player): boolean {
+  const b = state.ball;
+  if (b.owner) return false;
+  const dx = p.pos.x - b.pos.x, dz = p.pos.z - b.pos.z;
+  const d = len(dx, dz);
+  if (d < 2) return true;
+  const rvx = b.vel.x - p.vel.x, rvz = b.vel.z - p.vel.z;
+  const closing = (rvx * dx + rvz * dz) / d;
+  // A pass played to him counts however long it is (pressing pass then must
+  // never switch control back to the passer).
+  if (b.intended === p) return closing > 0.5 || d < 6;
+  if (d > 22 || closing < 1.5) return false;
+  // Closest approach of the ball's line to the player.
+  const t = Math.min(d / closing, 1.4);
+  const cx = b.pos.x + b.vel.x * t - (p.pos.x + p.vel.x * t), cz = b.pos.z + b.vel.z * t - (p.pos.z + p.vel.z * t);
+  return len(cx, cz) < 1.6;
+}
+
 function startRestart(state: MatchState, type: string, teamIdx: number, spot: Vec2) {
   applyPendingSubstitutions(state);
+  clearActionBuffers(state);
   const b = state.ball;
   state.penalty = null;
   // Practice: the opponents only have a keeper, so we take every throw-in
@@ -684,7 +722,9 @@ function laneBlocked(state: MatchState, from: Vec2, to: Vec2, team: number) {
 }
 
 /** Pick the best teammate in a direction (used by humans). */
-export function choosePassTarget(state: MatchState, p: Player, dx: number, dz: number, through: boolean = false) {
+export function choosePassTarget(state: MatchState, p: Player, dx: number, dz: number, mode: boolean | 'ground' | 'through' | 'lofted' = false) {
+  const through = mode === true || mode === 'through';
+  const aerial = mode === 'lofted';
   const l = len(dx, dz);
   if (l < 0.1) { dx = p.face.x; dz = p.face.z; } else { dx /= l; dz /= l; }
   let best = null, bestScore = Infinity;
@@ -705,8 +745,12 @@ export function choosePassTarget(state: MatchState, p: Player, dx: number, dz: n
       const sd = segDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, t.pos.x, t.pos.z);
       if (sd < 1.4 && dist(o.pos, p.pos) > 1.2) blocked += 1;
     }
-    let score = ang * 15 + d * 0.78 + (t.role === 'GK' ? 10 : 0) + (ang > 1.2 ? 40 : 0)
-      + blocked * 14 + Math.max(0, 3.5 - marked) * 4;
+    // The stick picks the direction first; distance only separates options
+    // in about the same direction (a ground tap prefers the nearer one, a
+    // lofted or through ball barely cares). A lofted ball flies over the lane.
+    const distW = aerial ? 0.12 : through ? 0.2 : 0.3;
+    let score = ang * 30 + d * distW + (t.role === 'GK' ? 10 : 0) + (ang > 1.2 ? 40 : 0)
+      + blocked * (aerial ? 2 : 10) + Math.max(0, 3.5 - marked) * 4;
     if (through) {
       // Through balls: favour runners ahead of the ball going forward.
       const dir = state.teams[p.team].dir;
@@ -752,17 +796,21 @@ export function doPass(state: MatchState, p: Player, target: Player | null, opts
   const assisted = byHuman && state.assistName !== 'off';
   const d = dist(b.pos, target.pos);
   let kind = opts.kind || 'ground';
-  if (!opts.kind) {
-    if (assisted && d > 9 && laneBlocked(state, b.pos, target.pos, p.team)) kind = 'chip';
-    else if (d > 28 || (p.throwIn && d > 14)) kind = 'lofted';
-  }
+  // A tap is a ground pass. Only a pass too long to roll there (or a long
+  // throw) goes in the air; a blocked lane is the passer's problem (it can be
+  // intercepted), not something the game silently turns into a chip.
+  if (!opts.kind && (d > 40 || (p.throwIn && d > 14))) kind = 'lofted';
+  // A lofted ball from a wide attacking area into the box is a cross.
+  const attackX = b.pos.x * team.dir;
+  const cross = kind === 'lofted' && !p.throwIn && !p.holding && attackX > HALF_L - 34 && Math.abs(b.pos.z) > 12
+    && target.pos.x * team.dir > HALF_L - 22 && Math.abs(target.pos.z) < 14;
   // Pressure: an opponent within a couple of metres hurries the pass.
   let nearestOpp = Infinity;
   for (const o of state.players) {
     if (o.team !== p.team && o.onPitch && !o.sentOff) nearestOpp = Math.min(nearestOpp, dist(o.pos, p.pos));
   }
   const plan = planPass({
-    p, target, ball: b, kind,
+    p, target, ball: b, kind, cross,
     driven: !!opts.driven,
     errMul: p.human ? 1 : team.diff.error,
     pressure: clamp((2.5 - nearestOpp) / 2.5, 0, 1),
@@ -795,20 +843,28 @@ export function doPass(state: MatchState, p: Player, target: Player | null, opts
     const eng = state.engine;
     const h = len(plan.vel.x, plan.vel.z) || 1;
     const dir = { x: plan.vel.x / h, z: plan.vel.z / h };
+    const pd = Math.hypot(plan.aim.x - b.pos.x, plan.aim.z - b.pos.z);
     let vel;
     if (plan.kind === 'ground' || plan.kind === 'through') {
-      // Re-weight for the engine's real rolling ball (it travels much further).
-      const s = eng.groundPassSpeed(b.pos, plan.aim, opts.driven ? 6.5 : plan.kind === 'through' ? 2.2 : 3.4);
+      // Weighted for the engine's rolling ball by the speed it should still
+      // have on arrival: a ground pass arrives firm (to feet, ~1 s over
+      // 12 m), a driven one much harder (quicker through a gap, harder to
+      // control), a through ball softer so the runner can take it in stride.
+      const arrive = plan.kind === 'through' ? clamp(5 + pd * 0.12, 6, 10)
+        : opts.driven ? clamp(16 + pd * 0.25, 17, 23)
+        : clamp(8 + pd * 0.2, 9, 14);
+      const s = eng.groundPassSpeed(b.pos, plan.aim, arrive) * plan.weight;
       vel = { x: dir.x * s, y: 0, z: dir.z * s };
     } else {
-      const elev = Math.max(12, (Math.atan2(plan.vel.y, h) * 180) / Math.PI);
-      const s = eng.loftedSpeed(b.pos, plan.aim, elev, plan.kind === 'chip' ? -25 : -12);
+      // Crosses are whipped in flatter; lofted passes and switches higher.
+      const elev = cross ? 19 : Math.max(12, (Math.atan2(plan.vel.y, h) * 180) / Math.PI);
+      const s = eng.loftedSpeed(b.pos, plan.aim, elev, plan.kind === 'chip' ? -25 : cross ? -8 : -12) * plan.weight;
       const e = (elev * Math.PI) / 180;
       vel = { x: dir.x * s * Math.cos(e), y: s * Math.sin(e), z: dir.z * s * Math.cos(e) };
     }
     if (p.throwIn || p.holding) { eng.hands(p, vel, p.throwIn ? 'throw-in' : 'keeper throw', finish); return true; }
     const kind: KickKind = plan.kind === 'through' ? 'throughBall' : plan.kind === 'ground' ? (opts.driven ? 'drivenPass' : 'shortPass')
-      : d > 30 ? 'longPass' : 'lobPass';
+      : cross ? 'cross' : d > 30 ? 'longPass' : 'lobPass';
     return eng.kick(p, plan.kind === 'through' ? 'through' : plan.kind === 'ground' ? 'pass' : 'lob', kind, vel, finish);
   }
   b.vel.x = plan.vel.x; b.vel.y = plan.vel.y; b.vel.z = plan.vel.z;
@@ -1255,6 +1311,7 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
     passPressed: !!(input && input.passPressed),
     loftPressed: !!(input && input.loftPressed),
     throughPressed: !!(input && input.throughPressed),
+    drivenPressed: !!(input && input.drivenPressed),
     shootHeld: !!(input && input.shootHeld),
     shootPressed: !!(input && input.shootPressed),
     finesseHeld: !!(input && input.finesseHeld),
@@ -1286,7 +1343,9 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
     const l = len(dx, dz);
     const il = len(frame.mx, frame.mz);
     const cos = hasInput && l > 0 ? (frame.mx * dx + frame.mz * dz) / (il * l) : 1;
-    const meet = !hasInput || (state.assistName !== 'off' && cos > -0.3);
+    // Without input he meets the ball; with input only if the stick already
+    // points roughly at it (pushing elsewhere means "run there").
+    const meet = !hasInput || (state.assistName !== 'off' && cos > 0.5);
     if (meet && l > 0.3) {
       it.mx = dx / l; it.mz = dz / l;
       it.sprint = it.sprint || l > 3;
@@ -1309,7 +1368,7 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
       if (d > 0.3) {
         const il = len(frame.mx, frame.mz);
         const cos = hasInput ? (frame.mx * dx + frame.mz * dz) / (il * d) : -1;
-        if (hasInput && cos > as.steerCos) {
+        if (hasInput && cos > as.steerCos && d < ASSIST_STEER_RANGE) {
           it.mx = dx / d; it.mz = dz / d; p.assisting = 'steer';
         } else if (!hasInput && as.auto && !b.owner) {
           it.mx = dx / d; it.mz = dz / d; p.assisting = 'auto';
@@ -1319,14 +1378,16 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
   }
 
   if (b.owner === p) {
-    const anyPass = frame.passPressed || frame.loftPressed || frame.throughPressed;
+    const anyPass = frame.passPressed || frame.loftPressed || frame.throughPressed || frame.drivenPressed;
     if (anyPass) {
+      // Priority when several pass buttons land on the same step:
+      // through > lofted > driven > ground.
       const kind = frame.throughPressed ? 'through' : frame.loftPressed ? 'lofted' : undefined;
       it.action = {
         type: 'pass',
-        target: choosePassTarget(state, p, frame.mx, frame.mz, kind === 'through'),
+        target: choosePassTarget(state, p, frame.mx, frame.mz, kind === 'through' ? 'through' : kind === 'lofted' ? 'lofted' : 'ground'),
         kind,
-        driven: frame.sprint && !kind,
+        driven: frame.drivenPressed && !kind,
       };
     } else if (frame.shootHeld) {
       if (p.charge === 0) p.chargeType = null;
@@ -1345,9 +1406,31 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
       p.charge = 0;
       p.chargeType = null;
     }
+  } else if (state.engine && ballComingTo(state, p)) {
+    // The ball is on its way to us: a pass or shot press now is a first-time
+    // action (buffered until the ball can be struck), not a player switch.
+    const anyPass = frame.passPressed || frame.loftPressed || frame.throughPressed || frame.drivenPressed;
+    if (anyPass) {
+      const kind = frame.throughPressed ? 'through' : frame.loftPressed ? 'lofted' : undefined;
+      it.action = {
+        type: 'pass', receive: true,
+        target: choosePassTarget(state, p, frame.mx, frame.mz, kind === 'through' ? 'through' : kind === 'lofted' ? 'lofted' : 'ground'),
+        kind, driven: frame.drivenPressed && !kind,
+      };
+      p.charge = 0;
+    } else if (frame.shootHeld) {
+      if (p.charge === 0) p.chargeType = null;
+      if (frame.chipHeld) p.chargeType = 'chip';
+      else if (frame.finesseHeld && p.chargeType !== 'chip') p.chargeType = 'finesse';
+      p.charge = Math.min(1, p.charge + dt / SHOT_CHARGE_TIME);
+    } else if (p.charge > 0) {
+      it.action = { type: 'shoot', receive: true, power: Math.max(0.25, p.charge), aim: frame.mz, shotType: shotTypeFromCharge(p.charge, p.chargeType) };
+      p.charge = 0;
+      p.chargeType = null;
+    }
   } else {
     p.charge = 0;
-    if (frame.passPressed || frame.loftPressed || frame.throughPressed) {
+    if (frame.passPressed || frame.loftPressed || frame.throughPressed || frame.drivenPressed) {
       // Switch to the teammate nearest the ball.
       const next = nearestTo(state, team.index, b.pos, p);
       if (next) { setControlled(state, team, next); state.events.push({ type: 'manualSwitch', team: team.index }); }
@@ -1912,6 +1995,7 @@ function scoreGoal(state: MatchState, teamIdx: number) {
   b.shotLive = false;
   b.intended = null;
   state.penalty = null;
+  clearActionBuffers(state);
   state.phase = 'goal';
   state.phaseTimer = GOAL_PAUSE;
   state.kickoffNext = 1 - teamIdx;
@@ -2071,10 +2155,15 @@ export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
     let a = p.intent.action;
     if (!a && p.queuedAction) {
       p.queuedAction.ttl -= dt;
-      if (p.queuedAction.ttl <= 0 || b.owner !== p) p.queuedAction = null;
-      else a = p.queuedAction.action;
+      const qa = p.queuedAction.action;
+      const receiving = (qa.type === 'pass' || qa.type === 'shoot') && qa.receive;
+      // A first-time press waits for the ball; it dies if anyone else gets it.
+      const valid = receiving ? (b.owner === p || (!b.owner && ballComingTo(state, p))) : b.owner === p;
+      if (p.queuedAction.ttl <= 0 || !valid) p.queuedAction = null;
+      else a = qa;
     }
     if (!a) continue;
+    const firstTime = (a.type === 'pass' || a.type === 'shoot') && a.receive && !b.owner;
     if (state.engine && (a.type === 'pass' || a.type === 'shoot') && state.engine.isKicking(p)) {
       // Already striking or running onto the ball: this press is that kick.
       p.queuedAction = null;
@@ -2087,6 +2176,14 @@ export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
     const queued = p.queuedAction?.action === a ? p.queuedAction : null;
     p.queuedAction = null;
     let started = true;
+    if (firstTime) {
+      // Strike the incoming ball first time; the engine buffers it until
+      // the ball is in reach (or rejects it while it is still far off).
+      started = a.type === 'pass' ? doPass(state, p, a.target, { kind: a.kind, driven: a.driven })
+        : a.type === 'shoot' ? doShot(state, p, a.power, a.aim || 0, a.shotType || 'normal') : true;
+      if (!started && p.human) p.queuedAction = queued ?? { action: a, ttl: RECEIVE_BUFFER };
+      continue;
+    }
     if (a.type === 'pass' && b.owner === p) started = doPass(state, p, a.target, { kind: a.kind, driven: a.driven });
     else if (a.type === 'shoot' && b.owner === p && p.throwIn) {
       // You can't shoot from a throw-in: throw it to a teammate instead.

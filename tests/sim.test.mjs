@@ -320,9 +320,14 @@ for (const [assist, expect] of [['assisted', true], ['off', false]]) {
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
   const p = s.teams[0].controlled;
   s.ball.owner = null; s.ball.intended = null;
-  s.ball.pos.x = p.pos.x - 6; s.ball.pos.z = p.pos.z + 6; s.ball.vel.x = s.ball.vel.z = 0;
+  // Ball ~27° off the stick: assist finishes the line onto it.
+  s.ball.pos.x = p.pos.x - 3; s.ball.pos.z = p.pos.z + 6; s.ball.vel.x = s.ball.vel.z = 0;
   stepMatch(s, { p1: { mx: 0, mz: 1 } }, FIXED_DT); // only "S" pressed
-  check((p.intent.mx < -0.3) === expect, `${assist}: pressing only S ${expect ? 'curves' : 'does not curve'} towards the ball`);
+  check((p.intent.mx < -0.3) === expect, `${assist}: pressing only S ${expect ? 'curves' : 'does not curve'} towards a ball just off the stick`);
+  // Ball 45° off the stick: the stick wins (assist never overrides the aim).
+  s.ball.pos.x = p.pos.x - 6; s.ball.pos.z = p.pos.z + 6; s.ball.path = null;
+  stepMatch(s, { p1: { mx: 0, mz: 1 } }, FIXED_DT);
+  check(Math.abs(p.intent.mx) < 0.05, `${assist}: a ball 45° away does not pull the run off the stick (mx ${p.intent.mx.toFixed(2)}, ${p.assisting})`);
 }
 
 // 10) Practice mode: only their keeper, no time limit, runs without errors

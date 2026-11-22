@@ -103,8 +103,8 @@ export interface TeamData {
 }
 
 export type Action =
-  | { type: 'pass'; target: Player | null; kind?: PassKind; driven?: boolean }
-  | { type: 'shoot'; power: number; aim?: number; shotType?: ShotType }
+  | { type: 'pass'; target: Player | null; kind?: PassKind; driven?: boolean; receive?: boolean }
+  | { type: 'shoot'; power: number; aim?: number; shotType?: ShotType; receive?: boolean }
   | { type: 'tackle' };
 
 export interface Intent { mx: number; mz: number; sprint: boolean; action: Action | null }
@@ -281,7 +281,7 @@ export interface MatchConfig {
 /** One human's input for a fixed step. */
 export interface InputFrame {
   mx?: number; mz?: number; sprint?: boolean;
-  passPressed?: boolean; loftPressed?: boolean; throughPressed?: boolean;
+  passPressed?: boolean; loftPressed?: boolean; throughPressed?: boolean; drivenPressed?: boolean;
   shootHeld?: boolean; shootPressed?: boolean; finesseHeld?: boolean; chipHeld?: boolean;
 }
 export type Inputs = Partial<Record<HumanId, InputFrame | null>>;

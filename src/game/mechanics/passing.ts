@@ -30,8 +30,12 @@ export interface Receiver { pos: Vec2; vel: Vec2; phys?: { runSpeed: number } | 
 export interface PassInput {
   p: Passer; target: Receiver; ball: { pos: Vec3 }; kind?: PassKind; driven?: boolean;
   errMul?: number; pressure?: number; attackDir?: number; assisted?: boolean; rng?: () => number;
+  /** A cross: aimed into the space in front of the runner, not at his feet. */
+  cross?: boolean;
 }
-export interface PassPlan { vel: Vec3; top: number | null; aim: Vec2; kind: PassKind; sigma: number; flight: number }
+export interface PassPlan { vel: Vec3; top: number | null; aim: Vec2; kind: PassKind; sigma: number; flight: number;
+  /** Weight error (1 = as intended), applied by the engine path too. */
+  weight: number }
 
 /** Time for a rolling ball launched at v0 to cover d metres (Infinity if it stops short). */
 export function rollTimeTo(v0: number, d: number): number {
@@ -100,6 +104,12 @@ export function planPass(o: PassInput): PassPlan {
       }
       // Receivers adjust anyway; lead most, not all, of his movement.
       aim = { x: target.pos.x + target.vel.x * t * 0.85, z: target.pos.z + target.vel.z * t * 0.85 };
+      if (o.cross) {
+        // Into the space in front of the runner, towards goal.
+        const gx = (o.attackDir || 1) * HALF_L;
+        const tx = gx - aim.x, tz = -aim.z, tl = Math.hypot(tx, tz) || 1;
+        aim = { x: aim.x + (tx / tl) * 2.5, z: aim.z + (tz / tl) * 2.5 };
+      }
     }
   }
 
@@ -129,11 +139,11 @@ export function planPass(o: PassInput): PassPlan {
   if (kind === 'ground' && !speed) speed = groundSpeed(d, o.driven);
   if (kind === 'ground' || kind === 'through') {
     const v = speed * weight;
-    return { vel: { x: ex * v, y: 0, z: ez * v }, top: null, aim, kind, sigma, flight: 0 };
+    return { vel: { x: ex * v, y: 0, z: ez * v }, top: null, aim, kind, sigma, flight: 0, weight };
   }
   // Lofted / chip: land short of the receiver (assisted lands closer).
   const landFrac = kind === 'chip' ? 0.97 : o.assisted ? 0.92 : 0.82;
   const top = kind === 'chip' ? -12 : -6;
   const k = solveLoftedKick(d * landFrac * weight, flight || 0.95 + d / 28, top);
-  return { vel: { x: ex * k.h, y: k.vy, z: ez * k.h }, top, aim, kind, sigma, flight };
+  return { vel: { x: ex * k.h, y: k.vy, z: ez * k.h }, top, aim, kind, sigma, flight, weight };
 }

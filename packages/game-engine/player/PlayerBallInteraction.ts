@@ -102,6 +102,9 @@ export const powerFromHold = (seconds: number): number => clamp(0.25 + seconds /
 /** Effective foot mass for the kick collision (kg) and foot–ball restitution. */
 const FOOT_MASS = 1.2, FOOT_E = 0.5;
 
+/** Seconds a first-time swing may start early relative to the ball's arrival. */
+export const FIRST_TIME_SLACK = 0.04;
+
 const PASS_KINDS: ReadonlySet<KickKind> = new Set<KickKind>(['shortPass', 'firstTimePass', 'drivenPass', 'throughBall', 'lobPass', 'longPass', 'cross']);
 const REF_DIMS = rigDims(1.8);
 
@@ -212,7 +215,23 @@ export class PlayerBallInteraction {
     let kind = req.kind;
     let firstTime = false, ok = false;
     if ((mine && L.dist < 2.2 + 0.25 * Math.hypot(a.vel.x, a.vel.z)) || (loose && L.dist < 1.7 && relSpeed < 4)) ok = true;
-    else if (loose && arrive < 0.9 && L.dist < 9) { ok = true; firstTime = true; }
+    else if (loose && arrive < 0.9 && L.dist < 9) {
+      // First time: start the swing so its contact frame meets the ball's
+      // arrival. Until then the request stays buffered (the press is kept).
+      const hy = b.position.y;
+      let k2: KickKind = req.kind;
+      if (hy > 1.4) k2 = 'header';
+      else if (hy > 0.55 && shotLike) k2 = 'volley';
+      else if (shotLike && b.velocity.y > 1.2) k2 = 'halfVolley';
+      if (k2 === 'shortPass') k2 = 'firstTimePass';
+      const clip = ACTION_CLIPS[k2];
+      const tc = (clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55) * clip.duration;
+      // The receiver checks his run as he swings, so time it on the ball's own speed.
+      const ballIn = L.dist > 0.3 ? -(b.velocity.x * (b.position.x - a.pos.x) + b.velocity.z * (b.position.z - a.pos.z)) / L.dist : 0;
+      const toContact = Math.max(0, L.dist - 0.6) / Math.max(1, ballIn, approaching * 0.6);
+      if (toContact <= tc + FIRST_TIME_SLACK) { ok = true; firstTime = true; }
+      else { emit('buffered', kind, `first time: ball ${toContact.toFixed(2)} s away`); return { result: 'buffered' }; }
+    }
     if (!ok) {
       if (L.dist < 9 && (mine || loose)) { emit('buffered', kind, `ball ${L.dist.toFixed(1)} m away: running onto it`); return { result: 'buffered' }; }
       emit('rejected', kind, mine || loose ? 'ball too far away' : 'another player has the ball');

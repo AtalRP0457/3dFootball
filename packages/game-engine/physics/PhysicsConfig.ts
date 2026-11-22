@@ -109,10 +109,12 @@ const DEFAULTS: PhysicsCalibration = {
     jogSpeed: [2.5, 3.8],
     runSpeed: [4.5, 6.0],
     sprintSpeed: [7.0, 9.0],
-    timeToTopSpeed: [2.6, 4.2],
+    // Game-tuned: quicker than a track sprint so the stick feels direct;
+    // acceleration ratings still spread it by a second.
+    timeToTopSpeed: [1.7, 2.7],
     coastDecel: 4.2,
     brakeDecel: 9.5,
-    lateralAccel: [9.0, 5.5],
+    lateralAccel: [11.5, 7.0],
     yawRate: [9.0, 2.6],
     footReach: 0.85,
   },

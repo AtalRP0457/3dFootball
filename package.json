@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "assets": "tsx scripts/generate-assets.mjs",
     "db:validate": "tsx scripts/validate-db.mjs",
-    "test": "tsx tests/physics.test.mjs && tsx tests/mechanics.test.mjs && tsx tests/character.test.mjs && tsx tests/sim.test.mjs && tsx tests/db.test.mjs && tsx scripts/validate-db.mjs && tsx tests/engine.test.ts && tsx tests/match-engine.test.ts",
+    "test": "tsx tests/physics.test.mjs && tsx tests/mechanics.test.mjs && tsx tests/character.test.mjs && tsx tests/sim.test.mjs && tsx tests/db.test.mjs && tsx scripts/validate-db.mjs && tsx tests/engine.test.ts && tsx tests/match-engine.test.ts && tsx tests/gameplay-feel.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/game-engine",
     "test:engine": "tsx tests/engine.test.ts",
     "lab": "vite --open /dev/player-ball-lab.html",

@@ -1,7 +1,7 @@
 import type { HumanId, InputFrame } from '../types/game.ts';
 
 // Keyboard and gamepad input. Produces one input object per human player
-// each fixed step: { mx, mz, sprint, passPressed, loftPressed, throughPressed,
+// each fixed step: { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed,
 // shootHeld, shootPressed, finesseHeld, chipHeld }.
 // Finesse and chip keys are shoot buttons of their own: hold to charge,
 // release to shoot that kind of shot.
@@ -9,18 +9,18 @@ import type { HumanId, InputFrame } from '../types/game.ts';
 //
 // P1 always uses W A S D, P2 always uses the arrow keys.
 
-export type Binding = Record<'up' | 'down' | 'left' | 'right' | 'pass' | 'shoot' | 'sprint' | 'loft' | 'through' | 'finesse' | 'chip', string[]>;
+export type Binding = Record<'up' | 'down' | 'left' | 'right' | 'pass' | 'shoot' | 'sprint' | 'loft' | 'through' | 'driven' | 'finesse' | 'chip', string[]>;
 
 export const BINDINGS: Record<HumanId, Binding> = {
   p1: {
     up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
     pass: ['KeyF', 'Space'], shoot: ['KeyG'], sprint: ['ShiftLeft'],
-    loft: ['KeyV'], through: ['KeyR'], finesse: ['KeyH'], chip: ['KeyT'],
+    loft: ['KeyV'], through: ['KeyR'], driven: ['KeyE'], finesse: ['KeyH'], chip: ['KeyT'],
   },
   p2: {
     up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
     pass: ['Period', 'Numpad1'], shoot: ['Slash', 'Numpad2'], sprint: ['ShiftRight', 'Numpad0'],
-    loft: ['Comma', 'Numpad4'], through: ['Semicolon', 'Numpad5'], finesse: ['Quote', 'Numpad3'], chip: ['BracketRight', 'Numpad6'],
+    loft: ['Comma', 'Numpad4'], through: ['Semicolon', 'Numpad5'], driven: ['Backslash', 'Numpad7'], finesse: ['Quote', 'Numpad3'], chip: ['BracketRight', 'Numpad6'],
   },
 };
 
@@ -30,13 +30,13 @@ const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b
 // unusual: map by the printed key or the legacy keyCode instead.
 const BY_KEY: Record<string, string> = {
   w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', f: 'KeyF', g: 'KeyG',
-  v: 'KeyV', r: 'KeyR', h: 'KeyH', t: 'KeyT',
+  v: 'KeyV', r: 'KeyR', h: 'KeyH', t: 'KeyT', e: 'KeyE', '\\': 'Backslash',
   ' ': 'Space', '.': 'Period', '/': 'Slash', ',': 'Comma', ';': 'Semicolon', "'": 'Quote', ']': 'BracketRight',
   arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
 };
 const BY_KEYCODE: Record<number, string> = {
   87: 'KeyW', 65: 'KeyA', 83: 'KeyS', 68: 'KeyD', 70: 'KeyF', 71: 'KeyG',
-  86: 'KeyV', 82: 'KeyR', 72: 'KeyH', 84: 'KeyT', 188: 'Comma', 186: 'Semicolon', 222: 'Quote', 221: 'BracketRight',
+  86: 'KeyV', 82: 'KeyR', 69: 'KeyE', 220: 'Backslash', 72: 'KeyH', 84: 'KeyT', 188: 'Comma', 186: 'Semicolon', 222: 'Quote', 221: 'BracketRight',
   32: 'Space', 190: 'Period', 191: 'Slash', 38: 'ArrowUp', 40: 'ArrowDown', 37: 'ArrowLeft', 39: 'ArrowRight',
 };
 
@@ -129,6 +129,7 @@ export class Input {
     let passPressed = this.anyPressed(b.pass);
     let loftPressed = this.anyPressed(b.loft);
     let throughPressed = this.anyPressed(b.through);
+    let drivenPressed = this.anyPressed(b.driven);
     let finesseHeld = this.anyDown(b.finesse);
     let chipHeld = this.anyDown(b.chip);
     let shootHeld = this.anyDown(b.shoot) || finesseHeld || chipHeld;
@@ -144,7 +145,9 @@ export class Input {
       if (btn(14)) mx -= 1;
       if (btn(15)) mx += 1;
       const pr = this.padPressed[i] || [];
-      passPressed = passPressed || !!pr[0];
+      // RB + A: driven pass (A alone: ground pass).
+      if (pr[0] && btn(5)) drivenPressed = true;
+      else passPressed = passPressed || !!pr[0];
       throughPressed = throughPressed || !!pr[2];
       loftPressed = loftPressed || !!pr[3];
       // LB / LT held while shooting: finesse / chip.
@@ -164,7 +167,7 @@ export class Input {
     }
     const l = Math.hypot(mx, mz);
     if (l > 1) { mx /= l; mz /= l; }
-    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
+    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
   }
 
   /** Gamepad Start/Options button, used for pause. */

@@ -10,8 +10,8 @@ TypeScript compilation is checked by `npm run typecheck`.
 | Engine 2 | Walking speed and stride match | ✅ Pass | 1.68 m/s, anim walk, planted-foot drift 2.0 cm |
 | Engine 3 | Running speed and stride match | ✅ Pass | 5.68 m/s, anim run, planted-foot drift 2.2 cm |
 | Engine 4 | Sprinting reaches 7–9 m/s | ✅ Pass | 8.58 m/s, anim sprint, planted-foot drift 2.2 cm |
-| Engine 5 | Acceleration is gradual | ✅ Pass | 2.98 m/s after 0.5 s, 95% of top speed after 2.78 s |
-| Engine 6 | Deceleration preserves momentum | ✅ Pass | released at sprint: stopped after 2.03 s and 8.68 m |
+| Engine 5 | Acceleration is gradual (game-tuned: 95 % of sprint in 1.3–3 s) | ✅ Pass | 4.22 m/s after 0.5 s, 95% of top speed after 1.80 s |
+| Engine 6 | Deceleration preserves momentum (stops in 0.8–1.5 s, 3–6 m) | ✅ Pass | released at sprint: stopped after 1.02 s and 4.25 m |
 | Engine 7 | Turning has inertia (180° at sprint) | ✅ Pass | overshoot 3.68 m, 1.23 s until running back at 3 m/s |
 | Engine 8 | Sprint turns have a realistic radius | ✅ Pass | 90° turn at full sprint swings through ≈7.98 m |
 | Engine 9 | Player does not float | ✅ Pass | airborne frames while running: 0 |

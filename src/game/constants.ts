@@ -130,8 +130,10 @@ export const KICKOFF_DEFEND: Array<{ x: number; z: number }> = [
 //              you press nothing
 export const ASSIST: Record<AssistLevel, MatchState['assist']> = {
   off: { steerCos: 2, tackleRange: 1.7, controlBonus: 0, auto: false },
-  assisted: { steerCos: 0.3, tackleRange: 2.2, controlBonus: 0.3, auto: false },
-  full: { steerCos: 0.3, tackleRange: 2.2, controlBonus: 0.3, auto: true },
+  // steerCos 0.8: only when the stick already points within ~37° of the
+  // ball does assist finish the line; otherwise the stick wins.
+  assisted: { steerCos: 0.8, tackleRange: 2.2, controlBonus: 0.3, auto: false },
+  full: { steerCos: 0.8, tackleRange: 2.2, controlBonus: 0.3, auto: true },
 };
 
 // After you hand a player back to the AI (pass or switch), he keeps the

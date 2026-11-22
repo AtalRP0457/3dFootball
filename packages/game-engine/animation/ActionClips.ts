@@ -23,6 +23,8 @@ export interface ActionClip {
   next?: ActionKind;
   /** Exit side for skill touches: +1 left of travel, −1 right, 0 forward, 2 backwards. */
   exitSide?: number;
+  /** Kicks: the follow-through after contact can be cut short (see AnimationStateMachine.recovery). */
+  recoverable?: boolean;
 }
 
 interface KickShape {
@@ -57,7 +59,7 @@ function kick(name: ActionKind, k: KickShape): ActionClip {
   return {
     name, duration: k.dur, keys, blendIn: 0.07, blendOut: 0.14,
     markers: [{ t: 0.25, kind: 'plant' }, { t: c, kind: 'contact' }, { t: 1, kind: 'end' }],
-    move: 'action', control: 0.25, interruptible: false,
+    move: 'action', control: 0.25, interruptible: false, recoverable: true,
   };
 }
 
@@ -68,7 +70,7 @@ function skill(name: ActionKind, dur: number, keys: Keyframe[], markers: AnimMar
 const arms = (z: number): PartialPose => ({ 'upperArm.L': { z }, 'upperArm.R': { z: -z } });
 
 export const ACTION_CLIPS: Record<ActionKind, ActionClip> = {
-  shortPass: kick('shortPass', { dur: 0.42, power: 0.25, lean: 0.12, lofted: 0, turnOut: 0.7, follow: 0 }),
+  shortPass: kick('shortPass', { dur: 0.36, contact: 0.5, power: 0.25, lean: 0.12, lofted: 0, turnOut: 0.7, follow: 0 }),
   firstTimePass: kick('firstTimePass', { dur: 0.32, power: 0.3, lean: 0.12, lofted: 0, turnOut: 0.6, follow: 0, contact: 0.45 }),
   drivenPass: kick('drivenPass', { dur: 0.5, power: 0.6, lean: 0.2, lofted: 0, turnOut: 0.2, follow: 0.2 }),
   throughBall: kick('throughBall', { dur: 0.45, power: 0.4, lean: 0.15, lofted: 0, turnOut: 0.5, follow: 0.1 }),

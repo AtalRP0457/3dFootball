@@ -5,6 +5,9 @@ import type { ActionKind, Foot, MovementState } from '../player/PlayerTypes.ts';
 import { ACTION_CLIPS, type ActionClip } from './ActionClips.ts';
 import { crossedMarkers, type AnimEvent } from './AnimationEvents.ts';
 
+/** Seconds after a kick's contact before the follow-through can be cut short. */
+export const RECOVERY_SETTLE = 0.07;
+
 export interface ActiveAction {
   clip: ActionClip;
   /** Seconds since start. */
@@ -46,7 +49,23 @@ export class AnimationStateMachine {
     return this.action ? this.action.clip.name : this.locomotion;
   }
   get busy(): boolean {
-    return this.action !== null && !this.action.clip.interruptible;
+    return this.action !== null && !this.action.clip.interruptible && this.recovery === 0;
+  }
+
+  /**
+   * 0 while an action is committed; then 0..1 through a kick's follow-through
+   * once the ball has left the foot (plus a short settle). During recovery a
+   * new action may start and movement control returns progressively, so a
+   * player is never locked in a canned follow-through.
+   */
+  get recovery(): number {
+    const a = this.action;
+    if (!a || !a.resolved || !a.clip.recoverable) return 0;
+    const c = a.clip.markers.find((m) => m.kind === 'contact');
+    if (!c) return 0;
+    const free = c.t * a.clip.duration + RECOVERY_SETTLE;
+    if (a.time < free) return 0;
+    return Math.min(1, (a.time - free) / Math.max(0.05, a.clip.duration - free));
   }
 
   start(name: ActionKind, opts: { foot: Foot; power?: number; aim?: { x: number; z: number }; side?: number; force?: boolean }): boolean {
