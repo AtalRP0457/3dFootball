@@ -15,6 +15,7 @@ import { hairGeometry, facialHairGeometry, bandGeometry } from './appearance.js'
 import { AnimationController } from './controller.js';
 import { LEG_LENGTH } from './clips.js';
 import { activeAsset, instantiateAsset } from './assets.js';
+import { buildHead, skinMaterial, faceShape } from './head.ts';
 
 /**
  * @param o {
@@ -43,11 +44,20 @@ export function createCharacter(o) {
   mesh.castShadow = o.shadows !== false;
   mesh.name = `player-${identity.id}`;
 
+  // Each player's own sculpted head (face, eyes, lids, brows, ears) rides on
+  // the head bone; the body's skin uses the same physical skin material.
+  const head = buildHead(identity, identity.hair.hex);
+  bones.head.add(head.group);
+  const bodySkin = skinMaterial(identity.skinTone);
+  mats.slots[0] = bodySkin; // SLOT.skin
+  if (!keeper) mats.slots[8] = bodySkin; // SLOT.hands
+  mesh.material = mats.slots;
+
   // Hair and facial hair ride on the head bone.
-  const hair = new THREE.Mesh(hairGeometry(identity.hair.style), mats.hair);
+  const hair = new THREE.Mesh(hairGeometry(identity.hair.style, faceShape(identity), identity.id), mats.hair);
   hair.castShadow = o.shadows !== false;
   bones.head.add(hair);
-  const fh = facialHairGeometry(identity.facialHair);
+  const fh = facialHairGeometry(identity.facialHair, faceShape(identity), identity.id);
   if (fh) bones.head.add(new THREE.Mesh(fh, mats.hair));
 
   // Accessories.
@@ -85,6 +95,8 @@ export function createCharacter(o) {
 
   return {
     group, mesh, bones, controller, identity, armband, scale,
+    /** Fine facial detail to hide for distant players (LOD). */
+    detail: head.detail,
     /** World-space head height (for markers above the player). */
     headHeight: identity.heightCm / 100 + 0.12,
     update(dt, p, ctx) { controller.update(dt, p, ctx); },

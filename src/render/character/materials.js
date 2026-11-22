@@ -96,6 +96,63 @@ function fabric(g, w, h) {
   g.globalAlpha = 1;
 }
 
+/**
+ * Stitched seams down the side panels and soft fabric folds gathering at the
+ * waist (painted shading; the knit itself is in the normal map).
+ */
+function seams(g, w, h, base) {
+  const dark = shade(base, 0.62);
+  g.save();
+  g.strokeStyle = dark; g.globalAlpha = 0.55; g.lineWidth = 1.2;
+  for (const u of [0.035, 0.465, 0.535, 0.965]) {
+    g.beginPath(); g.moveTo(w * u, h * 0.07); g.lineTo(w * u, h * 0.97); g.stroke();
+  }
+  // Stitches beside each seam.
+  g.globalAlpha = 0.35; g.setLineDash([3, 3]); g.lineWidth = 1;
+  for (const u of [0.045, 0.455, 0.545, 0.955]) {
+    g.beginPath(); g.moveTo(w * u, h * 0.07); g.lineTo(w * u, h * 0.97); g.stroke();
+  }
+  g.setLineDash([]);
+  // Folds: soft diagonal creases near the waist and under the arms.
+  for (let i = 0; i < 14; i++) {
+    const u0 = (i / 14 + 0.02 * Math.sin(i * 7.1)) * w, y0 = h * (0.72 + 0.2 * ((i * 37) % 10) / 10);
+    const grd = g.createLinearGradient(u0 - 12, 0, u0 + 12, 0);
+    grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(0.5, 'rgba(0,0,0,0.09)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.globalAlpha = 1; g.fillStyle = grd;
+    g.beginPath(); g.moveTo(u0 - 10, y0); g.lineTo(u0 + 10, y0); g.lineTo(u0 + 26, y0 + h * 0.18); g.lineTo(u0 + 6, y0 + h * 0.18); g.closePath(); g.fill();
+  }
+  g.restore();
+}
+
+let knitTex = null;
+/** Tiling jersey-knit normal map (interlocking V stitches), shared by all kits. */
+function knitNormal() {
+  if (knitTex || !hasDOM) return knitTex;
+  const N = 128, cells = 8, [c, g] = canvas(N, N);
+  const hgt = new Float32Array(N * N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const cx = (x / N) * cells, cy = (y / N) * cells;
+    const fx = cx - Math.floor(cx), fy = cy - Math.floor(cy);
+    // Two slanted loops per stitch make the V.
+    const left = Math.exp(-(((fx - 0.3 + (fy - 0.5) * 0.35) / 0.17) ** 2));
+    const right = Math.exp(-(((fx - 0.7 - (fy - 0.5) * 0.35) / 0.17) ** 2));
+    hgt[y * N + x] = (left + right) * (0.75 + 0.25 * Math.sin(fy * Math.PI));
+  }
+  const img = g.createImageData(N, N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x;
+    const dx = hgt[y * N + ((x + 1) % N)] - hgt[y * N + ((x - 1 + N) % N)];
+    const dy = hgt[((y + 1) % N) * N + x] - hgt[((y - 1 + N) % N) * N + x];
+    img.data[i * 4] = 128 - dx * 60; img.data[i * 4 + 1] = 128 - dy * 60; img.data[i * 4 + 2] = 255; img.data[i * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  knitTex = new THREE.CanvasTexture(c);
+  knitTex.wrapS = knitTex.wrapT = THREE.RepeatWrapping;
+  knitTex.repeat.set(22, 22);
+  knitTex.anisotropy = 4;
+  return knitTex;
+}
+
 /** Shirt torso texture: u = 0.25 front centre, 0.75 back centre; v = 0 hem, 1 collar. */
 function shirtTexture(kit, number, surname, crestUrl) {
   const W = 512, H = 512;
@@ -121,6 +178,7 @@ function shirtTexture(kit, number, surname, crestUrl) {
     // Hem band.
     g.fillStyle = shade(base, 0.85);
     g.fillRect(0, H * 0.97, W, H * 0.03);
+    seams(g, W, H, base);
     // Front: crest on the player's left chest (u > 0.25), number centre.
     const crest = crestImage(crestUrl, () => { paint(); t.needsUpdate = true; });
     const cx = W * 0.31, cy = H * 0.3, cs = W * 0.06; // player's left chest
@@ -269,7 +327,13 @@ export function characterMaterials(identity, kit, opts = {}) {
   const shortsCol = keeper ? '#1b1d22' : kit.shorts;
   const socksCol = keeper ? kit.gk : kit.socks;
 
-  const fabricMat = (map, color) => std({ map, color: map ? 0xffffff : color, roughness: 0.82, metalness: 0 });
+  // Polyester jersey: rough with a soft sheen at grazing angles and a knit
+  // normal map. Shorts are a smoother weave.
+  const fabricMat = (map, color, { sheen = 0.55, knit = 0.35 } = {}) => new THREE.MeshPhysicalMaterial({
+    map, color: map ? 0xffffff : color, roughness: 0.78, metalness: 0,
+    sheen, sheenRoughness: 0.6, sheenColor: new THREE.Color(map ? 0xffffff : color).lerp(new THREE.Color(0xffffff), 0.3),
+    normalMap: knitNormal(), normalScale: new THREE.Vector2(knit, knit),
+  });
   const mats = new Array(SLOT_COUNT);
   mats[SLOT.skin] = cached(`skin|${identity.skinTone}`, () => std({ color: identity.skinTone, roughness: 0.62, metalness: 0 }));
   mats[SLOT.face] = hasDOM
@@ -283,10 +347,10 @@ export function characterMaterials(identity, kit, opts = {}) {
     ? cached(`sleeve|${teamKey}|${keeper}`, () => fabricMat(bandTexture(sleeveBase, trim, { bandFrom: 0.84, bandTo: 0.97, kit: k, design: !keeper && kit.design === 'stripes' })))
     : fabricMat(null, sleeveBase);
   mats[SLOT.shorts] = hasDOM
-    ? cached(`shorts|${teamKey}|${keeper}`, () => fabricMat(bandTexture(shortsCol, shade(shortsCol, 0.8), { bandFrom: 0.0, bandTo: 0.05, stripe: keeper ? null : trim })))
+    ? cached(`shorts|${teamKey}|${keeper}`, () => fabricMat(bandTexture(shortsCol, shade(shortsCol, 0.8), { bandFrom: 0.0, bandTo: 0.05, stripe: keeper ? null : trim }), null, { sheen: 0.7, knit: 0.15 }))
     : fabricMat(null, shortsCol);
   mats[SLOT.socks] = hasDOM
-    ? cached(`socks|${teamKey}|${keeper}`, () => fabricMat(bandTexture(socksCol, trim, { bandFrom: 0.8, bandTo: 0.9 })))
+    ? cached(`socks|${teamKey}|${keeper}`, () => fabricMat(bandTexture(socksCol, trim, { bandFrom: 0.8, bandTo: 0.9 }), null, { sheen: 0.4, knit: 0.6 }))
     : fabricMat(null, socksCol);
   mats[SLOT.boot] = hasDOM
     ? cached(`boot|${identity.boots.id}`, () => std({ map: bootTexture(identity.boots), roughness: 0.32, metalness: 0.08 }))
@@ -296,7 +360,11 @@ export function characterMaterials(identity, kit, opts = {}) {
     ? cached(`gloves|${kit.gk}`, () => std({ color: shade(kit.gk, 0.75), roughness: 0.55 }))
     : mats[SLOT.skin];
 
-  const hair = cached(`hair|${identity.hair.hex}`, () => std({ color: identity.hair.hex, roughness: 0.85, side: THREE.DoubleSide }));
+  // Hair: a soft physical sheen gives the light sliding along the strands.
+  const hair = cached(`hair|${identity.hair.hex}`, () => new THREE.MeshPhysicalMaterial({
+    color: identity.hair.hex, roughness: 0.62, side: THREE.DoubleSide,
+    sheen: 0.8, sheenRoughness: 0.35, sheenColor: new THREE.Color(identity.hair.hex).lerp(new THREE.Color(0xfff1d6), 0.45),
+  }));
   const armband = hasDOM ? cached('armband', () => std({ map: armbandTexture(), roughness: 0.6, side: THREE.DoubleSide })) : std({ color: '#ffd400', side: THREE.DoubleSide });
   const tape = cached('tape', () => std({ color: '#f2f2f2', roughness: 0.7, side: THREE.DoubleSide }));
   const headband = cached(`headband|${trim}`, () => std({ color: trim, roughness: 0.7, side: THREE.DoubleSide }));

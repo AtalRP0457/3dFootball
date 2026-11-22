@@ -44,6 +44,8 @@ export interface Identity {
   hair: { style: string; color: string; hex: string };
   facialHair: string;
   eyes: string;
+  /** Optional face-proportion overrides (see render/character/head.ts FaceShape), 1 = average. */
+  face?: Record<string, number>;
   boots: BootStyle;
   accessories: string[];
   foot: string;

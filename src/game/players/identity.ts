@@ -17,6 +17,9 @@ const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi 
 export interface AppearanceOverride {
   heightCm?: number; weightKg?: number; age?: number; bodyType?: string; skinTone?: string;
   hair?: { style?: string; color?: string; hex?: string }; facialHair?: string; boots?: string;
+  eyes?: string; accessories?: string[];
+  /** Face proportions (head.ts FaceShape keys, 1 = average): build, not a portrait likeness. */
+  face?: Record<string, number>;
 }
 /** What playerIdentity() needs to know about a player. */
 export interface IdentityInput {
@@ -73,7 +76,15 @@ export const BOOT_STYLES: BootStyle[] = [
  * data only.
  * Example: 'some-player-id': { heightCm: 188, weightKg: 86, hair: { style: 'short', color: 'brown' } }
  */
-export const APPEARANCE_OVERRIDES: Record<string, AppearanceOverride> = {};
+export const APPEARANCE_OVERRIDES: Record<string, AppearanceOverride> = {
+  // Publicly reported physical profile only (height, build, hair, colouring);
+  // no scanned or photographic likeness.
+  'erling-haaland': {
+    heightCm: 194, weightKg: 88, age: 26, bodyType: 'strong', skinTone: '#f6d7c3',
+    hair: { style: 'manBun', color: 'blond' }, facialHair: 'none', eyes: '#4f7fa8', accessories: [],
+    face: { headLength: 1.07, headWidth: 1.0, jaw: 1.16, chin: 1.35, cheek: 1.1, brow: 1.3, noseLength: 1.1, noseWidth: 0.95, noseBridge: 1.2, lips: 0.85 },
+  },
+};
 
 const POSITION_GROUP: Record<string, string> = {
   GK: 'GK', CB: 'CB', LB: 'FB', RB: 'FB', LWB: 'FB', RWB: 'FB', CDM: 'DM', CM: 'CM', CAM: 'AM',
@@ -174,6 +185,9 @@ export function playerIdentity(p: IdentityInput): Identity {
     identity.hair = { style: ov.hair.style ?? identity.hair.style, color, hex: HAIR_COLORS[color] || ov.hair.hex || identity.hair.hex };
   }
   if (ov.facialHair) identity.facialHair = ov.facialHair;
+  if (ov.eyes) identity.eyes = ov.eyes;
+  if (ov.accessories) identity.accessories = [...ov.accessories];
+  if (ov.face) identity.face = { ...ov.face };
   if (ov.boots) identity.boots = BOOT_STYLES.find((b) => b.id === ov.boots) || identity.boots;
   return identity;
 }

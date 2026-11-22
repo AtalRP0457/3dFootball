@@ -4,6 +4,7 @@
 // the same haircut share one geometry.
 
 import * as THREE from 'three';
+import { headPoint } from './head.ts';
 
 const TAU = Math.PI * 2;
 // Skull profile relative to the head bone: [y, rx, rzF, rzB, cz] (matches body.js).
@@ -28,11 +29,20 @@ function skullAt(y) {
   }
   return SKULL[SKULL.length - 1];
 }
-/** Point on the skull surface at height y and angle phi (front = π/2), pushed out by t. */
-function skullPoint(y, phi, t) {
+/** Legacy generic skull (used when no player face shape is given). */
+function genericSkullPoint(y, phi, t) {
   const [, rx, rzF, rzB, cz] = skullAt(y);
   const s = Math.sin(phi);
   return new THREE.Vector3((rx + t) * Math.cos(phi), y, cz + ((s >= 0 ? rzF : rzB) + t) * s);
+}
+
+// The head surface hair is fitted to while a geometry is being built: each
+// player's own sculpted head (head.ts) when his face shape is known.
+let surface = genericSkullPoint;
+function skullPoint(y, phi, t) { return surface(y, phi, t); }
+function withHead(face, build) {
+  surface = face ? (y, phi, t) => headPoint(face, y, phi, t) : genericSkullPoint;
+  try { return build(); } finally { surface = genericSkullPoint; }
 }
 
 // Deterministic noise for curls.
@@ -53,8 +63,11 @@ function shell({ rows = 14, segs = 36, bottom, thickness, extra }) {
       const phi = (k / segs) * TAU;
       const y0 = bottom(phi);
       const y = y0 + (0.248 - y0) * (1 - (1 - f) ** 1.3);
-      const p = skullPoint(Math.min(y, 0.243), phi, thickness(phi, f));
-      if (y > 0.243) p.y = 0.243 + thickness(phi, f) * 0.9;
+      // Hair thins to nothing at the hairline, so it grows out of the scalp
+      // instead of sitting on it like a cap.
+      const th = thickness(phi, f) * (0.15 + 0.85 * Math.min(1, f * 3.5)) + 0.0008;
+      const p = skullPoint(Math.min(y, 0.243), phi, th);
+      if (y > 0.243) p.y = 0.243 + th * 0.9;
       if (extra) extra(p, phi, f);
       pos.push(p.x, p.y, p.z);
     }
@@ -76,7 +89,7 @@ function shell({ rows = 14, segs = 36, bottom, thickness, extra }) {
 // Hairline: high at the forehead, lower at the temples, lowest at the nape.
 const front = (phi) => Math.max(0, Math.sin(phi));
 const back = (phi) => Math.max(0, -Math.sin(phi));
-const hairline = (phi, { fh = 0.168, side = 0.128, nape = 0.07 } = {}) =>
+const hairline = (phi, { fh = 0.19, side = 0.145, nape = 0.07 } = {}) =>
   side + (fh - side) * front(phi) ** 1.5 - (side - nape) * back(phi) ** 1.2;
 
 const STYLES = {
@@ -84,13 +97,13 @@ const STYLES = {
   buzz: () => shell({ bottom: (p) => hairline(p), thickness: () => 0.0055 }),
   short: () => shell({ bottom: (p) => hairline(p), thickness: (p, f) => 0.009 + 0.008 * f }),
   crop: () => shell({
-    bottom: (p) => hairline(p, { fh: 0.155 }),
+    bottom: (p) => hairline(p, { fh: 0.178 }),
     thickness: (p, f) => 0.01 + 0.01 * f,
     // A textured fringe brushed forward.
     extra: (v, p, f) => { if (front(p) > 0.6 && f < 0.3) { v.z += 0.012 * (1 - f / 0.3); v.y -= 0.006; } },
   }),
   quiff: () => shell({
-    bottom: (p) => hairline(p, { fh: 0.172 }),
+    bottom: (p) => hairline(p, { fh: 0.192 }),
     thickness: (p, f) => 0.008 + 0.005 * f + 0.018 * front(p) ** 2 * Math.sin(Math.PI * Math.min(1, f * 1.6)),
     extra: (v, p, f) => { if (front(p) > 0.5 && f < 0.6) v.y += 0.006 * front(p); },
   }),
@@ -101,12 +114,12 @@ const STYLES = {
   }),
   curly: () => shell({
     rows: 18, segs: 44,
-    bottom: (p) => hairline(p, { fh: 0.162 }),
+    bottom: (p) => hairline(p, { fh: 0.182 }),
     thickness: (p, f) => 0.016 + 0.01 * f + 0.008 * noise(Math.round(p * 9), Math.round(f * 7)),
   }),
   afro: () => shell({
     rows: 20, segs: 48,
-    bottom: (p) => hairline(p, { fh: 0.16, nape: 0.075 }),
+    bottom: (p) => hairline(p, { fh: 0.18, nape: 0.075 }),
     thickness: (p, f) => 0.03 + 0.03 * Math.sin(Math.PI * Math.min(1, 0.25 + f)) + 0.01 * noise(Math.round(p * 11), Math.round(f * 9)),
   }),
   manBun: () => {
@@ -121,7 +134,7 @@ const STYLES = {
   },
   long: () => shell({
     rows: 18,
-    bottom: (p) => hairline(p, { fh: 0.17, side: 0.06, nape: -0.02 }),
+    bottom: (p) => hairline(p, { fh: 0.188, side: 0.06, nape: -0.02 }),
     thickness: (p, f) => 0.012 + 0.006 * f + 0.012 * back(p) * (1 - f),
     extra: (v, p, f) => { if (back(p) > 0.2 && f < 0.4) { v.z -= 0.01 * (0.4 - f); } },
   }),
@@ -141,34 +154,43 @@ function merge(geos) {
 }
 
 const hairCache = new Map();
-export function hairGeometry(style) {
+/** Hair for a style, fitted to a player's head (`face` from head.ts faceShape, cached by `key`). */
+export function hairGeometry(style, face = null, key = '') {
   if (!STYLES[style]) style = 'short';
-  if (!hairCache.has(style)) hairCache.set(style, STYLES[style]());
-  return hairCache.get(style);
+  const k = `${style}|${face ? key : ''}`;
+  if (!hairCache.has(k)) hairCache.set(k, withHead(face, () => STYLES[style]()));
+  return hairCache.get(k);
 }
 
 /** Beard / goatee / moustache shells over the lower face (head-bone space). */
 const facialCache = new Map();
-export function facialHairGeometry(kind) {
+export function facialHairGeometry(kind, face = null, key = '') {
   if (kind === 'none' || kind === 'stubble') return null; // stubble is painted on the face texture
-  if (facialCache.has(kind)) return facialCache.get(kind);
+  const ck = `${kind}|${face ? key : ''}`;
+  if (facialCache.has(ck)) return facialCache.get(ck);
+  return withHead(face, () => buildFacialHair(kind, ck));
+}
+function buildFacialHair(kind, ck) {
   const pos = [], idx = [];
   const rows = 8, segs = 24;
   const ranges = {
-    beard: { y0: 0.0, y1: 0.095, span: 1.75, t: 0.008 },
-    goatee: { y0: 0.01, y1: 0.07, span: 0.45, t: 0.007 },
-    moustache: { y0: 0.062, y1: 0.074, span: 0.42, t: 0.006 },
+    beard: { y0: -0.022, y1: 0.095, span: 1.75, t: 0.005 },
+    goatee: { y0: -0.012, y1: 0.07, span: 0.45, t: 0.004 },
+    moustache: { y0: 0.06, y1: 0.07, span: 0.42, t: 0.003 },
   }[kind];
   if (!ranges) return null;
   for (let r = 0; r <= rows; r++) {
-    const y = ranges.y0 + (ranges.y1 - ranges.y0) * (r / rows);
     for (let k = 0; k <= segs; k++) {
       const phi = Math.PI / 2 + (k / segs - 0.5) * 2 * ranges.span;
+      // A full beard follows the cheek line: low around the mouth, higher
+      // towards the ears.
+      const side = Math.min(1, Math.abs(phi - Math.PI / 2) / 0.9);
+      const top = kind === 'beard' ? 0.07 + 0.018 * side * side : ranges.y1;
+      const y = ranges.y0 + (top - ranges.y0) * (r / rows);
       // Keep the mouth clear on a full beard.
       let t = ranges.t;
       if (kind === 'beard' && y > 0.045 && y < 0.07 && Math.abs(phi - Math.PI / 2) < 0.35) t = -0.004;
-      const p = skullPoint(Math.max(0.0, y), phi, t);
-      if (y < 0.02) p.y -= 0.004;
+      const p = skullPoint(y, phi, t);
       pos.push(p.x, p.y, p.z);
     }
   }
@@ -181,7 +203,7 @@ export function facialHairGeometry(kind) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
-  facialCache.set(kind, g);
+  facialCache.set(ck, g);
   return g;
 }
 

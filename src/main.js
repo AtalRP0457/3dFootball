@@ -6,7 +6,7 @@ import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution,
 import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.ts';
 import { createFrontend } from './ui/frontend.js';
 import { Input } from './game/input.ts';
-import { createRenderer } from './render/scene.js';
+import { createRenderer, CAMERA_ORDER, CAMERA_DEFAULTS, cameraLabel } from './render/scene.js';
 import { MatchAudio } from './render/audio.js';
 import { stopBall } from './game/physics/ballPhysics.ts';
 import { mountHud } from './ui/hud/Hud.tsx';
@@ -32,6 +32,8 @@ const DEFAULT_SETTINGS = {
   assist: 'assisted',
   dribbleStyle: 'sticky',
   physics: 'engine', // engine (Gold Standard: Rapier, shared player controller) | classic
+  camera: 'broadcast', // broadcast | close | wide
+  cameraZoom: 1, // 0.8 … 1.3 (1 = default framing)
 };
 const SETTINGS_KEY = 'legends-settings';
 const dataMigration = migrate();
@@ -66,6 +68,8 @@ function loadSettings() {
       ...(saved && ['beginner', 'easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
       ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
       ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
+      ...pick('camera', CAMERA_ORDER),
+      ...(saved && Number(saved.cameraZoom) >= 0.7 && Number(saved.cameraZoom) <= 1.5 ? { cameraZoom: Number(saved.cameraZoom) } : {}),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -276,7 +280,7 @@ function buildMenu() {
     if (match && match.phase !== 'fulltime') setPaused(!paused);
   });
   $('touchCamera').addEventListener('click', () => {
-    if (match) showSub(`Camera: ${renderer.cycleCamera()}`);
+    if (match) { settings.camera = renderer.cycleCamera(); persistSettings(); showSub(`Camera: ${cameraLabel(settings.camera)}`); }
   });
   $('replaySkip').addEventListener('click', finishReplay);
   setupTutorialPage();
@@ -1063,6 +1067,7 @@ function startMatch() {
   drill = null;
   if (settings.mode === 'tutorial') startTutorialState();
   renderTutorial();
+  renderer.setCamera({ mode: CAMERA_ORDER.includes(settings.camera) ? settings.camera : CAMERA_DEFAULTS.mode, zoom: Number(settings.cameraZoom) || 1 });
   renderer.setMatch(match);
   $('game').style.filter = eraFilter(home, away);
 
@@ -1156,7 +1161,19 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyR' && replayFrames) {
     finishReplay();
   } else if (e.code === 'KeyC') {
-    showSub(`Camera: ${renderer.cycleCamera()}`);
+    settings.camera = renderer.cycleCamera();
+    persistSettings();
+    showSub(`Camera: ${cameraLabel(settings.camera)}`);
+  } else if (e.code === 'Minus' || e.code === 'Equal') {
+    const z = Math.round((settings.cameraZoom + (e.code === 'Equal' ? 0.1 : -0.1)) * 10) / 10;
+    settings.cameraZoom = renderer.setCamera({ zoom: z }).zoom;
+    persistSettings();
+    showSub(`Camera zoom ${Math.round(settings.cameraZoom * 100)}%`);
+  } else if (e.code === 'Digit0') {
+    settings.camera = CAMERA_DEFAULTS.mode; settings.cameraZoom = CAMERA_DEFAULTS.zoom;
+    renderer.setCamera({ mode: settings.camera, zoom: settings.cameraZoom });
+    persistSettings();
+    showSub('Camera reset to default');
   }
 });
 window.addEventListener('resize', () => renderer.resize());

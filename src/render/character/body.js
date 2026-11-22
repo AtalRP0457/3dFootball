@@ -31,7 +31,41 @@ function se(c, n) {
  * (rzF = front depth, rzB = back depth). φ = 0 at +x; front (+z) is φ = π/2,
  * so u = 0.25 is the front centre and u = 0.75 the back centre.
  */
+/**
+ * Smooth a ring list: Catmull-Rom between rings (3 per span), so limbs and the
+ * torso have continuous curves instead of straight facets between sections.
+ */
+function densify(rings, steps = 3) {
+  if (rings.length < 3) return rings;
+  const keys = ['y', 'cx', 'cz', 'rx', 'rzF', 'rzB', 'n', 'v', 'z', 'cy', 'ryT', 'ryB'];
+  const out = [];
+  const cr = (a, b, c, d, t) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t * t * t);
+  for (let i = 0; i < rings.length - 1; i++) {
+    const r0 = rings[Math.max(0, i - 1)], r1 = rings[i], r2 = rings[i + 1], r3 = rings[Math.min(rings.length - 1, i + 2)];
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps;
+      if (k === 0) { out.push(r1); continue; }
+      const r = { ...r1 };
+      for (const key of keys) {
+        if (r1[key] === undefined && r2[key] === undefined) continue;
+        const g = (x) => (x[key] ?? (key === 'n' ? 2 : 0));
+        r[key] = key === 'v' ? g(r1) + (g(r2) - g(r1)) * t : cr(g(r0), g(r1), g(r2), g(r3), t);
+      }
+      // Blend skin weights linearly between the two rings.
+      const w = new Map();
+      for (const [b, x] of r1.w) w.set(b, (w.get(b) || 0) + x * (1 - t));
+      for (const [b, x] of r2.w) w.set(b, (w.get(b) || 0) + x * t);
+      r.w = [...w.entries()].sort((a, b) => b[1] - a[1]);
+      out.push(r);
+    }
+  }
+  out.push(rings[rings.length - 1]);
+  return out;
+}
+
 function loftY(rings, segs, { capTop = false, capBottom = false, mod } = {}) {
+  rings = mod ? rings : densify(rings);
+  segs = Math.round(segs * 1.5);
   return loft(rings, segs, (r, phi) => {
     const c = Math.cos(phi), s = Math.sin(phi);
     const n = r.n || 2;
@@ -48,6 +82,7 @@ function loftY(rings, segs, { capTop = false, capBottom = false, mod } = {}) {
  * φ = 0 at +x, top at φ = π/2.
  */
 function loftZ(rings, segs, opts = {}) {
+  rings = densify(rings, 2);
   return loft(rings, segs, (r, phi) => {
     const c = Math.cos(phi), s = Math.sin(phi);
     const n = r.n || 2;
@@ -143,58 +178,18 @@ const W = (...pairs) => pairs; // readability: W(['thigh.L', 0.7], ['shin.L', 0.
 // Parts
 // ---------------------------------------------------------------------------
 
+// The head itself (skull, face, eyes, ears) is built per player in head.ts
+// and rides on the head bone; the shared body mesh only carries the neck.
 function headParts(L) {
   const hy = L.bones.head.y;
   const ny = L.bones.neck.y;
-  // Skull and face profile (y relative to the head bone, widths, depths and
-  // a forward offset for the jaw/chin).
-  const prof = [
-    [-0.075, 0.058, 0.06, 0.062, -0.005, 0.0], // neck (under the collar)
-    [-0.02, 0.056, 0.058, 0.06, -0.005, 0.0],
-    [0.0, 0.058, 0.07, 0.063, 0.005, 0.06], // under the jaw
-    [0.025, 0.066, 0.085, 0.074, 0.012, 0.12], // chin / jawline
-    [0.055, 0.071, 0.088, 0.083, 0.012, 0.26], // mouth
-    [0.085, 0.075, 0.092, 0.09, 0.01, 0.4], // nose / cheekbones
-    [0.115, 0.077, 0.092, 0.095, 0.006, 0.53], // eyes
-    [0.145, 0.079, 0.088, 0.099, 0.002, 0.66], // brow
-    [0.175, 0.076, 0.078, 0.096, -0.004, 0.78], // forehead
-    [0.205, 0.064, 0.062, 0.084, -0.008, 0.88],
-    [0.228, 0.042, 0.04, 0.058, -0.01, 0.95],
-    [0.243, 0.012, 0.012, 0.016, -0.01, 1.0],
-  ];
-  const rings = prof.map(([y, rx, rzF, rzB, cz, v]) => ({
-    y: hy + y, rx, rzF, rzB, cz, v,
-    w: y < -0.03 ? W(['neck', 0.7], ['head', 0.3]) : W(['head', 1]),
-  }));
-  // Nose, brow ridge and cheekbones sculpted into the front of the face.
-  const head = loftY(rings, 28, {
-    capTop: true,
-    mod: (r, phi, x, y, z) => {
-      const ry = r.y - hy;
-      const front = Math.max(0, Math.sin(phi));
-      const centre = Math.exp(-((phi - Math.PI / 2) ** 2) / 0.035); // narrow band at the middle
-      if (ry > 0.06 && ry < 0.13) z += 0.024 * centre * Math.sin(((ry - 0.06) / 0.07) * Math.PI) * (ry > 0.1 ? 1 : 0.8);
-      if (ry > 0.13 && ry < 0.16) z += 0.006 * front;
-      const cheek = Math.exp(-((phi - Math.PI / 2 - 0.75) ** 2) / 0.05) + Math.exp(-((phi - Math.PI / 2 + 0.75) ** 2) / 0.05);
-      if (ry > 0.07 && ry < 0.12) z += 0.004 * cheek;
-      return { x, y, z };
-    },
-  });
-  // Ears.
-  const ears = [];
-  for (const sx of [1, -1]) {
-    const e = new THREE.SphereGeometry(0.03, 10, 8);
-    e.scale(0.45, 1, 0.75);
-    e.translate(sx * 0.079, hy + 0.105, -0.008);
-    ears.push(skinRigid(e, 'head'));
-  }
   // Neck trunk joining the collar.
   const neck = loftY([
     { y: ny - 0.03, rx: 0.062, rzF: 0.058, rzB: 0.062, w: W(['chest', 0.6], ['neck', 0.4]) },
     { y: ny + 0.04, rx: 0.056, rzF: 0.054, rzB: 0.06, w: W(['neck', 1]) },
     { y: hy - 0.02, rx: 0.056, rzF: 0.056, rzB: 0.06, cz: -0.005, w: W(['neck', 0.6], ['head', 0.4]) },
   ], 18);
-  return { face: [head], skin: [neck, ...ears] };
+  return { face: [], skin: [neck] };
 }
 
 /** Attach constant skin weights to a rigid primitive geometry. */
@@ -392,6 +387,7 @@ export function bodyGeometry(bodyType, longSleeves = false) {
   slots[SLOT.sole].push(...bt.sole);
   slots[SLOT.hands].push(...ar.hands);
   const perSlot = slots.map((parts) => {
+    if (!parts.length) return emptyPart();
     const clean = parts.map((g) => {
       const gg = g.index ? g : g;
       for (const name of Object.keys(gg.attributes)) {
@@ -412,6 +408,18 @@ export function bodyGeometry(bodyType, longSleeves = false) {
   const out = { geometry, layout: L };
   cache.set(key, out);
   return out;
+}
+
+/** An empty geometry so a slot with no parts still has its (empty) group. */
+function emptyPart() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute([], 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute([], 2));
+  g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([], 4));
+  g.setAttribute('skinWeight', new THREE.Float32BufferAttribute([], 4));
+  g.setIndex([]);
+  return g;
 }
 
 export function clearBodyCache() {

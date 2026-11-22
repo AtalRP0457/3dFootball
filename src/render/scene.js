@@ -21,12 +21,18 @@ const RING = {
   tackle: '#fb923c', // flashing orange: close enough to tackle
 };
 
+// Gameplay cameras. Heights/distances are the tightest framing; the camera
+// pulls back dynamically (long passes, fast breaks, high balls, crowded
+// play) and with the user's zoom setting. `follow` blends the focus from the
+// ball towards the human's controlled player.
 const CAMERA_MODES = {
-  broadcast: { h: 22, back: 29, ahead: 0.82, fov: 44, clampX: 13 },
-  wide: { h: 46, back: 48, ahead: 0.6, fov: 50, clampX: 24 },
-  close: { h: 17, back: 24, ahead: 0.95, fov: 40, clampX: 8 },
+  broadcast: { label: 'Broadcast', h: 10, back: 16.5, fov: 36, clampX: 9, follow: 0.35, pull: 0.6 },
+  close: { label: 'Close', h: 6.8, back: 10.5, fov: 34, clampX: 4, follow: 0.6, pull: 0.75 },
+  wide: { label: 'Tactical', h: 34, back: 40, fov: 46, clampX: 20, follow: 0.1, pull: 0.25 },
 };
 export const CAMERA_ORDER = Object.keys(CAMERA_MODES);
+export const CAMERA_DEFAULTS = { mode: 'broadcast', zoom: 1 };
+export const cameraLabel = (mode) => CAMERA_MODES[mode]?.label || mode;
 
 function canvas(w, h) {
   const c = document.createElement('canvas');
@@ -198,7 +204,11 @@ export function createRenderer(canvasEl) {
   scene.add(arenaGlow);
 
   let playerMeshes = [];
-  let camMode = 'broadcast';
+  let camMode = CAMERA_DEFAULTS.mode;
+  let camZoom = CAMERA_DEFAULTS.zoom; // user setting: >1 closer, <1 further
+  let pullBack = 0; // dynamic 0 (tight) … 1 (wide), smoothed
+  const camFocus = new THREE.Vector3();
+  let focusReady = false;
   const camPos = new THREE.Vector3(0, 20, 44);
   const camLook = new THREE.Vector3();
   let time = 0;
@@ -244,30 +254,73 @@ export function createRenderer(canvasEl) {
     snapCamera(state);
   }
 
-  function cameraTarget(state) {
-    const mode = CAMERA_MODES[camMode];
-    const b = state.ball.pos;
-    const x = THREE.MathUtils.clamp(b.x * mode.ahead, -HALF_L + mode.clampX, HALF_L - mode.clampX);
-    const zShift = b.z * 0.25;
-    // Tighten only when the attack reaches the final third. It makes faces,
-    // kit details and keeper action readable while preserving the wide view at
-    // midfield where passing options matter most.
-    const attackZoom = camMode === 'broadcast'
-      ? THREE.MathUtils.smoothstep(Math.abs(b.x), HALF_L * 0.54, HALF_L * 0.9)
-      : 0;
-    const indoorZoom = state.indoor ? 1 : 0;
-    const height = mode.h - attackZoom * 3 - indoorZoom * 3;
-    const back = mode.back - attackZoom * 5 - indoorZoom * 5;
-    const fov = mode.fov - attackZoom * 3.5 - indoorZoom * 3;
+  /** The human's controlled player (P1 first), if any. */
+  function controlledPlayer(state) {
+    for (const t of state.teams) if (t.human === 'p1' && t.controlled) return t.controlled;
+    for (const t of state.teams) if (t.controlled) return t.controlled;
+    return null;
+  }
+
+  /**
+   * Live camera target. Focus is the ball, leaning towards the controlled
+   * player and ahead of the ball's travel; the frame tightens on close
+   * possession and widens for long balls, speed, height and crowds; the
+   * distance adapts to the screen's aspect ratio so players stay a similar
+   * size on wide displays and aren't cut off on narrow ones.
+   */
+  function cameraTarget(state, dt = 0) {
+    const mode = CAMERA_MODES[camMode] || CAMERA_MODES.broadcast;
+    const b = state.ball.pos, bv = state.ball.vel;
+    const ctrl = controlledPlayer(state);
+    let fx = b.x, fz = b.z;
+    let spread = 0;
+    if (ctrl && ctrl.onPitch && !ctrl.sentOff) {
+      spread = Math.hypot(ctrl.pos.x - b.x, ctrl.pos.z - b.z);
+      const w = mode.follow * THREE.MathUtils.clamp(1 - spread / 24, 0, 1);
+      fx += (ctrl.pos.x - b.x) * w; fz += (ctrl.pos.z - b.z) * w;
+    }
+    // Lead the ball's travel a little so the play isn't framed from behind.
+    const speed = Math.hypot(bv.x, bv.z);
+    const lead = Math.min(4.5, speed * 0.3);
+    if (speed > 0.5) { fx += (bv.x / speed) * lead; fz += (bv.z / speed) * lead * 0.6; }
+    // Smooth the focus itself so a pass between players never jerks the frame.
+    if (!focusReady || dt === 0) { camFocus.set(fx, 0, fz); focusReady = true; }
+    else camFocus.lerp(new THREE.Vector3(fx, 0, fz), 1 - Math.exp(-dt * 3.4));
+    // Dynamic zoom: 0 = tight, 1 = wide.
+    let crowd = 0;
+    for (const p of state.players) if (p.onPitch && !p.sentOff && Math.hypot(p.pos.x - camFocus.x, p.pos.z - camFocus.z) < 11) crowd++;
+    const want = THREE.MathUtils.clamp(
+      Math.max(0, speed - 9) / 15 + Math.max(0, spread - 7) / 22 + Math.max(0, b.y - 2) / 7 + Math.max(0, crowd - 7) * 0.05
+        + (state.phase !== 'play' ? 0.25 : 0),
+      0, 1,
+    );
+    if (dt === 0) pullBack = want;
+    else pullBack += (want - pullBack) * (1 - Math.exp(-dt * (want > pullBack ? 1.6 : 0.8)));
+    const indoor = state.indoor ? 0.85 : 1;
+    // Aspect ratio: keep player size steady on wide screens, avoid cut-offs on narrow ones.
+    const a = camera.aspect || 1.78;
+    const aspectMul = a < 1.78 ? Math.pow(1.78 / a, 0.6) : Math.pow(1.78 / Math.min(a, 3.2), 0.18);
+    const dist = (1 + mode.pull * pullBack) * aspectMul * indoor / camZoom;
+    // Whatever the follow/lead/zoom, the ball stays in frame: the focus may
+    // drift from it only so far (least towards the camera, where the bottom
+    // of the frame is closest).
+    const reach = mode.back * dist;
+    const fxB = THREE.MathUtils.clamp(camFocus.x, b.x - reach * 0.45, b.x + reach * 0.45);
+    const fzB = THREE.MathUtils.clamp(camFocus.z, b.z - reach * 0.22, b.z + reach * 0.5);
+    const x = THREE.MathUtils.clamp(fxB, -HALF_L + mode.clampX, HALF_L - mode.clampX);
+    const z = THREE.MathUtils.clamp(fzB, -HALF_W + 4, HALF_W - 2);
+    const h = Math.max(3.2, mode.h * dist);
     return {
-      pos: new THREE.Vector3(x, height, HALF_W + back + zShift * 0.5),
-      look: new THREE.Vector3(x, 0, -1 + zShift),
-      fov,
+      pos: new THREE.Vector3(x, h, z + mode.back * dist),
+      look: new THREE.Vector3(x, 0.9, z - 1.2),
+      fov: mode.fov + pullBack * 4,
+      rate: 2.8,
     };
   }
 
   function snapCamera(state) {
-    const t = cameraTarget(state);
+    focusReady = false;
+    const t = cameraTarget(state, 0);
     camPos.copy(t.pos); camLook.copy(t.look);
     camera.fov = t.fov; camera.updateProjectionMatrix();
   }
@@ -276,6 +329,12 @@ export function createRenderer(canvasEl) {
     const i = CAMERA_ORDER.indexOf(camMode);
     camMode = CAMERA_ORDER[(i + 1) % CAMERA_ORDER.length];
     return camMode;
+  }
+  /** Camera settings from the menu / in-match keys. */
+  function setCamera({ mode, zoom } = {}) {
+    if (mode && CAMERA_MODES[mode]) camMode = mode;
+    if (Number.isFinite(zoom)) camZoom = THREE.MathUtils.clamp(zoom, 0.7, 1.5);
+    return { mode: camMode, zoom: camZoom };
   }
 
   // Blend between the previous and current physics step so motion is smooth
@@ -352,6 +411,13 @@ export function createRenderer(canvasEl) {
       const kk = Math.min(1, dt * 10);
       mesh.rotation.x += (pitch - mesh.rotation.x) * kk;
       mesh.rotation.z += (roll - mesh.rotation.z) * kk;
+      // Level of detail: eyes, lids and brows only near the camera; shadow
+      // casting only within the shadow map's useful range.
+      const camD = camera.position.distanceTo(m.root.position);
+      const near = camD < 30;
+      if (m.lodNear !== near) { m.lodNear = near; for (const o of m.character.detail || []) o.visible = near; }
+      const shadow = camD < 70;
+      if (m.lodShadow !== shadow) { m.lodShadow = shadow; mesh.castShadow = shadow; }
       const goalTeam = state.phase === 'goal' && state.lastGoal ? state.lastGoal.team : -1;
       let celebration = null;
       if (goalTeam >= 0) {
@@ -464,8 +530,8 @@ export function createRenderer(canvasEl) {
     let mode = 'live';
     if (view?.replay) { t = replayCamera(state, view.replay); mode = 'replay'; }
     else if (state.phase === 'goal') { t = celebrationCamera(state); if (t) mode = 'celebration'; }
-    if (!t) t = cameraTarget(state);
     const camDt = view?.realDt ?? dt;
+    if (!t) t = cameraTarget(state, camDt);
     // Cut (rather than swoop) into and out of the replay, like a broadcast.
     if ((mode === 'replay') !== (lastCamMode === 'replay')) {
       camPos.copy(t.pos); camLook.copy(t.look); camera.fov = t.fov; camera.updateProjectionMatrix();
@@ -479,11 +545,21 @@ export function createRenderer(canvasEl) {
     const k = 1 - Math.exp(-camDt * (t.rate || 3.2));
     camPos.lerp(t.pos, k);
     camLook.lerp(t.look, k);
+    // The smoothing lags a fast ball; never let it leave the frame. If it gets
+    // past the limits around the look point, carry the camera with it.
+    if (mode !== 'replay' && state.ball) {
+      const bp = state.ball.pos, depth = Math.max(4, camPos.z - camLook.z);
+      const lim = (v, lo, hi) => (v < lo ? v - lo : v > hi ? v - hi : 0);
+      const ex = lim(bp.x - camLook.x, -depth * 0.5, depth * 0.5);
+      const ez = lim(bp.z - camLook.z, -depth * 0.75, depth * 0.3);
+      if (ex || ez) { camPos.x += ex; camLook.x += ex; camPos.z += ez; camLook.z += ez; }
+    }
     if (Math.abs(camera.fov - t.fov) > 0.01) {
       camera.fov += (t.fov - camera.fov) * k;
       camera.updateProjectionMatrix();
     }
     camera.position.copy(camPos);
+    if (camera.position.y < 1.2) camera.position.y = 1.2; // never clip into the pitch
     camera.lookAt(camLook);
 
     renderer.render(scene, camera);
@@ -498,8 +574,11 @@ export function createRenderer(canvasEl) {
   resize();
 
   return {
-    setMatch, update, resize, cycleCamera,
+    setMatch, update, resize, cycleCamera, setCamera,
     get cameraMode() { return camMode; },
+    get cameraZoom() { return camZoom; },
+    /** Live camera state (read-only; for debugging and tests). */
+    get cameraDebug() { return { camera, pos: camera.position.clone(), fov: camera.fov, pullBack, focus: camFocus.clone() }; },
     renderIdle(dt) {
       // Slow orbit for the menu background.
       time += dt;

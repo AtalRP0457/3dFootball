@@ -31,6 +31,8 @@ export interface Character {
   /** Bone-space → world scale (player height / reference crown height). */
   scale: number;
   headHeight: number;
+  /** Fine facial detail (eyes, lids, brows) hidden for distant players. */
+  detail: THREE.Object3D[];
   update(dt: number, p: unknown, ctx?: unknown): void;
   setCaptain(on: boolean): void;
   dispose(): void;

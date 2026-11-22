@@ -86,10 +86,12 @@ export class PlayerViewer {
   }
 
   zoom(dir) {
-    this.distTarget = THREE.MathUtils.clamp(this.distTarget * (dir > 0 ? 1.15 : 1 / 1.15), 1.4, 6);
-    // Close up: look at the upper body/face; far: whole body.
-    const k = (this.distTarget - 1.4) / (6 - 1.4);
-    this.focusTarget = THREE.MathUtils.lerp(1.45, 0.95, Math.min(1, k * 1.6));
+    this.distTarget = THREE.MathUtils.clamp(this.distTarget * (dir > 0 ? 1.15 : 1 / 1.15), 0.6, 6);
+    // Close up: look at the face; mid: upper body; far: whole body.
+    const h = this.char ? this.char.identity.heightCm / 100 : 1.8;
+    const face = Math.min(1, Math.max(0, (1.4 - this.distTarget) / 0.8));
+    const k = Math.max(0, (this.distTarget - 1.4) / (6 - 1.4));
+    this.focusTarget = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.45 * h / 1.8, 0.95, Math.min(1, k * 1.6)), h * 0.935, face);
   }
 
   view(name, resetZoom = false) {
@@ -174,7 +176,7 @@ export class PlayerViewer {
       const oneShot = ['shoot', 'pass', 'tackle', 'jump', 'dive'].includes(this.anim);
       if (oneShot && this.animT > 2.4) this.setAnim(this.anim);
       const h = this.char.identity.heightCm / 100;
-      this.focusTarget = Math.min(this.focusTarget, h * 0.82);
+      this.focusTarget = Math.min(this.focusTarget, h * 0.94);
     }
     const t = new THREE.Vector3(0, this.focusY, 0);
     // Narrow (portrait) frames need more distance to keep head and boots in.
