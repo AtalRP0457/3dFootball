@@ -104,21 +104,30 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
     `${ok}/${tries} first-time passes, ${dupes} doubled, ${switched} turned into a player switch${notes.length ? ', ' + notes.join(', ') : ''}`);
 }
 
-// 3) A shot pressed while a pass is on its way is struck first time, once.
+// 3) A shot pressed while a pass is on its way is struck first time, once
+//    (several runs: a mistimed strike can miss, a press must never double).
 {
-  const { s } = setup([[9, HALF_L - 14, -2]], [HALF_L - 30, 4], [0]);
-  play(s, 2, (i) => (i === 0 ? { passPressed: true, mx: 1, mz: -0.3 } : {}));
-  const recv = ofIdx(s, 9);
-  let startAt = -1;
-  const ev = play(s, 180, (i) => {
-    const d = Math.hypot(s.ball.pos.x - recv.pos.x, s.ball.pos.z - recv.pos.z);
-    if (startAt < 0 && !s.ball.owner && s.teams[0].controlled === recv && d < 6) startAt = i;
-    if (startAt >= 0 && i - startAt < 8) return { shootHeld: true, shootPressed: i === startAt, mx: 1, mz: 0 };
-    return {};
-  });
-  const shots = ev.filter((e) => e.type === 'shot');
-  check('First-time shot: pressed before arrival, struck exactly once', startAt >= 0 && shots.length === 1, `shots: ${shots.length} (${shots.map((e) => e.kind ?? '').join(',')})`);
-  s.engine!.dispose();
+  let ok = 0, dupes = 0, tries = 0;
+  for (const [mx, mz, pressAt] of [[14, -2, 6], [12, 2, 5], [16, -1, 7], [13, 1, 4]] as const) {
+    const { s } = setup([[9, HALF_L - mx, mz]], [HALF_L - 30, 4], [0]);
+    play(s, 2, (i) => (i === 0 ? { passPressed: true, mx: 1, mz: -0.3 } : {}));
+    const recv = ofIdx(s, 9);
+    let startAt = -1;
+    const ev = play(s, 180, (i) => {
+      const d = Math.hypot(s.ball.pos.x - recv.pos.x, s.ball.pos.z - recv.pos.z);
+      if (startAt < 0 && !s.ball.owner && s.teams[0].controlled === recv && d < pressAt) startAt = i;
+      if (startAt >= 0 && i - startAt < 8) return { shootHeld: true, shootPressed: i === startAt, mx: 1, mz: 0 };
+      return {};
+    });
+    if (startAt >= 0) {
+      tries++;
+      const shots = ev.filter((e) => e.type === 'shot').length;
+      if (shots === 1) ok++;
+      if (shots > 1) dupes++;
+    }
+    s.engine!.dispose();
+  }
+  check('First-time shot: pressed before arrival, struck exactly once', tries >= 3 && ok >= tries - 1 && dupes === 0, `${ok}/${tries} first-time shots, ${dupes} doubled`);
 }
 
 // 4) A press buffered before a stoppage never fires into the restart.
@@ -196,6 +205,50 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
     `run ${r.runTop.toFixed(1)} m/s (90% in ${r.run90.toFixed(2)} s, stops in ${r.runStop.toFixed(2)} s); sprint ${r.sprintTop.toFixed(1)} m/s (90% in ${r.sprint90.toFixed(2)} s, stops in ${r.sprintStop.toFixed(2)} s)`);
   check('The stick decides direction, not assist', Math.abs(r.runHeading - 90) < 12 && Math.abs(r.sprintHeading - 90) < 12,
     `after 1.5 s holding "down": run heading ${r.runHeading.toFixed(0)}°, sprint ${r.sprintHeading.toFixed(0)}° (90° = straight down)`);
+}
+
+// 7) Receiving a pass: no stick -> he comes to the ball at a jog (no charge
+//    into it) and the first touch settles it at his feet; stick sideways ->
+//    one directional touch that way and he runs on with it.
+{
+  const receive = (stick: { mx: number; mz: number } | null) => {
+    const { s } = setup([[9, 6, 6]]);
+    const recv = ofIdx(s, 9);
+    play(s, 1, () => ({ passPressed: true, mx: 1, mz: 0.4 }));
+    let touchAt = -1, speedAtTouch = 0, ballAfter = 0, recvAfter = 0, gapAfter = 0, touches = 0;
+    play(s, 150, () => (stick && s.teams[0].controlled === recv ? stick : {}), (i) => {
+      if (touchAt < 0 && s.ball.owner === recv) { touchAt = i; speedAtTouch = Math.hypot(recv.vel.x, recv.vel.z); }
+      if (touchAt >= 0 && i === touchAt + 6) ballAfter = Math.hypot(s.ball.vel.x, s.ball.vel.z);
+      if (touchAt >= 0 && i === touchAt + 30) { recvAfter = Math.hypot(recv.vel.x, recv.vel.z); gapAfter = Math.hypot(s.ball.pos.x - recv.pos.x, s.ball.pos.z - recv.pos.z); }
+    });
+    s.engine!.dispose();
+    return { touchAt, speedAtTouch, ballAfter, recvAfter, gapAfter, touches };
+  };
+  const still = receive(null), side = receive({ mx: 0, mz: -1 });
+  check('Receiving with no stick: comes to the ball and settles it', still.touchAt > 0 && still.speedAtTouch < 4.8 && still.ballAfter <= still.speedAtTouch + 0.3 && still.gapAfter > 0.3 && still.gapAfter < 1.3,
+    `receiver at ${still.speedAtTouch.toFixed(1)} m/s on the touch, ball ${still.ballAfter.toFixed(1)} m/s just after, ${still.gapAfter.toFixed(2)} m from him half a second later`);
+  check('Receiving with the stick: directional first touch, keeps moving', side.touchAt > 0 && side.ballAfter > 2.5 && side.recvAfter > 3,
+    `ball ${side.ballAfter.toFixed(1)} m/s after the touch, receiver ${side.recvAfter.toFixed(1)} m/s half a second later`);
+}
+
+// 8) A whole AI match: players stay on their feet and teammates don't keep
+//    running into each other (before the fix: ~36 falls, ~99 teammate
+//    collisions in 4 minutes).
+{
+  const s = createMatch({ home: buildTeam('rma'), away: buildTeam('mci'), controllers: ['ai', 'ai'], difficulty: 'normal', duration: 240 });
+  s.engine = new MatchPhysics(s);
+  const sim = (s.engine as unknown as { sim: { pw: { events: { on(fn: (e: { type: string; a?: string; b?: string; playerId?: string }) => void): void } } } }).sim;
+  const ctl = (s.engine as unknown as { ctrl: Map<Player, { id: string; team: number; sm: { action: { clip: { name: string } } | null } }> }).ctrl;
+  const team = new Map<string, number>(); for (const c of ctl.values()) team.set(c.id, c.team);
+  let falls = 0, mates = 0;
+  sim.pw.events.on((e) => {
+    if (e.type === 'playerCollision' && team.get(e.a!) === team.get(e.b!)) mates++;
+    if (e.type === 'balanceLost') { const c = [...ctl.values()].find((x) => x.id === e.playerId); if (c?.sm.action?.clip.name === 'fall') falls++; }
+  });
+  let steps = 0;
+  while (s.phase !== 'fulltime' && steps < 340 * 60) { stepMatch(s, {}, FIXED_DT); s.events.length = 0; steps++; }
+  s.engine.dispose();
+  check('Players stay on their feet; teammates keep their distance', falls <= 6 && mates <= 30, `${falls} falls, ${mates} teammate collisions in a 4-minute match`);
 }
 
 console.log(failed ? `\n${failed} gameplay-feel check(s) failed` : '\nall gameplay-feel checks passed');

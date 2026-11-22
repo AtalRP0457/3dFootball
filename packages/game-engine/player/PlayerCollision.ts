@@ -7,6 +7,8 @@ import type { Vec2 } from '../physics/Vec3.ts';
 
 export interface CollisionBody {
   id: string;
+  /** Team index (−1 = unknown). */
+  team?: number;
   pos: Vec2;
   /** Velocity before this step's contact resolution. */
   velBefore: Vec2;
@@ -20,6 +22,9 @@ export interface CollisionBody {
   hit(severity: number, from: Vec2): void;
   setColliding(on: boolean): void;
 }
+
+/** Impulse (N·s) a player absorbs in contact without losing balance. */
+export const CONTACT_ABSORB = 100;
 
 /** Last counted impact per pair (per simulation): pressing contact is continuous, an impact is not. */
 const impactsBySim = new WeakMap<PhysicsEvents, Map<string, number>>();
@@ -49,8 +54,12 @@ export function resolvePlayerContacts(bodies: CollisionBody[], events: PhysicsEv
       events.emit({ type: 'playerCollision', a: a.id, b: b.id, impulse, time });
       const resist = (p: CollisionBody) => (0.55 + 0.6 * p.strength) * (0.6 + 0.6 * p.balanceSkill) * (p.braced ? 1.35 : 1) * (p.massKg / 75);
       const ra = resist(a), rb = resist(b);
-      // Share of the hit: the less resistant player takes more.
-      const base = impulse / 320;
+      // Share of the hit: the less resistant player takes more. Ordinary
+      // jostling (below ~100 N·s, i.e. closing at under ~2.7 m/s) is absorbed
+      // by a footballer's balance; only clearly hard impacts unsettle him.
+      // Teammates see each other coming and ride most of it.
+      const mates = a.team !== undefined && a.team >= 0 && a.team === b.team;
+      const base = (Math.max(0, impulse - CONTACT_ABSORB) / 380) * (mates ? 0.35 : 1);
       a.hit(base * (rb / (ra + rb)) * 1.6, b.pos);
       b.hit(base * (ra / (ra + rb)) * 1.6, a.pos);
     }

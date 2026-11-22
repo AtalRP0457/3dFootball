@@ -86,6 +86,37 @@ export function shotKind(type: string): KickKind {
 
 interface KickRequestArgs { command: KickCommand; kind: KickKind; vel: Vec3; commit: () => void }
 
+/**
+ * Local avoidance: a player heading into a teammate swerves round him
+ * (footballers see each other), keeping his speed. Opponents are not
+ * avoided: those contacts are part of the game. Gentler for a human's player.
+ */
+function avoidTeammates(state: MatchState, p: Player, mx: number, mz: number): { x: number; z: number } {
+  const mag = Math.hypot(mx, mz);
+  if (mag < 0.05) return { x: mx, z: mz };
+  const dx0 = mx / mag, dz0 = mz / mag;
+  let ax = 0, az = 0;
+  for (const o of state.players) {
+    if (o === p || o.team !== p.team || !o.onPitch || o.sentOff) continue;
+    const ox = o.pos.x - p.pos.x, oz = o.pos.z - p.pos.z;
+    const d = Math.hypot(ox, oz);
+    if (d > AVOID_RADIUS || d < 1e-3) continue;
+    const ahead = (ox * dx0 + oz * dz0) / d;
+    if (ahead < 0.2) continue; // only someone in front of him
+    // Step to the side he is already more on.
+    const side = dx0 * oz - dz0 * ox >= 0 ? 1 : -1;
+    const w = ((AVOID_RADIUS - d) / AVOID_RADIUS) * ahead;
+    ax += -dz0 * side * w * -1 - (ox / d) * w * 0.5;
+    az += dx0 * side * w * -1 - (oz / d) * w * 0.5;
+  }
+  if (ax === 0 && az === 0) return { x: mx, z: mz };
+  const k = p.human ? 0.5 : 1.1;
+  const nx = dx0 + ax * k, nz = dz0 + az * k;
+  const nl = Math.hypot(nx, nz) || 1;
+  return { x: (nx / nl) * mag, z: (nz / nl) * mag };
+}
+const AVOID_RADIUS = 1.8;
+
 export class MatchPhysics {
   readonly sim: Simulation;
   private readonly ctrl = new Map<Player, PlayerController>();
@@ -127,7 +158,7 @@ export class MatchPhysics {
         const nc = this.sim.addPlayer({
           id, name: p.name, number: p.number, attributes: engineAttributes(p),
           heightM: (p.identity?.heightCm ?? 180) / 100, massKg: p.identity?.weightKg ?? 75,
-          preferredFoot: p.identity?.foot === 'Left' ? 'L' : 'R', start: e, yaw: yawOf(p.face), seed: 1000 + p.id,
+          preferredFoot: p.identity?.foot === 'Left' ? 'L' : 'R', start: e, yaw: yawOf(p.face), seed: 1000 + p.id, team: p.team,
         });
         this.ctrl.set(p, nc);
         this.byId.set(id, p);
@@ -198,7 +229,8 @@ export class MatchPhysics {
         c.yaw = yawOf(p.face);
       } else {
         const it = p.intent;
-        input.move = toE({ x: it.mx, z: it.mz });
+        input.move = toE(avoidTeammates(state, p, it.mx, it.mz));
+        input.assisted = !!p.assistOnly;
         input.sprint = !!it.sprint && p.stamina > 0.05 && !p.injured;
         let scale = 1;
         if (p.injured) scale *= 0.78;

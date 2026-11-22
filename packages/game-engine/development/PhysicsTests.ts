@@ -68,7 +68,7 @@ export const CHECKS: Check[] = [
     const { sim, p } = await noBall();
     hold(sim, p, 3, { move: { x: 0, z: 1 } });
     const slide = measureSliding(sim, p, 2, { move: { x: 0, z: 1 } });
-    return { pass: p.speed >= 4.5 && p.speed <= 6.0 && slide < 0.1, detail: `${f(p.speed)} m/s, anim ${p.sm.current}, planted-foot drift ${f(slide * 100, 1)} cm` };
+    return { pass: p.speed >= 5.2 && p.speed <= 6.8 && slide < 0.1, detail: `${f(p.speed)} m/s, anim ${p.sm.current}, planted-foot drift ${f(slide * 100, 1)} cm` };
   } },
   { id: 4, name: 'Sprinting reaches 7–9 m/s', run: async () => {
     const { sim, p } = await noBall();

@@ -10,6 +10,24 @@
 import * as THREE from 'three';
 import { PITCH, HALF_L, HALF_W } from '../../game/constants.ts';
 import { MARGIN } from './pitch.js';
+import LAYOUT from './layout.json';
+
+/** Modelled stadium (Blender, tools/blender/build_stadium.py). */
+export const STADIUM_MODEL_URL = 'assets/stadium/stadium.glb';
+
+/** Aisles of a stand (along-positions, stand centre = 0); same rule as the Blender model. */
+function aislesOf(length) {
+  const out = [];
+  for (let a = -length / 2 + LAYOUT.aisleEvery; a < length / 2 - 2; a += LAYOUT.aisleEvery) out.push(a);
+  return out;
+}
+/** Entry tunnels (vomitories) cut into a lower tier: [a0, a1, row0, row1]. Same rule as the model. */
+function vomitoriesOf(length, rows) {
+  const hw = LAYOUT.aisleWidth / 2;
+  if (rows <= 14) return [];
+  return aislesOf(length).filter((_, i) => i % 2 === 1)
+    .map((a) => [a + hw + 0.05, a + hw + 2.6, Math.floor(rows / 2) - 3, Math.floor(rows / 2) + 3]);
+}
 
 function canvas(w, h) {
   const c = document.createElement('canvas');
@@ -107,7 +125,9 @@ const crowdVertex = /* glsl */ `
     float v = variant + (uExcite * joins > 0.5 ? 8.0 : 0.0);
     vUv = vec2((uv.x + v) / ${CELLS.toFixed(1)}, uv.y);
     vTint = tint;
-    vShade = 0.78 + 0.22 * fract(phase * 13.7);
+    // Fans in the upper tier sit under the roof: a little darker (depth).
+    float roofShade = 1.0 - 0.26 * smoothstep(${(LAYOUT.lower.startY + LAYOUT.lower.rows * LAYOUT.lower.rise + 1).toFixed(2)}, ${(LAYOUT.lower.startY + LAYOUT.lower.rows * LAYOUT.lower.rise + 6).toFixed(2)}, offset.y);
+    vShade = (0.78 + 0.22 * fract(phase * 13.7)) * roofShade;
     vec3 p = vec3(position.x * 0.62, (position.y + 0.5) * 1.24 * scaleH, 0.0);
     p.x += sway;
     float c = cos(rotY), s = sin(rotY);
@@ -138,13 +158,17 @@ const crowdFragment = /* glsl */ `
  * Seats for one stand as rows of spectator positions.
  * Returns an array of { x, y, z, rotY } in world space.
  */
-function seatRows({ origin, along, out, length, rows, rise, depth, startY, spacing }) {
+function seatRows({ origin, along, out, length, rows, rise, depth, startY, spacing, voms = [] }) {
   const seats = [];
   const n = Math.floor(length / spacing);
+  const aisles = aislesOf(length), hw = LAYOUT.aisleWidth / 2 + 0.15;
   for (let r = 0; r < rows; r++) {
     const d = r * depth + depth * 0.5, y = startY + r * rise;
     for (let i = 0; i < n; i++) {
       const a = -length / 2 + (i + 0.5) * spacing;
+      // Nobody sits in an aisle or an entry tunnel.
+      if (aisles.some((x) => Math.abs(a - x) < hw)) continue;
+      if (voms.some(([a0, a1, r0, r1]) => r >= r0 && r < r1 && a > a0 - 0.2 && a < a1 + 0.2)) continue;
       seats.push({
         x: origin.x + along.x * a + out.x * d,
         y,
@@ -255,8 +279,11 @@ export function buildStadium(renderer) {
   const lampMat = new THREE.MeshBasicMaterial({ color: '#fffbe8' });
   const darkMat = new THREE.MeshStandardMaterial({ color: '#15181f', roughness: 0.9 });
 
-  const sideZ = HALF_W + MARGIN + 1.2; // first row (sides)
-  const endX = HALF_L + MARGIN + 1.2; // first row (ends)
+  const structure = new THREE.Group(); // procedural fallback, hidden once the model loads
+  structure.name = 'proceduralStructure';
+  group.add(structure);
+  const sideZ = HALF_W + MARGIN + LAYOUT.frontGap; // first row (sides)
+  const endX = HALF_L + MARGIN + LAYOUT.frontGap; // first row (ends)
   const allSeats = [];
 
   // Stand definitions: origin at the front edge, `out` points away from the pitch.
@@ -270,29 +297,29 @@ export function buildStadium(renderer) {
     { origin: new THREE.Vector3(0, 0, sideZ), along: new THREE.Vector3(-1, 0, 0), out: new THREE.Vector3(0, 0, 1), length: PITCH.length + 2 * MARGIN + 6, tiers: 1 },
   ];
   // Angled corner stands close the bowl.
-  const cornerLen = 24;
+  const cornerLen = LAYOUT.cornerLength;
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     const out = new THREE.Vector3(sx, 0, sz).normalize();
     const along = new THREE.Vector3(-sz, 0, sx).normalize();
-    const origin = new THREE.Vector3(sx * (endX + 3.5), 0, sz * (sideZ + 3.5));
+    const origin = new THREE.Vector3(sx * (endX + LAYOUT.cornerInset), 0, sz * (sideZ + LAYOUT.cornerInset));
     stands.push({ origin, along, out, length: cornerLen, tiers: sz > 0 ? 1 : 2 });
   }
-  const lower = { rows: 22, rise: 0.42, depth: 0.82, startY: 1.4 };
-  const upper = { rows: 16, rise: 0.58, depth: 0.8 };
+  const lower = { ...LAYOUT.lower };
+  const upper = { ...LAYOUT.upper };
 
   for (const st of stands) {
     const yaw = Math.atan2(st.out.x, st.out.z); // local +z -> out
     const place = (mesh, d, y = 0) => {
       mesh.position.set(st.origin.x + st.out.x * d, y, st.origin.z + st.out.z * d);
       mesh.rotation.y = yaw;
-      group.add(mesh);
+      structure.add(mesh);
       return mesh;
     };
     // Lower tier.
     const lowerGeo = tierGeometry(st.length, lower.rows, lower.rise, lower.depth, lower.startY);
     const lowerMesh = place(new THREE.Mesh(lowerGeo, [seatMat, concrete]), 0);
     lowerMesh.receiveShadow = true;
-    allSeats.push(...seatRows({ ...st, ...lower, spacing: 0.55 }));
+    allSeats.push(...seatRows({ ...st, ...lower, spacing: LAYOUT.seatSpacing, voms: vomitoriesOf(st.length, lower.rows) }));
     // Front wall of the lower tier.
     const wall = new THREE.Mesh(new THREE.BoxGeometry(st.length, 1.4, 0.3), darkMat);
     place(wall, -0.15, 0.7);
@@ -309,13 +336,13 @@ export function buildStadium(renderer) {
       place(ribbon, lowerDepth - 2.85, lowerTop + 1.6);
       ribbon.rotation.y = yaw + Math.PI;
       // Upper tier, set back over the lower one.
-      const upStartY = lowerTop + 3.2;
-      const upD = lowerDepth - 1.5;
+      const upStartY = lowerTop + upper.gapY;
+      const upD = lowerDepth - upper.setBack;
       const upGeo = tierGeometry(st.length, upper.rows, upper.rise, upper.depth, 0);
       const upMesh = place(new THREE.Mesh(upGeo, [seatMat, concrete]), upD, upStartY);
       upMesh.receiveShadow = true;
       const upOrigin = st.origin.clone().addScaledVector(st.out, upD);
-      allSeats.push(...seatRows({ ...st, origin: upOrigin, ...upper, startY: upStartY, spacing: 0.55 }));
+      allSeats.push(...seatRows({ ...st, origin: upOrigin, ...upper, startY: upStartY, spacing: LAYOUT.seatSpacing }));
       // Roof canopy and floodlight strip.
       const top = upStartY + upper.rows * upper.rise + 5;
       const roofDepth = upD + upper.rows * upper.depth + 2;
@@ -331,7 +358,7 @@ export function buildStadium(renderer) {
         const col = new THREE.Mesh(new THREE.BoxGeometry(0.8, top, 0.8), steel);
         const a = (i / 2) * (st.length / 2 - 2);
         col.position.set(st.origin.x + st.along.x * a + st.out.x * roofDepth * 0.95, top / 2, st.origin.z + st.along.z * a + st.out.z * roofDepth * 0.95);
-        group.add(col);
+        structure.add(col);
       }
     }
   }
@@ -345,6 +372,9 @@ export function buildStadium(renderer) {
   geo.setAttribute('uv', quad.attributes.uv);
   const r = rng(2024);
   const seats = allSeats.filter(() => r() < 0.93); // a few empty seats
+  // Shuffle (deterministically) so drawing the first k instances is an even
+  // thinning of the crowd: the quality setting changes k, nothing else.
+  for (let i = seats.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [seats[i], seats[j]] = [seats[j], seats[i]]; }
   const n = seats.length;
   const offset = new Float32Array(n * 3), rotY = new Float32Array(n), variant = new Float32Array(n);
   const tint = new Float32Array(n * 3), phase = new Float32Array(n), scaleH = new Float32Array(n);
@@ -403,9 +433,12 @@ export function buildStadium(renderer) {
   const boardTex = ledTexture();
   const bz = HALF_W + 4.4, bx = HALF_L + 4.4;
   const longW = PITCH.length + 10, endW = PITCH.width + 4;
+  const gap = LAYOUT.tunnel.width + 1.6; // the players' tunnel comes through the near-side boards
+  const halfW = (longW - gap) / 2;
   for (const b of [
     { w: longW, pos: [0, 0.5, -bz], rot: 0 },
-    { w: longW, pos: [0, 0.5, bz], rot: Math.PI },
+    { w: halfW, pos: [-(gap / 2 + halfW / 2), 0.5, bz], rot: Math.PI },
+    { w: halfW, pos: [gap / 2 + halfW / 2, 0.5, bz], rot: Math.PI },
     { w: endW, pos: [-bx, 0.5, 0], rot: Math.PI / 2 },
     { w: endW, pos: [bx, 0.5, 0], rot: -Math.PI / 2 },
   ]) {
@@ -430,6 +463,125 @@ export function buildStadium(renderer) {
   surround.receiveShadow = true;
   group.add(surround);
 
+  // ---------- big screens (live canvas: teams, score, clock) ----------
+  const [screenCanvas, sg] = canvas(768, 414);
+  const screenTex = new THREE.CanvasTexture(screenCanvas);
+  screenTex.colorSpace = THREE.SRGBColorSpace;
+  screenTex.anisotropy = 8;
+  let screenKey = '';
+  function drawScreen(info = {}) {
+    const key = JSON.stringify(info);
+    if (key === screenKey) return;
+    screenKey = key;
+    const W = screenCanvas.width, H = screenCanvas.height;
+    const grd = sg.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, '#0b1d4d'); grd.addColorStop(1, '#050a1c');
+    sg.fillStyle = grd; sg.fillRect(0, 0, W, H);
+    sg.fillStyle = '#facc15'; sg.fillRect(0, 0, W, 10);
+    sg.textAlign = 'center'; sg.textBaseline = 'middle';
+    sg.fillStyle = '#9fb3d9'; sg.font = '700 34px Arial, sans-serif';
+    sg.fillText((info.title || 'FUTBOL SUPER LEAGUE').toUpperCase(), W / 2, 52);
+    sg.fillStyle = '#ffffff'; sg.font = '900 64px "Arial Black", Arial, sans-serif';
+    const fit = (t, y, max) => { const w = sg.measureText(t).width; sg.save(); sg.translate(W / 2, y); sg.scale(Math.min(1, max / w), 1); sg.fillText(t, 0, 0); sg.restore(); };
+    fit(`${info.home || 'HOME'}  ${info.score || '0 - 0'}  ${info.away || 'AWAY'}`.toUpperCase(), 190, W - 40);
+    sg.fillStyle = '#facc15'; sg.font = '800 54px Arial, sans-serif';
+    sg.fillText(info.clock || '', W / 2, 300);
+    sg.fillStyle = 'rgba(0,0,0,0.22)';
+    for (let x = 0; x < W; x += 4) sg.fillRect(x, 0, 1, H);
+    for (let y = 0; y < H; y += 4) sg.fillRect(0, y, W, 1);
+    screenTex.needsUpdate = true;
+  }
+  drawScreen();
+
+  // ---------- modelled stadium (Blender GLB) ----------
+  const model = { loaded: false, glow: null, lampSites: [] };
+  const glowMap = (() => {
+    const [c, g] = canvas(64, 64);
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, 'rgba(255,250,232,1)'); grd.addColorStop(0.25, 'rgba(255,246,220,0.55)'); grd.addColorStop(1, 'rgba(255,240,210,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  })();
+  /**
+   * Load the Blender stadium. On success the procedural stands/roof are
+   * hidden (crowd, boards, pitch surround and sky stay); on any failure the
+   * procedural stadium simply remains, so the game always starts.
+   */
+  async function loadModel(baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || '/') {
+    if (model.loaded) return true;
+    try {
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+      const gltf = await new GLTFLoader().loadAsync(`${baseUrl}${STADIUM_MODEL_URL}`);
+      const root = gltf.scene;
+      root.name = 'stadiumModel';
+      const sites = [];
+      root.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = false; o.receiveShadow = false;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (!m) continue;
+          if (m.name === 'Lamp') { m.emissiveIntensity = 2.2; m.toneMapped = false; }
+          if (m.name === 'Glass') { m.transparent = true; m.depthWrite = false; }
+        }
+        if (o.name.startsWith('Screen_A') || o.name.startsWith('Screen_B')) {
+          if (!o.name.endsWith('Frame') && !(o.parent?.name || '').endsWith('Frame')) {
+            o.material = new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false });
+          }
+        }
+        if (o.name.startsWith('LED_Ribbon') || (o.parent?.name || '').startsWith('LED_Ribbon')) {
+          const t = ledTexture(); t.wrapS = THREE.RepeatWrapping;
+          o.material = new THREE.MeshBasicMaterial({ map: t, toneMapped: false });
+          o.userData.scroll = t;
+        }
+        // Floodlight glow sites: centres of the lit lamp faces.
+        const lampIdx = mats.findIndex((m) => m?.name === 'Lamp');
+        if (lampIdx >= 0 && (o.name.startsWith('Lamps') || o.name.startsWith('Masts') || (o.parent?.name || '').match(/^(Lamps|Masts)/))) {
+          o.updateWorldMatrix(true, false);
+          const geo = o.geometry, pos = geo.attributes.position, idx = geo.index;
+          const grp = geo.groups.length ? geo.groups.filter((g) => (g.materialIndex ?? 0) === lampIdx) : [{ start: 0, count: idx ? idx.count : pos.count }];
+          const v = new THREE.Vector3();
+          for (const g of grp) {
+            for (let k = g.start; k + 5 < g.start + g.count; k += 6) {
+              const c = new THREE.Vector3();
+              for (let q = 0; q < 6; q++) c.add(v.fromBufferAttribute(pos, idx ? idx.getX(k + q) : k + q));
+              sites.push(c.multiplyScalar(1 / 6).applyMatrix4(o.matrixWorld));
+            }
+          }
+        }
+      });
+      group.add(root);
+      structure.visible = false;
+      // Floodlight glow: one draw call of additive sprites over the lamps
+      // (only the roof/mast floodlights, not the concourse doorways).
+      const lamps = sites.filter((p) => p.y > 15);
+      model.lampSites = lamps;
+      if (lamps.length) {
+        const gg = new THREE.BufferGeometry().setFromPoints(lamps);
+        const glow = new THREE.Points(gg, new THREE.PointsMaterial({
+          map: glowMap, size: 7, sizeAttenuation: true, transparent: true, depthWrite: false,
+          blending: THREE.AdditiveBlending, toneMapped: false, fog: false, opacity: 0.55,
+        }));
+        glow.name = 'floodlightGlow';
+        group.add(glow);
+        model.glow = glow;
+      }
+      root.traverse((o) => { if (o.userData.scroll) scrolling.push(o.userData.scroll); });
+      model.loaded = true;
+      return true;
+    } catch (err) {
+      console.warn('[stadium] model not loaded, using the procedural stadium:', err?.message || err);
+      return false;
+    }
+  }
+
+  /** Quality: crowd density and optional floodlight glow. */
+  function setQuality(q = 'high') {
+    const density = q === 'low' ? 0.45 : q === 'medium' ? 0.75 : 1;
+    geo.instanceCount = Math.max(1, Math.floor(n * density));
+    if (model.glow) model.glow.visible = q !== 'low';
+  }
+
   const scrolling = [];
   group.traverse((o) => { if (o.userData.scroll) scrolling.push(o.userData.scroll); });
   let time = 0;
@@ -439,6 +591,11 @@ export function buildStadium(renderer) {
     crowd,
     spectators: n,
     setColors,
+    loadModel,
+    setQuality,
+    /** Big-screen content: { title, home, away, score, clock }. */
+    setScreen: drawScreen,
+    get modelLoaded() { return model.loaded; },
     /** excite: 0 calm .. 1 goal celebration. */
     update(dt, targetExcite = 0) {
       time += dt;

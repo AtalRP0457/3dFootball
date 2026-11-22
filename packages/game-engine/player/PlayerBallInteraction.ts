@@ -328,7 +328,9 @@ export class PlayerBallInteraction {
     const header = plan.kind === 'header';
     const pt = header ? headWorld(a.pose, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims) : footWorld(a.pose, plan.foot, { x: a.pos.x, y: 0, z: a.pos.z }, a.yaw, a.dims);
     const gap = Math.hypot(b.x - pt.x, b.y - pt.y, b.z - pt.z) - this.cal.ball.radius;
-    const reach = header ? 0.34 : 0.36;
+    // A first-time strike may stretch for the ball (contact quality still
+    // drops with the gap, so a stretched one-touch is less accurate).
+    const reach = header ? 0.34 : planIn.firstTime ? 0.5 : 0.36;
     const shot = plan.command === 'shot';
     if (gap > reach) {
       this.lastContact = { playerId: a.id, action: plan.kind, hit: false, gap, quality: 0, time };
@@ -470,7 +472,7 @@ export class PlayerBallInteraction {
         const bs = Math.hypot(b.velocity.x, b.velocity.z);
         // Match the ball to where the slowing player will be, so it stays just ahead.
         const pr = a.predict(0.45);
-        const sp = Math.max(0, pr.speed + 0.35);
+        const sp = Math.max(0, pr.speed + 0.6);
         if (bs > sp + 0.3) this.queueTouch(a, { x: pr.dir.x * sp, z: pr.dir.z * sp }, L.left > 0 ? 'L' : 'R', 'inside', 'stop', time);
       }
       if (this.state !== 'ControlledDribbling') this.setState('ControlledDribbling', a.id, 'holding the ball', time);
@@ -601,13 +603,18 @@ export class PlayerBallInteraction {
     const hard = clamp((relSpeed - 5) / 20, 0, 1) + clamp((b.position.y - 0.45) / 1.2, 0, 1) * 0.5;
     const miss = (1 - a.tuning.touchControl) * (0.4 + hard);
     const stick = a.stick();
-    const dir = Math.hypot(stick.x, stick.z) > 0.1 ? norm2(stick) : dirOf(a.yaw);
-    const push = 0.6 + 0.8 * Math.hypot(stick.x, stick.z);
+    const steering = Math.hypot(stick.x, stick.z) > 0.1;
+    const dir = steering ? norm2(stick) : dirOf(a.yaw);
+    const push = steering ? 0.6 + 0.8 * Math.hypot(stick.x, stick.z) : 0.4;
     const noise = gauss(a);
+    // With the stick: a directional touch at his pace along it. Without: the
+    // ball is cushioned dead just in front of him (it keeps only part of his
+    // momentum), instead of being carried on at full running speed.
+    const carry = steering ? 1 : 0.75;
     const vel: Vec3 = {
-      x: a.vel.x + dir.x * push + rel.x * miss * 0.3 + noise * miss * 0.6,
+      x: a.vel.x * carry + dir.x * push + rel.x * miss * 0.3 + noise * miss * 0.6,
       y: Math.max(0, b.velocity.y * 0.15),
-      z: a.vel.z + dir.z * push + rel.z * miss * 0.3 + noise * miss * 0.6,
+      z: a.vel.z * carry + dir.z * push + rel.z * miss * 0.3 + noise * miss * 0.6,
     };
     this.lastTouchAt = time;
     this.lastTouchFoot = foot;

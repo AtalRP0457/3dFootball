@@ -1,0 +1,17 @@
+{
+  "_comment": "Shared stadium layout (metres, three.js axes: x along the pitch, y up, z across). Read by tools/blender/build_stadium.py (modelling) and src/render/stadium/stadium.js (crowd seats, fallback geometry). Change it in one place and rebuild the GLB.",
+  "pitch": { "length": 105, "width": 68, "margin": 6 },
+  "frontGap": 1.2,
+  "lower": { "rows": 22, "rise": 0.42, "depth": 0.82, "startY": 1.4 },
+  "upper": { "rows": 16, "rise": 0.58, "depth": 0.8, "gapY": 3.2, "setBack": 1.5 },
+  "seatSpacing": 0.55,
+  "aisleEvery": 12,
+  "aisleWidth": 1.2,
+  "cornerLength": 24,
+  "cornerInset": 3.5,
+  "standExtra": 6,
+  "roof": { "clearance": 5, "frontOverhang": 6, "backExtra": 2, "trussEvery": 12 },
+  "tunnel": { "x": 0, "width": 4.2, "height": 2.7 },
+  "dugouts": [-13, 13],
+  "screens": { "width": 13, "height": 7 }
+}

@@ -142,6 +142,25 @@ export function createRenderer(canvasEl) {
   scene.add(buildPitch(renderer));
   const arena = buildArena(renderer);
   scene.add(arena.group);
+  // The modelled (Blender) stadium replaces the procedural stands when it
+  // loads; until then, or if it fails, the procedural one is shown.
+  arena.loadModel().then((ok) => { if (ok) renderer.shadowMap.needsUpdate = true; });
+
+  // Graphics quality: resolution, shadow detail, crowd density, glow.
+  let graphics = 'high';
+  function setGraphics(q = 'high') {
+    graphics = ['low', 'medium', 'high'].includes(q) ? q : 'high';
+    const pr = graphics === 'low' ? 1 : graphics === 'medium' ? 1.5 : 2;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, pr));
+    const map = graphics === 'low' ? 1024 : graphics === 'medium' ? 2048 : 3072;
+    if (sun.shadow.mapSize.x !== map) {
+      sun.shadow.mapSize.set(map, map);
+      sun.shadow.map?.dispose(); sun.shadow.map = null;
+    }
+    renderer.shadowMap.type = graphics === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    arena.setQuality(graphics);
+    resize();
+  }
   buildGoal(scene, -1);
   buildGoal(scene, 1);
 
@@ -236,7 +255,9 @@ export function createRenderer(canvasEl) {
   const camLook = new THREE.Vector3();
   let time = 0;
 
+  let stadiumName = '';
   function setMatch(state) {
+    stadiumName = state.stadium || state.teams[0].data.stadium || '';
     arenaGlow.visible = !!state.indoor;
     scene.background.set(state.indoor ? '#071329' : '#b9d4ee');
     scene.fog.color.set(state.indoor ? '#071329' : '#b9d4ee');
@@ -406,13 +427,107 @@ export function createRenderer(canvasEl) {
   }
   let lastCamMode = 'live';
 
+  // ---------- pre-match intro: a short, skippable broadcast sequence ----------
+  // Same stadium, same player models; the match itself waits (main.js does
+  // not step it) until the intro ends or is skipped.
+  const INTRO_SHOTS = [
+    { name: 'establish', dur: 2.8, players: 'hidden' },
+    { name: 'tunnel', dur: 2.0, players: 'hidden' },
+    { name: 'walkout', dur: 2.8, players: 'walkout' },
+    { name: 'faces', dur: 2.4, players: 'lineup' },
+    { name: 'boots', dur: 1.4, players: 'lineup' },
+    { name: 'lineup', dur: 2.2, players: 'lineup', caption: true },
+    { name: 'kickoff', dur: 2.4, players: 'field', caption: true },
+  ];
+  const TUNNEL_Z = HALF_W + 2.6; // mouth of the players' tunnel (stadium layout)
+  let intro = null;
+  let introEnded = false;
+  const ease = (x) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
+  const mixV = (a, b, t) => V(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+  function playIntro() { intro = { shot: 0, shotT: 0, total: 0 }; introEnded = false; }
+  function skipIntro() { if (!intro) return false; intro = null; introEnded = true; return true; }
+  /** Intro camera for the current shot (smooth eased paths inside each shot; cuts between shots). */
+  function introCamera(state) {
+    const sh = INTRO_SHOTS[intro.shot], u = ease(intro.shotT / sh.dur);
+    switch (sh.name) {
+      case 'establish': {
+        const a = -2.5 + 0.75 * u, r = 150 - 30 * u;
+        return { pos: V(Math.cos(a) * r, 70 - 26 * u, Math.sin(a) * r * 0.85), look: V(0, 4, 0), fov: 46 };
+      }
+      case 'tunnel':
+        // From high over the pitch down to tunnel level, staying in front of the stand.
+        return { pos: mixV([30, 22, 6], [6.5, 2.4, TUNNEL_Z - 8], u), look: mixV([0, 3, 30], [0, 1.6, TUNNEL_Z + 1.5], u), fov: 44 - 6 * u };
+      case 'walkout':
+        return { pos: mixV([2.6, 1.6, TUNNEL_Z - 7.5], [2.2, 1.7, TUNNEL_Z - 10.5], u), look: mixV([0, 1.5, TUNNEL_Z], [0, 1.5, TUNNEL_Z - 3], u), fov: 40 };
+      case 'faces': {
+        const x = -2 - 7 * u;
+        return { pos: V(x, 1.78, 5.0), look: V(x - 0.6, 1.7, 2.2), fov: 30 };
+      }
+      case 'boots': {
+        const x = 2 + 6 * u;
+        return { pos: V(x, 0.42, 4.1), look: V(x + 0.6, 0.25, 2.2), fov: 42 };
+      }
+      case 'lineup':
+        return { pos: mixV([0, 3.2, 15], [0, 5.5, 22], u), look: V(0, 1.3, 2.2), fov: 44 };
+      default: { // kickoff: sweep from the side to the gameplay camera
+        const g = cameraTarget(state, 0);
+        return { pos: mixV([-34, 16, 42], [g.pos.x, g.pos.y, g.pos.z], u), look: mixV([0, 0, 0], [g.look.x, g.look.y, g.look.z], u), fov: 44 + (g.fov - 44) * u };
+      }
+    }
+  }
+  /** Where a player stands in the walk-out / line-up shots (null: his real position). */
+  const introOrder = new Map();
+  function introPlace(state, p, mode) {
+    if (mode === 'field') return null;
+    if (!introOrder.size) {
+      for (const team of [0, 1]) {
+        state.players.filter((q) => q.team === team && q.onPitch && !q.sentOff)
+          .sort((a, b) => (a.role === 'GK' ? -1 : b.role === 'GK' ? 1 : a.idx - b.idx))
+          .forEach((q, k) => introOrder.set(q, k));
+      }
+    }
+    const k = introOrder.get(p) ?? 0, side = p.team === 0 ? -1 : 1;
+    if (mode === 'hidden') return { hidden: true };
+    if (mode === 'walkout') {
+      const s = intro.shotT * 1.45 + 3.0 - k * 1.7;
+      const z = TUNNEL_Z + 1.2 - s;
+      return { x: side * 0.85, z, yaw: Math.PI, walk: 1.45, hidden: z > TUNNEL_Z + 3 };
+    }
+    return { x: side * (1.3 + k * 1.05), z: 2.2, yaw: 0, walk: 0 };
+  }
+
   function update(state, dt, alpha = 1, view = null) {
     time += dt;
+    // Advance the intro (real time); its last shot hands over to the match camera.
+    if (intro) {
+      intro.shotT += dt; intro.total += dt;
+      while (intro && intro.shotT >= INTRO_SHOTS[intro.shot].dur) {
+        intro.shotT -= INTRO_SHOTS[intro.shot].dur;
+        intro.shot++;
+        if (intro.shot >= INTRO_SHOTS.length) { intro = null; introEnded = true; }
+      }
+    }
+    if (introEnded) { introEnded = false; introOrder.clear(); snapCamera(state); }
+    const introMode = intro ? INTRO_SHOTS[intro.shot].players : 'field';
     // Players
     state.players.forEach((p, i) => {
       const m = playerMeshes[i];
       if (!m) return;
       m.root.visible = p.onPitch && !p.sentOff;
+      const ip = m.root.visible && intro ? introPlace(state, p, introMode) : null;
+      if (ip) {
+        m.root.visible = !ip.hidden;
+        if (ip.hidden) return;
+        m.root.position.set(ip.x, 0, ip.z);
+        m.root.rotation.set(0, ip.yaw, 0);
+        m.posed = false;
+        m.character.mesh.rotation.x = 0; m.character.mesh.rotation.z = 0;
+        const fake = { ...p, vel: { x: 0, z: ip.yaw === Math.PI ? -ip.walk : ip.walk }, face: { x: Math.sin(ip.yaw), z: Math.cos(ip.yaw) },
+          dive: 0, holding: false, throwIn: false, mustPass: false, kickAnim: 0, touchAnim: 0, stun: 0, acc: { x: 0, z: 0 } };
+        m.character.update(dt, fake, { owner: false, keeperAlert: false, celebration: null, id: p.id, yawRate: 0 });
+        for (const o of m.character.detail || []) o.visible = true;
+        return;
+      }
       const pa = blendable(p.prevPos, p.pos) ? alpha : 1;
       m.root.position.set(lerpPos(p.prevPos, p.pos, pa, 'x'), 0, lerpPos(p.prevPos, p.pos, pa, 'z'));
       m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
@@ -513,7 +628,7 @@ export function createRenderer(canvasEl) {
     // Broadcast-style markers: only the player you control gets a ring and
     // the arrow overhead; the next player gets a small marker; a player you
     // can tackle flashes. Computer-controlled players are left clean.
-    const live = state.phase !== 'fulltime' && state.phase !== 'goal';
+    const live = !intro && state.phase !== 'fulltime' && state.phase !== 'goal';
     nextMarker.visible = false;
     state.players.forEach((p, i) => {
       const m = playerMeshes[i];
@@ -563,7 +678,8 @@ export function createRenderer(canvasEl) {
     // Camera: broadcast play, celebration close-up, or the replay director.
     let t = null;
     let mode = 'live';
-    if (view?.replay) { t = replayCamera(state, view.replay); mode = 'replay'; }
+    if (intro) { t = introCamera(state); mode = 'intro'; camPos.copy(t.pos); camLook.copy(t.look); }
+    else if (view?.replay) { t = replayCamera(state, view.replay); mode = 'replay'; }
     else if (state.phase === 'goal') { t = celebrationCamera(state); if (t) mode = 'celebration'; }
     const camDt = view?.realDt ?? dt;
     if (!t) t = cameraTarget(state, camDt);
@@ -577,12 +693,23 @@ export function createRenderer(canvasEl) {
     sun.position.copy(sun.target.position).add(SUN_OFFSET);
     // The crowd erupts after a goal and settles again.
     arena.update(view?.realDt ?? dt, state.phase === 'goal' || view?.replay ? 1 : 0);
+    // Big screens: teams, score and the broadcast clock (redrawn only on change).
+    if (!state.indoor) {
+      const reg = state.regulationDuration || state.duration;
+      const total = Number.isFinite(reg) ? Math.max(0, (state.clock / reg) * 90 * 60) : 0;
+      const t0 = state.teams[0].data, t1 = state.teams[1].data;
+      arena.setScreen({
+        title: stadiumName || 'Futbol Super League',
+        home: t0.name, away: t1.name, score: `${state.teams[0].score} - ${state.teams[1].score}`,
+        clock: `${String(Math.floor(total / 60)).padStart(2, '0')}'`,
+      });
+    }
     const k = 1 - Math.exp(-camDt * (t.rate || 3.2));
     camPos.lerp(t.pos, k);
     camLook.lerp(t.look, k);
     // The smoothing lags a fast ball; never let it leave the frame. If it gets
     // past the limits around the look point, carry the camera with it.
-    if (mode !== 'replay' && state.ball) {
+    if (mode === 'live' && state.ball) {
       const bp = state.ball.pos, depth = Math.max(4, camPos.z - camLook.z);
       const lim = (v, lo, hi) => (v < lo ? v - lo : v > hi ? v - hi : 0);
       const ex = lim(bp.x - camLook.x, -depth * 0.5, depth * 0.5);
@@ -609,7 +736,26 @@ export function createRenderer(canvasEl) {
   resize();
 
   return {
-    setMatch, update, resize, cycleCamera, setCamera,
+    setMatch, update, resize, cycleCamera, setCamera, setGraphics, playIntro, skipIntro,
+    get introActive() { return !!intro; },
+    /** Dev/testing: jump to a shot (name) at a fraction of it. */
+    introSeek(name, frac = 0.5) {
+      const i = INTRO_SHOTS.findIndex((s) => s.name === name);
+      if (i < 0) return false;
+      if (!intro) playIntro();
+      intro.shot = i; intro.shotT = INTRO_SHOTS[i].dur * frac;
+      return true;
+    },
+    /** Intro progress for the overlay: { shot, caption, fade 0..1 } or null. */
+    get introInfo() {
+      if (!intro) return null;
+      const sh = INTRO_SHOTS[intro.shot];
+      const fade = intro.shot === 0 ? Math.max(0, 1 - intro.shotT / 0.8) : Math.max(0, 1 - intro.shotT / 0.3);
+      return { shot: sh.name, caption: !!sh.caption, fade, total: INTRO_SHOTS.reduce((a, b) => a + b.dur, 0), t: intro.total };
+    },
+    get graphics() { return graphics; },
+    /** The stadium (for the intro director and debugging). */
+    arena,
     get cameraMode() { return camMode; },
     get cameraZoom() { return camZoom; },
     /** Live camera state (read-only; for debugging and tests). */

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "stadium:build": "/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python tools/blender/build_stadium.py",
     "prebuild": "tsx scripts/generate-assets.mjs",
     "preview": "vite preview",
     "assets": "tsx scripts/generate-assets.mjs",

@@ -74,6 +74,8 @@ export type MovementState =
 export interface PlayerInput {
   /** Desired movement direction in world space, magnitude 0..1. */
   move: Vec2;
+  /** `move` comes from assistance (e.g. meeting a pass), not the user's stick. */
+  assisted?: boolean;
   sprint: boolean;
   /** Slow modifiers. */
   jog: boolean;

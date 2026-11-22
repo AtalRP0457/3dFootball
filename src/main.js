@@ -33,6 +33,8 @@ const DEFAULT_SETTINGS = {
   dribbleStyle: 'sticky',
   physics: 'engine', // engine (Gold Standard: Rapier, shared player controller) | classic
   camera: 'broadcast', // broadcast | close | wide
+  graphics: 'high', // low | medium | high
+  intro: 'on', // pre-match intro sequence
   cameraZoom: 1, // 0.8 … 1.3 (1 = default framing)
 };
 const SETTINGS_KEY = 'legends-settings';
@@ -69,6 +71,8 @@ function loadSettings() {
       ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
       ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
       ...pick('camera', CAMERA_ORDER),
+      ...pick('graphics', ['low', 'medium', 'high']),
+      ...pick('intro', ['on', 'off']),
       ...(saved && Number(saved.cameraZoom) >= 0.7 && Number(saved.cameraZoom) <= 1.5 ? { cameraZoom: Number(saved.cameraZoom) } : {}),
     };
   } catch {
@@ -78,7 +82,10 @@ function loadSettings() {
 
 function persistSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  applyGraphics();
 }
+/** Push the graphics quality to the renderer (set once it exists). */
+let applyGraphics = () => {};
 
 // Developer options are remembered between visits (when the browser allows).
 // The game runs in real time by default (100 %); the slider still slows it
@@ -97,6 +104,8 @@ function saveDev() {
 }
 
 const renderer = createRenderer($('game'));
+applyGraphics = () => { if (renderer.graphics !== settings.graphics) renderer.setGraphics(settings.graphics); };
+renderer.setGraphics(settings.graphics);
 mountHud($('hudRoot'));
 const input = new Input();
 const touchInput = { mx: 0, mz: 0, sprint: false, passPressed: false, shootHeld: false, shootPressed: false };
@@ -1078,6 +1087,7 @@ function startMatch() {
   renderer.setCamera({ mode: CAMERA_ORDER.includes(settings.camera) ? settings.camera : CAMERA_DEFAULTS.mode, zoom: Number(settings.cameraZoom) || 1 });
   renderer.setMatch(match);
   $('game').style.filter = eraFilter(home, away);
+  maybePlayIntro(match, home, away);
 
   startHud(match);
   try { history.pushState({ screen: 'match' }, '', '#/match'); } catch { /* sandboxed frames */ }
@@ -1162,6 +1172,11 @@ window.addEventListener('keydown', (e) => {
   }
   if (!match) {
     frontend.handleKey(e);
+    return;
+  }
+  if (renderer.introActive && ['Enter', 'NumpadEnter', 'Space', 'Escape'].includes(e.code)) {
+    e.preventDefault();
+    skipIntro();
     return;
   }
   if (e.code === 'Escape' || e.code === 'KeyP') {
@@ -1524,6 +1539,37 @@ function showFullTime() {
   $('fulltime').classList.remove('hidden');
 }
 
+// ---------- pre-match intro ----------
+// Plays once per fixture (a rematch of the same teams goes straight to
+// kick-off), never in practice, drills, penalties or indoor games.
+let lastIntroKey = null;
+function maybePlayIntro(m, home, away) {
+  const key = `${home.id}|${away.id}`;
+  const skipMode = ['practice', 'tutorial', 'penalties', 'indoor'].includes(settings.mode) || m.practice || m.indoor || drill;
+  if (settings.intro === 'off' || skipMode || key === lastIntroKey) { lastIntroKey = key; return; }
+  lastIntroKey = key;
+  $('icHome').textContent = home.name;
+  $('icAway').textContent = away.name;
+  $('icStadium').textContent = home.stadium || '';
+  renderer.playIntro();
+}
+function skipIntro() {
+  if (!renderer.skipIntro()) return false;
+  input.endStep(); // the skip press must not also pass or shoot
+  return true;
+}
+function updateIntroOverlay() {
+  const ii = match ? renderer.introInfo : null;
+  const el = $('introOverlay');
+  if (!el) return;
+  el.classList.toggle('hidden', !ii);
+  document.body.classList.toggle('intro-on', !!ii);
+  if (!ii) return;
+  $('introFade').style.opacity = ii.fade.toFixed(3);
+  $('introCaption').classList.toggle('show', ii.caption);
+}
+$('introOverlay')?.addEventListener('click', () => skipIntro());
+
 // ---------- main loop ----------
 let last = performance.now();
 function frame(now) {
@@ -1533,8 +1579,11 @@ function frame(now) {
 
   if (match) {
     input.pollPads();
-    if (input.padStartPressed() && match.phase !== 'fulltime') { setPaused(!paused); input.endStep(); }
-    const blocked = paused || !!replayFrames || isOpen('tutorial') || isOpen('devPanel');
+    if (renderer.introActive) {
+      // Start or A skips the intro (and is not passed on to the match).
+      if (input.padStartPressed() || Object.values(input.padPressed).some((b) => b && b[0])) skipIntro();
+    } else if (input.padStartPressed() && match.phase !== 'fulltime') { setPaused(!paused); input.endStep(); }
+    const blocked = paused || !!replayFrames || isOpen('tutorial') || isOpen('devPanel') || renderer.introActive;
     if (!blocked) {
       acc += dt;
       const twoPlayer = settings.mode === '2p';
@@ -1565,7 +1614,7 @@ function frame(now) {
     }
     let renderState = match;
     let alpha = !blocked ? Math.min(1, acc / FIXED_DT) : 1;
-    let renderDt = blocked && !replayFrames ? 0 : dt;
+    let renderDt = blocked && !replayFrames && !renderer.introActive ? 0 : dt;
     let view = null;
     if (replayFrames) {
       const rate = paused ? 0 : replayRate(replayElapsed);
@@ -1579,6 +1628,7 @@ function frame(now) {
     }
     // Interpolate between the last two physics steps (or replay snapshots).
     renderer.update(renderState, renderDt, alpha, view);
+    updateIntroOverlay();
     updateHud(dt);
   } else {
     renderer.renderIdle(dt);

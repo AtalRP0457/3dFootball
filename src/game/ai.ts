@@ -46,6 +46,23 @@ export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
   return predictBall(b, 3);
 }
 
+/**
+ * Where a receiver should take a pass: he comes towards the ball at a firm
+ * jog, meeting it at the earliest point of its path he reaches at that pace
+ * (not a sprint into it, which overruns, and not standing waiting). Returns
+ * the point and the time the ball gets there.
+ */
+export function receivePoint(p: Player, b: Ball, reachH = 1.3): { x: number; z: number; t: number } {
+  const pace = Math.min(runSpeed(p) * 0.6, 3.8);
+  for (let t = 0.05; t <= 3 + 1e-9; t += 0.05) {
+    const q = predictBall(b, t);
+    if ((q.y ?? 0) > reachH) continue;
+    if (dist(p.pos, q) <= pace * t + 0.7) return { x: q.x, z: q.z, t };
+  }
+  const q = interceptPoint(p, b, reachH);
+  return { x: q.x, z: q.z, t: 1 };
+}
+
 function setMove(p: Player, tx: number, tz: number, sprint: boolean = false, slowRadius: number = 1.5) {
   const dx = tx - p.pos.x, dz = tz - p.pos.z;
   const d = len(dx, dz);
@@ -238,11 +255,13 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
       ax = clamp(hx + bax * 0.5 + 5 + tacticalPush * 3, -HALF_L + 6, Math.max(-HALF_L + 6, bax - 4));
       az = hz + baz * 0.2;
     } else if (p.role === 'MID') {
-      ax = clamp(bax + 3 + tacticalPush * 5, -HALF_L + 10, HALF_L - 8);
-      az = (baz > 0 ? -7 : 7) + wobble;
+      // Each midfielder keeps his own lane (formation slot), shifted towards
+      // the ball side, so they offer different angles instead of one spot.
+      ax = clamp(bax + 3 + (hx + HALF_L * 0.2) * 0.35 + tacticalPush * 5, -HALF_L + 10, HALF_L - 8);
+      az = hz * 0.95 + baz * 0.3 + wobble * 0.6;
     } else {
       ax = clamp(Math.max(bax + 9, hx + 8) + tacticalPush * 6, -HALF_L + 10, HALF_L - 5);
-      az = -baz * 0.45 + wobble * 1.5;
+      az = hz * 0.8 - baz * 0.15 + wobble;
       sprint = ax - p.pos.x * dir > 6;
     }
   } else {
@@ -269,15 +288,24 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
       sprint = bax < p.pos.x * dir;
     } else if (p.role === 'MID') {
       ax = clamp(bax - 6 + tacticalPush * 5, -HALF_L + 8, HALF_L - 15);
-      az = baz * 0.6;
+      az = hz * 0.75 + baz * 0.4;
     } else {
       ax = clamp(bax * 0.4 + 4 + tacticalPush * 7, -10, 18);
       az = baz * 0.3 + hz;
     }
   }
+  // Spacing: never pick a spot on top of a teammate.
+  for (const o of state.players) {
+    if (o === p || o.team !== p.team || !o.onPitch || o.sentOff || o.role === 'GK') continue;
+    const ox = o.pos.x * dir, oz = o.pos.z * dir;
+    const d = len(ax - ox, az - oz);
+    if (d < SPACING && d > 1e-3) { const k = (SPACING - d) / d; ax += (ax - ox) * k * 0.6; az += (az - oz) * k * 0.6; }
+  }
   az = clamp(az, -HALF_W + 2, HALF_W - 2);
   setMove(p, ax * dir, az * dir, sprint, 2);
 }
+/** Minimum gap (m) an off-ball player keeps from teammates' positions. */
+const SPACING = 5;
 
 /**
  * AI shot selection: low and placed up close, finesse from an angle, a chip
@@ -313,6 +341,10 @@ function passKind(state: MatchState, p: Player, target: Player): PassKind | unde
 
 // ---------- outfield, with the ball ----------
 function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
+  // A new possession if he wasn't on the ball a moment ago.
+  if (p.aiHoldAt === undefined || state.clock - p.aiHoldAt > 0.2) p.aiHold = 0;
+  p.aiHoldAt = state.clock;
+  p.aiHold = (p.aiHold ?? 0) + dt;
   const dir = team.dir;
   const goalX = HALF_L * dir;
   const it = p.intent;
@@ -367,9 +399,11 @@ function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
   }
 
   const dGoal = len(goalX - p.pos.x, p.pos.z);
-  if (dGoal < 22 && Math.abs(p.pos.z) < 15) {
+  const wideShot = Math.abs(p.pos.z) >= 15 && Math.abs(p.pos.z) < 20 && dGoal < 18; // from an angle, closer in
+  if (dGoal < 22 && (Math.abs(p.pos.z) < 15 || wideShot)) {
     const tacticBias = team.tactic === 'attacking' ? 0.12 : team.tactic === 'defensive' ? -0.08 : 0;
-    const prob = clamp((dGoal < 11 ? 0.85 : dGoal < 16 ? 0.45 : 0.15) + tacticBias, 0.05, 0.95);
+    // In range a forward should shoot rather than keep recycling the ball.
+    const prob = clamp((wideShot ? 0.2 : dGoal < 11 ? 0.85 : dGoal < 16 ? 0.55 : 0.25) + tacticBias, 0.05, 0.95);
     if (Math.random() < prob) {
       const gk = state.players.find((o) => o.team !== p.team && o.onPitch && !o.sentOff && o.role === 'GK');
       const away = gk && gk.pos.z > 0 ? -1 : 1;
@@ -385,7 +419,13 @@ function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
 
   const bp = bestPass(state, p);
   if (!bp) return;
-  if ((press < 2.6 && Math.random() < 0.6) || (bp.score > 7 && Math.random() < 0.3)) {
+  // Keep the ball moving: pressure, a good option, or simply having had it
+  // a while all make a pass more likely (no endless solo dribbles).
+  // Near goal he may carry it on towards a shot instead.
+  // (Not a reason for an unpressured back-pass to the keeper.)
+  const held = bp.target.role === 'GK' ? 0 : Math.min(1, (p.aiHold ?? 0) / 2.5) * (dGoal < 30 ? 0.35 : 1);
+  const urge = (press < 2.6 ? 0.6 : press < 4.5 ? 0.3 : 0) + (bp.score > 7 ? 0.3 : bp.score > 4 ? 0.15 : 0) + held * 0.45;
+  if (Math.random() < Math.min(0.9, urge)) {
     it.action = { type: 'pass', target: bp.target, kind: passKind(state, p, bp.target) };
   }
 }

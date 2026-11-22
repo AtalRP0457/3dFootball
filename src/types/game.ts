@@ -151,6 +151,10 @@ export interface Player {
   chargeType?: ShotType | null;
   dive: number;
   aiTimer: number;
+  /** AI: seconds on the ball in the current possession (raises pass urgency). */
+  aiHold?: number;
+  /** Match clock when aiHold was last advanced. */
+  aiHoldAt?: number;
   lastShotChecked: number;
   kickAnim: number;
   kickType?: string;
@@ -162,6 +166,8 @@ export interface Player {
   throwIn?: boolean;
   keepRun?: KeepRun | null;
   assisting?: string | null;
+  /** This step's movement comes only from assistance (no stick input). */
+  assistOnly?: boolean;
   aiState?: string;
   drillPassive?: boolean;
   drillNoPass?: boolean;

@@ -66,6 +66,8 @@ export interface PlayerSetup {
   start: Vec2;
   yaw?: number;
   seed?: number;
+  /** Team index (teammates bump each other far more softly). */
+  team?: number;
 }
 
 export interface StepContext {
@@ -83,6 +85,7 @@ const SPIN_SKILLS: ReadonlySet<ActionKind> = new Set<ActionKind>(['dragBack', 'r
 
 export class PlayerController implements InteractionActor {
   readonly id: string;
+  readonly team: number;
   readonly name: string;
   readonly number: number;
   readonly attributes: PlayerAttributes;
@@ -130,6 +133,7 @@ export class PlayerController implements InteractionActor {
 
   constructor(private readonly pw: PhysicsWorld, private readonly ix: PlayerBallInteraction, setup: PlayerSetup) {
     this.id = setup.id;
+    this.team = setup.team ?? -1;
     this.name = setup.name;
     this.number = setup.number;
     this.attributes = { ...(setup.attributes ?? REFERENCE_ATTRIBUTES) };
@@ -161,7 +165,8 @@ export class PlayerController implements InteractionActor {
   get hasBall(): boolean { return this.ix.has(this.id); }
   // Lining up a kick with the ball at his feet: settle it (no stick-driven
   // touches), or the touches push it away and the foot never reaches it.
-  stick(): Vec2 { return this.buffered && this.hasBall ? { x: 0, z: 0 } : this.input.move; }
+  /** The user's steering for touches: none while lining up a kick or when the movement is only assistance. */
+  stick(): Vec2 { return (this.buffered && this.hasBall) || this.input.assisted ? { x: 0, z: 0 } : this.input.move; }
   intendedSpeed(): number { return targetSpeedFor(this.input, this.tuning, this.stamina); }
 
   /** Simulate the movement model forward under the current input (dribble prediction). */
@@ -353,7 +358,7 @@ export class PlayerController implements InteractionActor {
   /** Adapter for PlayerCollision. */
   collisionBody(): CollisionBody {
     return {
-      id: this.id, pos: this.physics.position(), velBefore: this.lastSetVel, radius: this.physics.radius,
+      id: this.id, team: this.team, pos: this.physics.position(), velBefore: this.lastSetVel, radius: this.physics.radius,
       massKg: this.tuning.massKg, strength: this.tuning.strength, balanceSkill: this.tuning.balance,
       braced: this.input.defend, hit: (sev) => this.knock(sev), setColliding: (on) => { this.colliding = on; },
     };

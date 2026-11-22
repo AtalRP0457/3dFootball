@@ -107,7 +107,8 @@ const DEFAULTS: PhysicsCalibration = {
     bodyRadius: 0.3,
     walkSpeed: [1.2, 2.0],
     jogSpeed: [2.5, 3.8],
-    runSpeed: [4.5, 6.0],
+    // Normal (non-sprint) pace: brisk, since it is what you see most.
+    runSpeed: [5.2, 6.8],
     sprintSpeed: [7.0, 9.0],
     // Game-tuned: quicker than a track sprint so the stick feels direct;
     // acceleration ratings still spread it by a second.

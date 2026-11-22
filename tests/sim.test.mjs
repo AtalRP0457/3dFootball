@@ -372,6 +372,7 @@ function tackleSetup(role = 'DEF', gap = 1.2, assist = 'assisted') {
 {
   // In range: the opponent's ring is highlighted
   const { s, victim } = tackleSetup();
+  victim.aiTimer = 5; // he must still have the ball this step (no random instant pass)
   stepMatch(s, { p1: {} }, FIXED_DT);
   check(s.teams[0].tackleTarget === victim, 'opponent in range is highlighted for tackling');
 }
@@ -501,7 +502,7 @@ console.log('Keep run after release');
   setControlled(s, team, mid);
   // Run down an open channel: with real player contacts, sprinting straight
   // into an opponent standing on the halfway line stops the run.
-  mid.pos.z = 15;
+  mid.pos.z = 22; // clear of the opponents' midfield lanes
   for (let i = 0; i < 120; i++) stepMatch(s, { p1: { mx: 1, mz: 0, sprint: true } }, FIXED_DT);
   const releasedAx = mid.pos.x;
   stepMatch(s, { p1: { passPressed: true } }, FIXED_DT); // switch away

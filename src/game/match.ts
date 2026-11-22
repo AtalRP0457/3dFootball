@@ -9,7 +9,7 @@ import {
   MUST_PASS_TIMEOUT, DIFFICULTY, FORMATION, FORMATIONS, INDOOR_FORMATION,
   PENALTY_SPOT, ASSIST, KEEP_RUN_TIME,
 } from './constants.ts';
-import { updateAI, interceptPoint } from './ai.ts';
+import { updateAI, interceptPoint, receivePoint } from './ai.ts';
 import { physicalProfile } from './physics/attributes.ts';
 import { playerIdentity } from './players/identity.ts';
 import { stepLocomotion, resolvePlayerContacts } from './physics/playerPhysics.ts';
@@ -504,6 +504,8 @@ function clearActionBuffers(state: MatchState): void {
 export const RECEIVE_BUFFER = 0.9;
 /** Loose balls further than this are never steered onto by assist (m). */
 export const ASSIST_STEER_RANGE = 18;
+/** With no input, the controlled player goes for a loose ball within this range (m). */
+export const AUTO_CHASE_RANGE = 20;
 
 /**
  * Is the free ball coming to this player (pass to him, or a ball that will
@@ -1335,20 +1337,43 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
   const hasInput = len(frame.mx, frame.mz) > 0.15;
 
   p.assisting = null;
+  p.assistOnly = false;
   // Receiving a pass: run to meet it. With no input always; with assist on,
   // also while you press anywhere except clearly away from the ball.
   if (b.intended === p && !b.owner) {
-    const q = interceptPoint(p, b);
+    const q = receivePoint(p, b);
     const dx = q.x - p.pos.x, dz = q.z - p.pos.z;
     const l = len(dx, dz);
     const il = len(frame.mx, frame.mz);
     const cos = hasInput && l > 0 ? (frame.mx * dx + frame.mz * dz) / (il * l) : 1;
-    // Without input he meets the ball; with input only if the stick already
-    // points roughly at it (pushing elsewhere means "run there").
-    const meet = !hasInput || (state.assistName !== 'off' && cos > 0.5);
-    if (meet && l > 0.3) {
-      it.mx = dx / l; it.mz = dz / l;
-      it.sprint = it.sprint || l > 3;
+    // He comes to meet the ball unless the stick points clearly away from it
+    // (that means "run there": the pass may then be cut out).
+    const meet = !hasInput || (state.assistName !== 'off' && cos > -0.2);
+    const ballNear = len(b.pos.x - p.pos.x, b.pos.z - p.pos.z) < 2.4;
+    if (meet && ballNear) {
+      // Last steps: the stick decides the touch. No stick: keep stepping
+      // into the ball (slowly) and cushion it at his feet. Stick: go that
+      // way and take the first touch in that direction, running on with it.
+      // Not on the ball's line yet: get there first.
+      const onLine = l < 0.45;
+      const gx = onLine ? b.pos.x - p.pos.x : dx, gz = onLine ? b.pos.z - p.pos.z : dz, gl = len(gx, gz) || 1;
+      // On the line he walks into the ball to meet it (cushioned touch).
+      const m = onLine ? 0.4 : clamp(l / 1.2, 0.35, 0.75);
+      it.mx = hasInput ? frame.mx : (gx / gl) * m; it.mz = hasInput ? frame.mz : (gz / gl) * m;
+      p.assistOnly = !hasInput;
+      it.sprint = hasInput && !!frame.sprint;
+      p.assisting = 'meet pass';
+    } else if (meet && l > 0.3) {
+      // Arrive in time, not as fast as possible: pace = distance / time
+      // left, easing off over the last metres so he is set for the touch.
+      const run = p.phys?.runSpeed ?? 5.5;
+      const need = l / Math.max(0.15, q.t);
+      const mag = clamp(Math.max(need / run, 0.35), 0, 1) * Math.min(1, l / 1.2);
+      it.mx = (dx / l) * mag; it.mz = (dz / l) * mag;
+      it.sprint = it.sprint || need > run * 0.95;
+      p.assisting = 'meet pass';
+    } else if (meet) {
+      it.mx = 0; it.mz = 0; it.sprint = false; // on the line: set and wait
       p.assisting = 'meet pass';
     }
   }
@@ -1370,8 +1395,11 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
         const cos = hasInput ? (frame.mx * dx + frame.mz * dz) / (il * d) : -1;
         if (hasInput && cos > as.steerCos && d < ASSIST_STEER_RANGE) {
           it.mx = dx / d; it.mz = dz / d; p.assisting = 'steer';
-        } else if (!hasInput && as.auto && !b.owner) {
-          it.mx = dx / d; it.mz = dz / d; p.assisting = 'auto';
+        } else if (!hasInput && !b.owner && (as.auto || (state.assistName === 'assisted' && d < AUTO_CHASE_RANGE
+          && !(b.intended && b.intended.team === p.team && b.intended !== p)))) {
+          // Hands off the stick and the ball is loose nearby: go and get it
+          // (but leave a pass meant for a teammate to him).
+          it.mx = dx / d; it.mz = dz / d; it.sprint = d > 4; p.assisting = 'auto';
         }
       }
     }

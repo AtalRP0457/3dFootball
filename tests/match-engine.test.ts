@@ -66,7 +66,8 @@ function run(opts: { home: string; away: string; keep?: (team: number, idx: numb
 // Stage 3: three attackers against a keeper and a defender.
 {
   const r = run({ home: 'fcb', away: 'rma', keep: (t, i) => (t === 0 && [4, 9, 10].includes(i)) || (t === 1 && [0, 1].includes(i)), seconds: 60 });
-  check('Stage 3 · 5 players: passing, shooting, saves', r.finite && (r.counts.pass ?? 0) >= 3 && (r.counts.shot ?? 0) >= 1, `${r.counts.pass ?? 0} passes, ${r.counts.shot ?? 0} shots, ${r.counts.save ?? 0} saves, score ${r.s.teams[0].score}-${r.s.teams[1].score}`);
+  // Attacks must reach goal: a shot, or a goal (a pass can also end in the net).
+  check('Stage 3 · 5 players: passing, shooting, saves', r.finite && (r.counts.pass ?? 0) >= 3 && (r.counts.shot ?? 0) + (r.counts.goal ?? 0) >= 1, `${r.counts.pass ?? 0} passes, ${r.counts.shot ?? 0} shots, ${r.counts.save ?? 0} saves, score ${r.s.teams[0].score}-${r.s.teams[1].score}`);
 }
 // Stage 4: full 22-player matches.
 let passes = 0, shots = 0, minShare = 1, worstStill = 0, allOk = true, ms = 0;

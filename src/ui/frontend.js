@@ -81,6 +81,8 @@ const OPTIONS = {
   dribbleStyle: { label: 'Dribbling', values: [['sticky', 'Arcade (ball at feet)'], ['touch', 'Realistic (touches)']] },
   physics: { label: 'Physics', values: [['engine', 'Gold Standard engine'], ['classic', 'Classic']] },
   camera: { label: 'Camera', values: [['broadcast', 'Broadcast'], ['close', 'Close'], ['wide', 'Tactical (wide)']] },
+  intro: { label: 'Pre-match intro', values: [['on', 'On'], ['off', 'Off']] },
+  graphics: { label: 'Graphics quality', values: [['high', 'High'], ['medium', 'Medium'], ['low', 'Low (faster)']] },
   cameraZoom: { label: 'Camera zoom (in match: − / = , 0 resets)', values: [[0.8, 'Far'], [0.9, 'Wider'], [1, 'Default'], [1.1, 'Closer'], [1.2, 'Near'], [1.3, 'Nearest']] },
   era: { label: 'Era colour grading', values: [['on', 'On'], ['off', 'Off']] },
 };
@@ -535,7 +537,7 @@ export function createFrontend(api) {
       <div class="set-col a-in" style="--i:1">
         <h3>Football universe</h3>${settingsRows(['roster', 'clubIdentity', 'playerIdentity'])}
         ${locked ? '<p class="set-note">A tournament in progress keeps the roster profile it started with. Names and crests follow your identity choice everywhere.</p>' : ''}
-        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'physics', 'camera', 'cameraZoom', 'dribbleStyle', 'era'])}
+        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'physics', 'camera', 'cameraZoom', 'graphics', 'intro', 'dribbleStyle', 'era'])}
       </div>
       <div class="set-col a-in" style="--i:2"><h3>Help, tools & data</h3>
         <button class="set-link" data-nav data-act="controls" data-v="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>

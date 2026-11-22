@@ -8,7 +8,7 @@ TypeScript compilation is checked by `npm run typecheck`.
 |---|---|---|---|
 | Engine 1 | Player stands naturally (idle, no drift) | ✅ Pass | state idle, drift 0.000 m |
 | Engine 2 | Walking speed and stride match | ✅ Pass | 1.68 m/s, anim walk, planted-foot drift 2.0 cm |
-| Engine 3 | Running speed and stride match | ✅ Pass | 5.68 m/s, anim run, planted-foot drift 2.2 cm |
+| Engine 3 | Running speed and stride match (5.2–6.8 m/s) | ✅ Pass | 6.46 m/s, anim run, planted-foot drift 2.4 cm |
 | Engine 4 | Sprinting reaches 7–9 m/s | ✅ Pass | 8.58 m/s, anim sprint, planted-foot drift 2.2 cm |
 | Engine 5 | Acceleration is gradual (game-tuned: 95 % of sprint in 1.3–3 s) | ✅ Pass | 4.22 m/s after 0.5 s, 95% of top speed after 1.80 s |
 | Engine 6 | Deceleration preserves momentum (stops in 0.8–1.5 s, 3–6 m) | ✅ Pass | released at sprint: stopped after 1.02 s and 4.25 m |
