@@ -650,6 +650,15 @@ function startRestart(state: MatchState, type: string, team: number, spot: Vec2)
   state.ball.intended = null;
   state.ball.pendingPass = null;
   state.ball.shotLive = false;
+  // A whistle stops the ball at the infringement. Keep the old position in
+  // the transition snapshot so the renderer can ease it to the free-kick spot;
+  // boundary restarts still let the out-of-play ball settle under physics.
+  if (type === 'free kick' || type === 'indirect free kick') {
+    state.ball.pos.x = spot.x;
+    state.ball.pos.y = BALL_R;
+    state.ball.pos.z = spot.z;
+    stopBall(state.ball);
+  }
   state.restart = { type, team };
   state.phase = 'restart';
   state.phaseTimer = 1.65;
@@ -2235,11 +2244,16 @@ export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
     }
     if (tr && tr.elapsed >= tr.duration && tr.pendingRestart) {
       const { type, team, spot } = tr.pendingRestart;
+      // The first phase has finished visually at the ball's settled position.
+      // Snapshot that handoff before setupRestart moves players and ball; reusing
+      // the original snapshot reset interpolation to zero and visibly pulled
+      // everything back for a frame before the set-piece lineup eased in.
+      const setupFrom = transitionSnapshot(state);
       setupRestart(state, type, team, spot);
       state.flow = 'SET_PIECE_SETUP';
       state.transition = {
         state: 'SET_PIECE_SETUP', elapsed: 0, duration: 0.6,
-        fromPlayers: tr.fromPlayers, fromBall: tr.fromBall,
+        ...setupFrom,
       };
     }
     return;

@@ -224,7 +224,11 @@ export class MatchPhysics {
     const b = state.ball;
     for (const [p, c] of this.ctrl) {
       const input = emptyInput();
-      const frozen = !live && state.phase !== 'goal' || (p.mustPass && b.owner === p && !c.kicking);
+      // Restart takers stay planted until the kick, but a keeper carrying the
+      // ball is allowed to move and choose his distribution. Treating every
+      // mustPass holder as frozen made hand possessions feel like a hard lock.
+      const frozen = (!live && state.phase !== 'goal')
+        || (p.mustPass && !p.holding && b.owner === p && !c.kicking);
       if (frozen) {
         c.yaw = yawOf(p.face);
       } else {

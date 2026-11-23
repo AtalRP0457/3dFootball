@@ -37,11 +37,10 @@ function predictBall(b: Ball, t: number): { x: number; z: number; y: number } {
  * enough to play (so receivers run to where a lofted ball comes down).
  */
 export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
-  const s = runSpeed(p) * 1.2;
   for (let t = 0; t <= 5 + 1e-9; t += 0.1) {
     const q = predictBall(b, t);
     if ((q.y ?? 0) > reachH) continue;
-    if (dist(p.pos, q) <= s * t + 0.6) return q;
+    if (canReachPoint(p, q, t, 1.16, 0.62)) return q;
   }
   return predictBall(b, 5);
 }
@@ -53,14 +52,40 @@ export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
  * the point and the time the ball gets there.
  */
 export function receivePoint(p: Player, b: Ball, reachH = 1.3): { x: number; z: number; t: number } {
-  const pace = Math.min(runSpeed(p) * 0.6, 3.8);
   for (let t = 0.05; t <= 5 + 1e-9; t += 0.05) {
     const q = predictBall(b, t);
     if ((q.y ?? 0) > reachH) continue;
-    if (dist(p.pos, q) <= pace * t + 0.7) return { x: q.x, z: q.z, t };
+    if (canReachPoint(p, q, t, 0.82, 0.72)) return { x: q.x, z: q.z, t };
   }
   const q = interceptPoint(p, b, reachH);
-  return { x: q.x, z: q.z, t: 1 };
+  return { x: q.x, z: q.z, t: 5 };
+}
+
+/**
+ * Estimate whether a player can arrive by time t without pretending he starts
+ * at top speed. Direction changes and acceleration matter most on short passes
+ * and loose balls, where the old distance = maxSpeed * time estimate was badly
+ * optimistic and sent players to interception points they could never reach.
+ */
+function canReachPoint(p: Player, q: Vec2, t: number, speedFactor: number, allowance: number) {
+  if (t <= 0) return dist(p.pos, q) <= allowance;
+  const dx = q.x - p.pos.x, dz = q.z - p.pos.z;
+  const d = Math.hypot(dx, dz);
+  if (d <= allowance) return true;
+  const ux = dx / d, uz = dz / d;
+  const currentAlong = p.vel.x * ux + p.vel.z * uz;
+  const speed = runSpeed(p) * speedFactor * (0.82 + 0.18 * p.stamina);
+  const accel = Math.max(3, p.phys?.accel ?? 9) * 0.78;
+  // Movement opposite the target first has to be cancelled. A small turn
+  // allowance accounts for steering at pace without requiring a full path solver.
+  const reverseTime = Math.min(0.45, Math.max(0, -currentAlong) / accel);
+  const startSpeed = clamp(currentAlong, 0, speed);
+  const usable = Math.max(0, t - reverseTime - 0.12);
+  const toTop = Math.max(0, (speed - startSpeed) / accel);
+  const ramp = Math.min(usable, toTop);
+  const reachable = startSpeed * ramp + 0.5 * accel * ramp * ramp
+    + Math.max(0, usable - ramp) * speed;
+  return d <= reachable + allowance;
 }
 
 function setMove(p: Player, tx: number, tz: number, sprint: boolean = false, slowRadius: number = 1.5) {
@@ -474,12 +499,12 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
 
   const towardUs = -b.vel.x * dir;
   const ballAx = (b.pos.x - gx) * dir; // distance of ball from our goal line
-  if (!b.owner && b.shotLive && b.shotTeam !== p.team && towardUs > 5) {
-    const lineX = gx + dir * 0.9;
-    const t = (lineX - b.pos.x) / (b.vel.x || 1e-6);
-    if (t > 0 && t < 1.6) {
-      const zc = b.pos.z + b.vel.z * t;
-      tx = lineX;
+  if (!b.owner && b.shotLive && b.shotTeam !== p.team && towardUs > 2) {
+    const crossing = goalLineCrossing(b, gx, dir);
+    if (crossing && crossing.t < 2.2 && crossing.y < 2.8) {
+      const t = crossing.t;
+      const zc = crossing.z;
+      tx = gx + dir * 0.9;
       tz = clamp(zc, -GOAL.width / 2 - 0.6, GOAL.width / 2 + 0.6);
       sprint = true;
       if (Math.abs(tz - p.pos.z) > 1.2 && p.dive <= 0 && t < 0.6) p.dive = 0.45;
@@ -487,7 +512,11 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
   } else if (!b.owner && ballAx < BOX.depth && Math.abs(b.pos.z) < BOX.width / 2
              && len(b.vel.x, b.vel.z) < 12) {
     // Loose ball in our box: claim it.
-    tx = b.pos.x; tz = b.pos.z; sprint = true;
+    const q = interceptPoint(p, b, p.phys?.keeper?.reach ?? 2.3);
+    const advance = clamp((q.x - gx) * dir, 0.25, BOX.depth - 0.25);
+    tx = gx + dir * advance;
+    tz = clamp(q.z, -BOX.width / 2 + 0.25, BOX.width / 2 - 0.25);
+    sprint = true;
   } else if (b.owner && b.owner.team !== p.team && ballAx < 16) {
     // Narrow the angle against an attacker.
     const vx = b.pos.x - gx, vz = b.pos.z;
@@ -498,4 +527,25 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
     tz = (vz / l) * out;
   }
   setMove(p, tx, tz, sprint, 0.6);
+}
+
+/** Find the ball's first crossing of this keeper's goal line in its simulated path. */
+function goalLineCrossing(b: Ball, gx: number, dir: number): { t: number; z: number; y: number } | null {
+  const path = b.path;
+  if (!path || path.length < 2) {
+    const t = (gx - b.pos.x) / (b.vel.x || 1e-6);
+    return t > 0 ? { t, z: b.pos.z + b.vel.z * t, y: b.pos.y + b.vel.y * t - 4.905 * t * t } : null;
+  }
+  for (let i = 1; i < path.length; i++) {
+    const before = path[i - 1], after = path[i];
+    if ((before.x - gx) * dir <= 0 || (after.x - gx) * dir > 0) continue;
+    const dx = after.x - before.x;
+    const u = Math.abs(dx) < 1e-6 ? 0 : clamp((gx - before.x) / dx, 0, 1);
+    return {
+      t: before.t + (after.t - before.t) * u,
+      z: before.z + (after.z - before.z) * u,
+      y: before.y + (after.y - before.y) * u,
+    };
+  }
+  return null;
 }
