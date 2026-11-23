@@ -16,6 +16,11 @@ const check = (name: string, pass: boolean, detail: string) => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name} — ${detail}`);
 };
 type Frame = Record<string, unknown>;
+/** Run the kick-off until play is live (capped: a staged roster may have no taker). */
+function toPlay(s: MatchState) {
+  for (let k = 0; k < 600 && s.phase !== 'play'; k++) stepMatch(s, {}, FIXED_DT);
+  if (s.phase !== 'play') { s.phase = 'play'; s.restart = null; }
+}
 const ofIdx = (s: MatchState, idx: number) => s.players.find((p) => p.team === 0 && p.idx === idx)!;
 
 /** P1's striker (#4) on the ball at `at`, teammates `mates` = [idx, x, z], away keeper only. */
@@ -24,7 +29,7 @@ function setup(mates: Array<[number, number, number]>, at: [number, number] = [-
   const keep = new Set(mates.map((m) => m[0]));
   for (const p of s.players) if (p.onPitch && !(p.team === 0 && (p.idx === 4 || keep.has(p.idx))) && !(p.team === 1 && opponents.includes(p.idx))) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
   s.engine = new MatchPhysics(s);
-  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  toPlay(s);
   for (const p of s.players) { p.mustPass = false; p.mustPassTimer = 0; }
   s.ball.restartDoubleTouchBy = null;
   const me = ofIdx(s, 4);
@@ -99,7 +104,9 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
     const passes = ev.filter((e) => e.type === 'pass' && e.from === String(recv.id)).length;
     if (passes === 1) ok++;
     if (passes > 1) dupes++;
-    if (!controlled) switched++;
+    // Control moving on to the next receiver as the first-time pass starts is
+    // correct; a press that only switched player (no pass) is the failure.
+    if (!controlled && passes === 0) switched++;
     s.engine!.dispose();
   }
   check('First-time pass: pressed before arrival, played exactly once', tries >= 5 && ok >= tries - 1 && dupes === 0 && switched === 0,
@@ -172,10 +179,13 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
 {
   const mk = () => {
     const s = createMatch({ home: buildTeam('fcb'), away: buildTeam('rma'), controllers: ['p1', 'ai'], difficulty: 'normal', duration: 240 });
-    for (const p of s.players) if (p.onPitch && !(p.team === 0 && p.idx === 9)) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
     s.engine = new MatchPhysics(s);
-    while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+    // A normal kick-off with full teams first, then clear the pitch (a staged
+    // roster without the kick-off taker would never get the ball into play).
+    toPlay(s);
+    for (const p of s.players) if (p.onPitch && !(p.team === 0 && p.idx === 9)) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
     for (const p of s.players) p.mustPass = false;
+    s.restart = null; s.phase = 'play';
     const me = ofIdx(s, 9);
     s.ball.owner = null; s.ball.intended = null;
     setControlled(s, s.teams[0], me); me.pos.x = -20; me.pos.z = 0;

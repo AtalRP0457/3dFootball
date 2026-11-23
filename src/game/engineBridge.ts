@@ -23,7 +23,7 @@ import type { PlayerController } from '../../packages/game-engine/player/PlayerC
 import type { KickCommand } from '../../packages/game-engine/player/PlayerBallInteraction.ts';
 import { emptyInput, type KickKind, type PlayerAttributes, type PoseData } from '../../packages/game-engine/player/PlayerTypes.ts';
 import { REFERENCE_ATTRIBUTES } from '../../packages/game-engine/player/PlayerAttributes.ts';
-import type { MatchState, Player, Vec2, Vec3 } from '../types/game.ts';
+import type { BallPathPoint, MatchState, Player, Vec2, Vec3 } from '../types/game.ts';
 import { GOAL, HALF_L, HALF_W, PITCH } from './constants.ts';
 
 let ready = false;
@@ -224,7 +224,11 @@ export class MatchPhysics {
     const b = state.ball;
     for (const [p, c] of this.ctrl) {
       const input = emptyInput();
-      const frozen = !live && state.phase !== 'goal' || (p.mustPass && b.owner === p && !c.kicking);
+      // Restart takers stay planted until the kick, but a keeper carrying the
+      // ball is allowed to move and choose his distribution. Treating every
+      // mustPass holder as frozen made hand possessions feel like a hard lock.
+      const frozen = (!live && state.phase !== 'goal')
+        || (p.mustPass && !p.holding && b.owner === p && !c.kicking);
       if (frozen) {
         c.yaw = yawOf(p.face);
       } else {
@@ -381,7 +385,13 @@ export class MatchPhysics {
   private retryHumanKicks(state: MatchState): void {
     for (const [p, k] of this.humanKicks) {
       const c = this.ctrl.get(p);
-      if (!c || state.ball.owner !== p || !p.human || k.tries >= 2) { this.humanKicks.delete(p); continue; }
+      // A human asked for this kick: keep it alive while he still has the ball,
+      // even though control may already have passed to the receiver.
+      // A first-time strike is made at a loose ball: keep it while it is
+      // still buffered/swinging, or just missed, and nobody else has the ball.
+      const own = state.ball.owner;
+      const live = own ? own === p : c?.kicking || k.retry;
+      if (!c || !live || k.tries >= 2) { this.humanKicks.delete(p); continue; }
       if (!k.retry || c.kicking) continue;
       if (c.sm.busy && c.sm.action?.clip.name !== 'stumble') continue; // down after a fall: wait
       const { command, kind, vel, commit } = k.req;
@@ -435,6 +445,27 @@ export class MatchPhysics {
     const d = Math.hypot(aim.x - from.x, aim.z - from.z);
     const a = this.sim.cal.ball.rollingResistance * this.sim.cal.world.gravity;
     return Math.sqrt(2 * a * d + arrive * arrive);
+  }
+
+  /** Rolling arrival time under this engine's actual constant grass drag. */
+  groundPassTime(distance: number, kind: 'ground' | 'through', driven = false): number {
+    const d = Math.max(0, distance);
+    const arrive = kind === 'through'
+      ? Math.max(2.8, Math.min(6.2, 3.1 + d * 0.075))
+      : driven ? Math.max(7.5, Math.min(12, 7 + d * 0.12))
+        : Math.max(3.2, Math.min(8, 4 + d * 0.1));
+    const a = this.sim.cal.ball.rollingResistance * this.sim.cal.world.gravity;
+    const start = Math.sqrt(2 * a * d + arrive * arrive);
+    return a > 0 ? (start - arrive) / a : d / Math.max(arrive, 0.1);
+  }
+
+  /** Match-coordinate trajectory from the same model Rapier advances. */
+  ballPath(pos: Vec3, vel: Vec3, spin: Vec3, horizon = 3): BallPathPoint[] {
+    return predictTrajectory(toE3(pos), toE3(vel), toE3(spin), this.sim.cal.ball, this.sim.cal.world.gravity, horizon, 1 / 60)
+      .map((point) => {
+        const p = toM3(point.p);
+        return { t: point.t, x: p.x, y: p.y, z: p.z };
+      });
   }
 
   /** Speed at a launch angle so the engine ball (drag + spin) lands at `aim`. */

@@ -30,6 +30,8 @@ export interface Receiver { pos: Vec2; vel: Vec2; phys?: { runSpeed: number } | 
 export interface PassInput {
   p: Passer; target: Receiver; ball: { pos: Vec3 }; kind?: PassKind; driven?: boolean;
   errMul?: number; pressure?: number; attackDir?: number; assisted?: boolean; rng?: () => number;
+  /** Optional arrival-time model from the active physics engine. */
+  groundPassTime?: (distance: number, kind: PassKind, driven: boolean) => number;
   /** A cross: aimed into the space in front of the runner, not at his feet. */
   cross?: boolean;
 }
@@ -85,7 +87,7 @@ export function planPass(o: PassInput): PassPlan {
     for (let i = 0; i < 3; i++) {
       const d = Math.hypot(aim.x - from.x, aim.z - from.z);
       speed = clamp(speedForRollDistance(d + 3), 5, 24);
-      const t = rollTimeTo(speed, d);
+      const t = o.groundPassTime?.(d, kind, !!o.driven) ?? rollTimeTo(speed, d);
       const lead = clamp(reach * (Number.isFinite(t) ? t : 1.5), 4, 16);
       aim = { x: target.pos.x + rx * lead, z: target.pos.z + rz * lead };
       aim.x = clamp(aim.x, -HALF_L + 1.5, HALF_L - 1.5);
@@ -97,7 +99,7 @@ export function planPass(o: PassInput): PassPlan {
       let t;
       if (kind === 'ground') {
         speed = groundSpeed(d, o.driven);
-        t = Math.min(2.5, rollTimeTo(speed, d));
+        t = Math.min(3, o.groundPassTime?.(d, kind, !!o.driven) ?? rollTimeTo(speed, d));
       } else {
         flight = kind === 'chip' ? 0.9 + d / 40 : 0.95 + d / 28;
         t = flight;
@@ -110,6 +112,8 @@ export function planPass(o: PassInput): PassPlan {
         const tx = gx - aim.x, tz = -aim.z, tl = Math.hypot(tx, tz) || 1;
         aim = { x: aim.x + (tx / tl) * 2.5, z: aim.z + (tz / tl) * 2.5 };
       }
+      aim.x = clamp(aim.x, -HALF_L + 1.5, HALF_L - 1.5);
+      aim.z = clamp(aim.z, -HALF_W + 1.5, HALF_W - 1.5);
     }
   }
 

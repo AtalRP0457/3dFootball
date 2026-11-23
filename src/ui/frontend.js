@@ -996,9 +996,9 @@ export function createFrontend(api) {
       const pad = (k) => `<kbd>${k}</kbd>`;
       card.innerHTML = `<h2>Controller settings</h2>
         <div class="ctl-grid">
-          <div class="ctl-col"><h4>Player 1 · keyboard</h4><p><span>Move</span>${pad('W')}${pad('A')}${pad('S')}${pad('D')}</p><p><span>Pass / switch</span>${pad('F')} or ${pad('Space')}</p><p><span>Shoot (hold) / tackle</span>${pad('G')}</p><p><span>Sprint</span>${pad('Left Shift')}</p></div>
-          <div class="ctl-col"><h4>Player 2 · keyboard</h4><p><span>Move</span>${pad('↑')}${pad('←')}${pad('↓')}${pad('→')}</p><p><span>Pass / switch</span>${pad('.')}</p><p><span>Shoot (hold) / tackle</span>${pad('/')}</p><p><span>Sprint</span>${pad('Right Shift')}</p></div>
-          <div class="ctl-col"><h4>Gamepad</h4><p><span>Move</span>${pad('Left stick')}</p><p><span>Pass / switch</span>${pad('A')} / ${pad('✕')}</p><p><span>Shoot / tackle</span>${pad('B')} / ${pad('○')}</p><p><span>Sprint</span>${pad('RT')} ${pad('RB')}</p></div>
+          <div class="ctl-col"><h4>Player 1 · keyboard</h4><p><span>Move</span>${pad('W')}${pad('A')}${pad('S')}${pad('D')}</p><p><span>Pass / switch</span>${pad('F')} or ${pad('Space')}</p><p><span>Control goalkeeper</span>${pad('K')}</p><p><span>Shoot (hold) / tackle</span>${pad('G')}</p><p><span>Sprint</span>${pad('Left Shift')}</p></div>
+          <div class="ctl-col"><h4>Player 2 · keyboard</h4><p><span>Move</span>${pad('↑')}${pad('←')}${pad('↓')}${pad('→')}</p><p><span>Pass / switch</span>${pad('.')}</p><p><span>Control goalkeeper</span>${pad('Num 8')}</p><p><span>Shoot (hold) / tackle</span>${pad('/')}</p><p><span>Sprint</span>${pad('Right Shift')}</p></div>
+          <div class="ctl-col"><h4>Gamepad</h4><p><span>Move</span>${pad('Left stick')}</p><p><span>Pass / switch</span>${pad('A')} / ${pad('✕')}</p><p><span>Control goalkeeper</span>${pad('Select')}</p><p><span>Shoot / tackle</span>${pad('B')} / ${pad('○')}</p><p><span>Sprint</span>${pad('RT')} ${pad('RB')}</p></div>
           <div class="ctl-col"><h4>In match</h4><p><span>Pause</span>${pad('Esc')} ${pad('P')}</p><p><span>Camera</span>${pad('C')}</p><p><span>Skip replay</span>${pad('R')}</p><p><span>Touch screen</span>Stick + Pass / Shoot / Sprint</p></div>
         </div>
         <button class="fe-btn primary" data-act="closeModal" data-autofocus>Done</button>`;

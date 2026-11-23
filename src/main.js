@@ -551,7 +551,7 @@ const TUTORIAL = [
   { title: 'Get the ball', keys: '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> towards the ball', text: 'Run to the loose ball. Press roughly towards it and assist steers you onto it.' },
   { title: 'Pass', keys: 'steer, then <kbd>F</kbd>', text: 'Steer until the teammate you want has the YELLOW ring, then press F. You take over the receiver.' },
   { title: 'Shoot', keys: 'hold <kbd>G</kbd>, release', text: 'Get near the goal, hold G to build power (about half is accurate) and release to shoot.' },
-  { title: 'Change player', keys: '<kbd>F</kbd> without the ball', text: 'When you don’t have the ball, press F to switch to the YELLOW player.' },
+  { title: 'Change player', keys: '<kbd>F</kbd> without the ball · <kbd>K</kbd> keeper', text: 'Press F to switch to the YELLOW player, or K to take control of your goalkeeper while defending.' },
   { title: 'Score a goal', keys: 'pass, run, shoot', text: 'Put it all together and score!' },
 ];
 let tut = null;

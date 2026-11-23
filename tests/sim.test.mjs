@@ -503,11 +503,14 @@ console.log('Keep run after release');
   const s = createMatch({ home: TEAMS[6], away: TEAMS[2], controllers: ['p1', 'ai'], duration: 300 });
   while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
   const team = s.teams[0];
+  // Our keeper holds the ball (so nobody can take it) and is about to throw
+  // it to the runner: a pending pass to him keeps our control on the runner
+  // (otherwise we would now take control of our own keeper).
   const gk = s.players.find((p) => p.team === 0 && p.role === 'GK');
   const mid = s.players.find((p) => p.team === 0 && p.role === 'MID');
   for (const p of s.players) p.mustPass = false;
-  // Our keeper holds the ball (so nobody can take it) while we make a run.
   s.ball.owner = gk; gk.holding = true; gk.mustPass = true; gk.holdTimer = 99; gk.mustPassTimer = -99;
+  s.ball.pendingPass = { passer: gk, target: mid, aim: { x: team.dir * 40, z: 22 }, kind: 'lofted', expiresAt: s.clock + 2.5 }; // thrown into his path
   setControlled(s, team, mid);
   // Run down an open channel: with real player contacts, sprinting straight
   // into an opponent standing on the halfway line stops the run.

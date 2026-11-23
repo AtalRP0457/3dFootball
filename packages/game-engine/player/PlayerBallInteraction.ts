@@ -334,7 +334,7 @@ export class PlayerBallInteraction {
     const gap = Math.hypot(b.x - pt.x, b.y - pt.y, b.z - pt.z) - this.cal.ball.radius;
     // A first-time strike may stretch for the ball (contact quality still
     // drops with the gap, so a stretched one-touch is less accurate).
-    const reach = header ? 0.34 : planIn.firstTime ? 0.5 : 0.42;
+    const reach = header ? 0.34 : planIn.firstTime ? 0.65 : 0.42;
     const shot = plan.command === 'shot';
     if (gap > reach) {
       this.lastContact = { playerId: a.id, action: plan.kind, hit: false, gap, quality: 0, time };
