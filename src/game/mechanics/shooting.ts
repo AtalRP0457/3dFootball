@@ -102,11 +102,12 @@ export function planShot(o: ShotInput): ShotPlan {
     targetY = 0.3 + power * 1.3;
     top = 4;
   } else if (type === 'power') {
-    h = 25 + 9 * power * (0.7 + 0.5 * pw);
+    h = 24 + 10 * power * (0.7 + 0.5 * pw);
     targetY = 1.1 + power * 0.6;
     top = 4;
   } else if (type === 'low') {
-    h = 18 + 9 * Math.max(power, 0.35) * (0.8 + 0.4 * pw);
+    // A tapped shot is a low, placed side-foot (~15-16 m/s); more charge drives it.
+    h = 12 + 14 * Math.max(power, 0.25) * (0.8 + 0.4 * pw);
     targetY = 0.28;
     top = 28;
   } else if (type === 'finesse') {
@@ -121,7 +122,7 @@ export function planShot(o: ShotInput): ShotPlan {
     targetY = 0;
     top = -16;
   } else {
-    h = 16 + 12 * power * (0.8 + 0.4 * pw);
+    h = 11 + 17 * power * (0.8 + 0.4 * pw);
     targetY = 0.45 + power * 1.25;
     top = 7 + power * 6;
   }

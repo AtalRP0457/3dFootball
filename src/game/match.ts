@@ -487,6 +487,8 @@ export function setupKickoff(state: MatchState, teamIdx: number) {
   taker.mustPass = true; taker.mustPassTimer = 0;
   for (const t of state.teams) setControlled(state, t, t.index === teamIdx ? taker : nearestTo(state, t.index, b.pos));
   clearActionBuffers(state);
+  state.advantage = null;
+  issuePendingCards(state);
   state.phase = 'kickoff';
   state.phaseTimer = 1.2;
   setBanner(state, 'KICK OFF', 1.2);
@@ -497,13 +499,18 @@ export function setupKickoff(state: MatchState, teamIdx: number) {
  * press made before the whistle never fires into the restart.
  */
 function clearActionBuffers(state: MatchState): void {
-  for (const p of state.players) { p.queuedAction = null; p.charge = 0; p.chargeType = null; p.intent.action = null; }
+  for (const p of state.players) { p.queuedAction = null; p.charge = 0; p.chargeType = null; p.intent.action = null; p.passCharge = 0; p.passChargeKind = null; }
 }
 
 /** Seconds a pass/shot pressed before the ball arrives stays valid. */
 export const RECEIVE_BUFFER = 0.9;
 /** Loose balls further than this are never steered onto by assist (m). */
 export const ASSIST_STEER_RANGE = 18;
+/** Seconds of holding pass for full pass power; below PASS_TAP_CHARGE it is a tap (automatic weight). */
+export const PASS_CHARGE_TIME = 0.75;
+export const PASS_TAP_CHARGE = 0.2;
+/** Stick scale while charging a strike on the ball (a jog, not a sprint). */
+export const STRIKE_WINDUP_PACE = 0.7;
 /** With no input, the controlled player goes for a loose ball within this range (m). */
 export const AUTO_CHASE_RANGE = 20;
 
@@ -533,6 +540,10 @@ function ballComingTo(state: MatchState, p: Player): boolean {
 function startRestart(state: MatchState, type: string, teamIdx: number, spot: Vec2) {
   applyPendingSubstitutions(state);
   clearActionBuffers(state);
+  // A stoppage ends any advantage; cards held back for it are shown now.
+  if (state.advantage?.card) (state.pendingCards ??= []).push({ playerId: state.advantage.foulerId, color: state.advantage.card });
+  state.advantage = null;
+  issuePendingCards(state);
   const b = state.ball;
   state.penalty = null;
   // Practice: the opponents only have a keeper, so we take every throw-in
@@ -767,7 +778,7 @@ export function choosePassTarget(state: MatchState, p: Player, dx: number, dz: n
  * Play a pass. Returns false only when the engine could not start the kick
  * yet (player busy, e.g. stumbling or getting up): the caller may retry.
  */
-export function doPass(state: MatchState, p: Player, target: Player | null, opts: { kind?: PassKind; driven?: boolean } = {}): boolean {
+export function doPass(state: MatchState, p: Player, target: Player | null, opts: { kind?: PassKind; driven?: boolean; power?: number } = {}): boolean {
   const b = state.ball;
   const team = state.teams[p.team];
   if (!target) return true;
@@ -839,7 +850,7 @@ export function doPass(state: MatchState, p: Player, target: Player | null, opts
   // passer goes back to AI.
   if (team.human && p.human && target.role !== 'GK') setControlled(state, team, target);
   p.kickType = plan.kind === 'ground' && d > 18 ? 'longPass' : plan.kind === 'ground' ? 'pass' : plan.kind;
-  state.events.push({ type: 'pass', from: p.id, to: target.id, human: byHuman, kind: plan.kind });
+  state.events.push({ type: 'pass', from: p.id, to: target.id, human: byHuman, kind: plan.kind, power: opts.power });
   };
   if (state.engine) {
     const eng = state.engine;
@@ -855,12 +866,16 @@ export function doPass(state: MatchState, p: Player, target: Player | null, opts
       const arrive = plan.kind === 'through' ? clamp(5 + pd * 0.12, 6, 10)
         : opts.driven ? clamp(16 + pd * 0.25, 17, 23)
         : clamp(8 + pd * 0.2, 9, 14);
-      const s = eng.groundPassSpeed(b.pos, plan.aim, arrive) * plan.weight;
+      // Held pass power: 0.7x (soft) .. 1.5x (hammered) the automatic weight.
+      const pf = opts.power === undefined ? 1 : 0.5 + opts.power;
+      const s = eng.groundPassSpeed(b.pos, plan.aim, arrive * pf) * plan.weight;
       vel = { x: dir.x * s, y: 0, z: dir.z * s };
     } else {
       // Crosses are whipped in flatter; lofted passes and switches higher.
       const elev = cross ? 19 : Math.max(12, (Math.atan2(plan.vel.y, h) * 180) / Math.PI);
-      const s = eng.loftedSpeed(b.pos, plan.aim, elev, plan.kind === 'chip' ? -25 : cross ? -8 : -12) * plan.weight;
+      // Held power: drop it short of the target (soft) or beyond it (full).
+      const lf = opts.power === undefined ? 1 : 0.8 + 0.4 * opts.power;
+      const s = eng.loftedSpeed(b.pos, plan.aim, elev, plan.kind === 'chip' ? -25 : cross ? -8 : -12) * plan.weight * lf;
       const e = (elev * Math.PI) / 180;
       vel = { x: dir.x * s * Math.cos(e), y: s * Math.sin(e), z: dir.z * s * Math.cos(e) };
     }
@@ -869,7 +884,8 @@ export function doPass(state: MatchState, p: Player, target: Player | null, opts
       : cross ? 'cross' : d > 30 ? 'longPass' : 'lobPass';
     return eng.kick(p, plan.kind === 'through' ? 'through' : plan.kind === 'ground' ? 'pass' : 'lob', kind, vel, finish);
   }
-  b.vel.x = plan.vel.x; b.vel.y = plan.vel.y; b.vel.z = plan.vel.z;
+  const lpf = opts.power === undefined ? 1 : plan.top === null ? 0.5 + opts.power : 0.8 + 0.4 * opts.power;
+  b.vel.x = plan.vel.x * lpf; b.vel.y = plan.vel.y * (plan.top === null ? 1 : lpf); b.vel.z = plan.vel.z * lpf;
   if (plan.top === null) setRollingSpin(b); else setKickSpin(b, plan.top, 0);
   finish();
   return true;
@@ -1034,7 +1050,7 @@ function doTackle(state: MatchState, p: Player) {
   );
   if (Math.random() < foulChance) {
     report('foul');
-    commitFoul(state, p, victim, behind, movingFast);
+    commitFoul(state, p, victim, behind, movingFast ? 7 : 3, 'standing');
     return;
   }
 
@@ -1092,21 +1108,98 @@ function doTackle(state: MatchState, p: Player) {
   }
 }
 
-/** Free kick or penalty for a foul, with injury and card chances. */
-function commitFoul(state: MatchState, p: Player, victim: Player, behind: boolean, movingFast: boolean) {
+/**
+ * How serious a foul is (IFAB Law 12): careless (no card), reckless (caution)
+ * or excessive force (sending-off), from the kind of challenge, the speed of
+ * the contact and whether it came from behind.
+ */
+export function foulSeverity(kind: 'standing' | 'sliding', closing: number, behind: boolean): { level: 'careless' | 'reckless' | 'excessive'; card: 'yellow' | 'red' | null } {
+  const score = (kind === 'sliding' ? 0.3 : 0) + (behind ? 0.35 : 0) + clamp((closing - 3) / 7, 0, 0.5);
+  if (score >= 0.95) return { level: 'excessive', card: 'red' };
+  if (score >= 0.5) return { level: 'reckless', card: 'yellow' };
+  return { level: 'careless', card: null };
+}
+
+/** Seconds the referee waits to see whether an advantage materialises. */
+export const ADVANTAGE_WINDOW = 2.5;
+
+/**
+ * One foul, committed once, at the moment of contact: the foul event, the
+ * card decision, and either the stoppage (free kick / penalty at the spot)
+ * or advantage when the fouled team still has the ball going forward.
+ */
+function commitFoul(state: MatchState, p: Player, victim: Player, behind: boolean, closing: number, kind: 'standing' | 'sliding') {
+  if (state.phase !== 'play') return; // play already stopped: the restart stands
+  const b = state.ball;
   const spot = { x: victim.pos.x, z: victim.pos.z };
   const penalty = inPenaltyArea(state, p.team, spot);
+  const sev = foulSeverity(kind, closing, behind);
+  const card = p.role === 'GK' && sev.card === 'yellow' ? null : sev.card;
   victim.stun = 0.25;
   p.stun = 0.35;
-  state.events.push({ type: 'foul', team: victim.team, player: p.id, victim: victim.id, penalty });
-  if (movingFast && Math.random() < 0.045) injurePlayer(state, victim);
-  if (p.role !== 'GK') {
-    if (behind && movingFast && Math.random() < 0.06) issueCard(state, p, 'red');
-    else if (behind && movingFast && Math.random() < 0.4) issueCard(state, p, 'yellow');
-    else if ((behind || movingFast) && Math.random() < 0.12) issueCard(state, p, 'yellow');
+  if (sev.level === 'excessive' && closing > 7) injurePlayer(state, victim);
+  // Advantage: the fouled side keeps the ball (a teammate has it, or it is
+  // loose with a teammate clearly closer) outside their own third. Not for a
+  // penalty, a sending-off, or when advantage is already being played.
+  const fouledTeam = state.teams[victim.team];
+  const ahead = b.pos.x * fouledTeam.dir > -HALF_L / 3;
+  let keeps = !!b.owner && b.owner.team === victim.team && b.owner !== victim;
+  if (!b.owner) {
+    let mine = Infinity, theirs = Infinity;
+    for (const o of state.players) {
+      if (!o.onPitch || o.sentOff || o === victim) continue;
+      const d = dist(o.pos, b.pos);
+      if (o.team === victim.team) mine = Math.min(mine, d); else theirs = Math.min(theirs, d);
+    }
+    keeps = mine < 3 && mine + 2.5 < theirs;
   }
+  if (!penalty && card !== 'red' && ahead && keeps && !state.advantage) {
+    state.events.push({ type: 'foul', team: victim.team, player: p.id, victim: victim.id, penalty: false, advantage: true, severity: sev.level });
+    state.advantage = { team: victim.team, spot, foulerId: p.id, until: state.clock + ADVANTAGE_WINDOW, card };
+    setBanner(state, 'ADVANTAGE', 1.4);
+    return;
+  }
+  state.events.push({ type: 'foul', team: victim.team, player: p.id, victim: victim.id, penalty, severity: sev.level });
+  if (card) issueCard(state, p, card);
   if (penalty) startPenalty(state, victim.team);
   else startRestart(state, 'free kick', victim.team, spot);
+}
+
+/**
+ * Per live step while advantage is played: if the fouled team loses the
+ * ball within the window, play comes back to the original foul; once the
+ * window passes with the ball kept, the advantage stands and any card is
+ * shown at the next stoppage.
+ */
+function updateAdvantage(state: MatchState) {
+  const adv = state.advantage;
+  if (!adv) return;
+  const b = state.ball;
+  const lost = b.owner && b.owner.team !== adv.team;
+  if (lost && state.clock <= adv.until) {
+    state.advantage = null;
+    const fouler = state.players.find((q) => q.id === adv.foulerId);
+    state.events.push({ type: 'advantageFailed', team: adv.team });
+    if (adv.card && fouler && !fouler.sentOff) issueCard(state, fouler, adv.card);
+    startRestart(state, 'free kick', adv.team, adv.spot);
+    return;
+  }
+  if (state.clock > adv.until) {
+    state.advantage = null;
+    if (adv.card) (state.pendingCards ??= []).push({ playerId: adv.foulerId, color: adv.card });
+    state.events.push({ type: 'advantagePlayed', team: adv.team });
+  }
+}
+
+/** Cards held back while advantage was played: shown at this stoppage. */
+function issuePendingCards(state: MatchState) {
+  const list = state.pendingCards;
+  if (!list?.length) return;
+  state.pendingCards = [];
+  for (const c of list) {
+    const p = state.players.find((q) => q.id === c.playerId);
+    if (p && !p.sentOff) issueCard(state, p, c.color);
+  }
 }
 
 // ---------- Gold Standard engine: rules on top of engine physics ----------
@@ -1217,9 +1310,10 @@ function engineHooks(state: MatchState): BridgeHooks {
       state.events.push({ type: 'deflect', player: p.id });
     },
     woodwork(what) { state.events.push({ type: 'woodwork', what }); },
-    tackle(p, won, fouled) {
+    tackle(p, won, fouled, tripped, closing = 0, kind = 'standing') {
       const team = state.teams[p.team];
-      const victim = pendingTackle.get(p) ?? null;
+      // The player actually caught by the tackle, else the one it was aimed at.
+      const victim = tripped ?? pendingTackle.get(p) ?? null;
       pendingTackle.delete(p);
       p.tackleCd = 0.6;
       const result = won ? (victim ? 'won' : 'poke') : fouled && victim ? 'foul' : 'missed';
@@ -1235,7 +1329,7 @@ function engineHooks(state: MatchState): BridgeHooks {
         clearRestartFlags();
       } else if (fouled && victim && state.phase === 'play') {
         const behind = (p.pos.x - victim.pos.x) * victim.face.x + (p.pos.z - victim.pos.z) * victim.face.z < -0.35;
-        commitFoul(state, p, victim, behind, len(p.vel.x, p.vel.z) > 5);
+        commitFoul(state, p, victim, behind, Math.max(closing, len(p.vel.x, p.vel.z)), kind);
       } else {
         p.stun = p.human ? 0.3 : 0.6;
       }
@@ -1314,6 +1408,7 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
     loftPressed: !!(input && input.loftPressed),
     throughPressed: !!(input && input.throughPressed),
     drivenPressed: !!(input && input.drivenPressed),
+    passHeld: !!(input && input.passHeld),
     shootHeld: !!(input && input.shootHeld),
     shootPressed: !!(input && input.shootPressed),
     finesseHeld: !!(input && input.finesseHeld),
@@ -1405,18 +1500,43 @@ function applyHumanInput(state: MatchState, team: Team, input: InputFrame | null
     }
   }
 
+  // Lost the ball (or passed it) while charging: the charge is gone.
+  if (b.owner !== p && p.passCharge) { p.passCharge = 0; p.passChargeKind = null; }
+  // Winding up a strike (pass or shot being charged on the ball): he checks
+  // his stride so the ball stays close and the strike follows the release
+  // at once instead of chasing a ball he has knocked ahead.
+  // (Only while the ball is still close: if it is already ahead he must go after it.)
+  if (state.engine && b.owner === p && (p.passCharge || (frame.shootHeld && p.charge > 0)) && dist(b.pos, p.pos) < 1.3) {
+    it.mx *= STRIKE_WINDUP_PACE; it.mz *= STRIKE_WINDUP_PACE; it.sprint = false;
+  }
   if (b.owner === p) {
     const anyPass = frame.passPressed || frame.loftPressed || frame.throughPressed || frame.drivenPressed;
-    if (anyPass) {
-      // Priority when several pass buttons land on the same step:
-      // through > lofted > driven > ground.
+    if (anyPass && !p.passCharge) {
+      // Press: start charging. Priority when several pass buttons land on the
+      // same step: through > lofted > driven > ground.
       const kind = frame.throughPressed ? 'through' : frame.loftPressed ? 'lofted' : undefined;
-      it.action = {
-        type: 'pass',
-        target: choosePassTarget(state, p, frame.mx, frame.mz, kind === 'through' ? 'through' : kind === 'lofted' ? 'lofted' : 'ground'),
-        kind,
-        driven: frame.drivenPressed && !kind,
-      };
+      p.passChargeKind = { kind, driven: frame.drivenPressed && !kind };
+      p.passCharge = 1e-3;
+    }
+    if (p.passCharge) {
+      if (frame.passHeld) {
+        // Held: power builds (shown on the meter over the player).
+        p.passCharge = Math.min(1, p.passCharge + dt / PASS_CHARGE_TIME);
+      } else {
+        // Released (or a tap / touch press with no hold): pass now, aimed
+        // with the stick at release. A quick tap keeps the automatic weight.
+        const ck = p.passChargeKind ?? { driven: false };
+        const charged = p.passCharge >= PASS_TAP_CHARGE ? p.passCharge : undefined;
+        it.action = {
+          type: 'pass',
+          target: choosePassTarget(state, p, frame.mx, frame.mz, ck.kind === 'through' ? 'through' : ck.kind === 'lofted' ? 'lofted' : 'ground'),
+          kind: ck.kind,
+          driven: ck.driven,
+          power: charged,
+        };
+        p.passCharge = 0;
+        p.passChargeKind = null;
+      }
     } else if (frame.shootHeld) {
       if (p.charge === 0) p.chargeType = null;
       if (frame.chipHeld) p.chargeType = 'chip';
@@ -2024,6 +2144,10 @@ function scoreGoal(state: MatchState, teamIdx: number) {
   b.intended = null;
   state.penalty = null;
   clearActionBuffers(state);
+  // Advantage led to a goal: it stands; a card held back is shown now.
+  if (state.advantage?.card) (state.pendingCards ??= []).push({ playerId: state.advantage.foulerId, color: state.advantage.card });
+  state.advantage = null;
+  issuePendingCards(state);
   state.phase = 'goal';
   state.phaseTimer = GOAL_PAUSE;
   state.kickoffNext = 1 - teamIdx;
@@ -2143,6 +2267,8 @@ export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
 
   // ----- play -----
   state.clock += dt / state.timeScale; // clock follows real time, whatever the game speed
+  updateAdvantage(state);
+  if (state.phase !== 'play') return; // advantage failed: back to the foul
   if (state.penalty?.active) state.penalty.elapsed += dt;
   if (state.penalty?.pending) {
     state.penalty.elapsed += dt;
@@ -2207,12 +2333,12 @@ export function stepMatch(state: MatchState, inputs: Inputs, dt: number) {
     if (firstTime) {
       // Strike the incoming ball first time; the engine buffers it until
       // the ball is in reach (or rejects it while it is still far off).
-      started = a.type === 'pass' ? doPass(state, p, a.target, { kind: a.kind, driven: a.driven })
+      started = a.type === 'pass' ? doPass(state, p, a.target, { kind: a.kind, driven: a.driven, power: a.power })
         : a.type === 'shoot' ? doShot(state, p, a.power, a.aim || 0, a.shotType || 'normal') : true;
       if (!started && p.human) p.queuedAction = queued ?? { action: a, ttl: RECEIVE_BUFFER };
       continue;
     }
-    if (a.type === 'pass' && b.owner === p) started = doPass(state, p, a.target, { kind: a.kind, driven: a.driven });
+    if (a.type === 'pass' && b.owner === p) started = doPass(state, p, a.target, { kind: a.kind, driven: a.driven, power: a.power });
     else if (a.type === 'shoot' && b.owner === p && p.throwIn) {
       // You can't shoot from a throw-in: throw it to a teammate instead.
       started = doPass(state, p, choosePassTarget(state, p, p.face.x, p.face.z));

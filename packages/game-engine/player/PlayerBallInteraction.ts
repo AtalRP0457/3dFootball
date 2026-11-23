@@ -104,6 +104,8 @@ const FOOT_MASS = 1.2, FOOT_E = 0.5;
 
 /** Seconds a first-time swing may start early relative to the ball's arrival. */
 export const FIRST_TIME_SLACK = 0.04;
+/** How far (m) the wind-up may be from bringing the foot to the ball when a kick is accepted. */
+export const KICK_LINEUP_TOLERANCE = 0.8;
 
 const PASS_KINDS: ReadonlySet<KickKind> = new Set<KickKind>(['shortPass', 'firstTimePass', 'drivenPass', 'throughBall', 'lobPass', 'longPass', 'cross']);
 const REF_DIMS = rigDims(1.8);
@@ -243,7 +245,9 @@ export class PlayerBallInteraction {
       const tc = (clip.markers.find((m) => m.kind === 'contact')?.t ?? 0.55) * clip.duration;
       const sp = this.setupPoint(a, req.aim, kind, a.preferredFoot, tc);
       const miss = Math.hypot(sp.x - (a.pos.x + a.vel.x * tc), sp.z - (a.pos.z + a.vel.z * tc));
-      if (miss > 1.1) {
+      // Strike only once the foot will meet the ball: a premature swing misses
+      // and the retry costs far more than a moment of lining up.
+      if (miss > KICK_LINEUP_TOLERANCE) {
         emit('buffered', kind, `lining up (${miss.toFixed(2)} m off)`);
         return { result: 'buffered' };
       }
@@ -330,7 +334,7 @@ export class PlayerBallInteraction {
     const gap = Math.hypot(b.x - pt.x, b.y - pt.y, b.z - pt.z) - this.cal.ball.radius;
     // A first-time strike may stretch for the ball (contact quality still
     // drops with the gap, so a stretched one-touch is less accurate).
-    const reach = header ? 0.34 : planIn.firstTime ? 0.5 : 0.36;
+    const reach = header ? 0.34 : planIn.firstTime ? 0.5 : 0.42;
     const shot = plan.command === 'shot';
     if (gap > reach) {
       this.lastContact = { playerId: a.id, action: plan.kind, hit: false, gap, quality: 0, time };
@@ -668,8 +672,9 @@ export class PlayerBallInteraction {
       } });
     return true;
   }
-  tackleMissed(a: InteractionActor, kind: 'standing' | 'sliding', fouled: boolean, time: number): void {
-    this.events.emit({ type: 'TackleContact', playerId: a.id, kind, won: false, fouled, time });
+  /** A tackle that did not win the ball: `fouled` when it caught the opponent (victim) first. */
+  tackleMissed(a: InteractionActor, kind: 'standing' | 'sliding', fouled: boolean, time: number, victim?: string, closing?: number): void {
+    this.events.emit({ type: 'TackleContact', playerId: a.id, kind, won: false, fouled, time, victim, closing });
   }
 
   /** Where a tackling foot is (to test contact with an opponent's legs). */

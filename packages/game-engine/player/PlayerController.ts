@@ -553,15 +553,24 @@ export class PlayerController implements InteractionActor {
     }
   }
 
-  /** A tackle that misses the ball but catches the opponent's legs trips him. */
-  private tripCheck(ctx: StepContext, foot: Foot, severity: number): boolean {
+  /**
+   * A tackle that misses the ball but catches an opponent's legs trips him.
+   * Returns the opponent caught (teammates are never tripped by a tackle).
+   */
+  private tripCheck(ctx: StepContext, foot: Foot, severity: number): PlayerController | null {
     const p = this.ix.footPoint(this, foot);
-    let hit = false;
+    let hit: PlayerController | null = null;
     for (const o of ctx.others) {
+      if (this.team >= 0 && o.team === this.team) continue;
       const d = Math.hypot(o.pos.x - p.x, o.pos.z - p.z);
-      if (d < 0.42 && p.y < 0.7) { o.knock(severity); hit = true; }
+      if (d < 0.42 && p.y < 0.7) { o.knock(severity); hit = hit ?? o; }
     }
     return hit;
+  }
+  /** Closing speed of the tackler on a player (m/s), for how serious a foul is. */
+  private closingOn(o: PlayerController): number {
+    const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z, d = Math.hypot(dx, dz) || 1;
+    return Math.max(0, ((this.vel.x - o.vel.x) * dx + (this.vel.z - o.vel.z) * dz) / d);
   }
 
   private continuous(ctx: StepContext): void {
@@ -570,15 +579,24 @@ export class PlayerController implements InteractionActor {
       const t = a.time / a.clip.duration;
       if (t > 0.1 && t < 0.8) {
         if (!a.resolved && this.ix.tackle(this, 'sliding', a.foot, now)) a.resolved = true;
-        this.tripCheck(ctx, a.foot, a.resolved ? 0.5 : 1.2);
+        const closing = this.vel.x * this.vel.x + this.vel.z * this.vel.z;
+        const tripped = this.tripCheck(ctx, a.foot, a.resolved ? 0.5 : 1.2);
+        // Caught the man before the ball: that is the foul, at the moment of contact.
+        if (tripped && !a.resolved) { a.resolved = true; this.ix.tackleMissed(this, 'sliding', true, now, tripped.id, Math.max(Math.sqrt(closing), this.closingOn(tripped))); }
       }
       if (t >= 0.8 && !a.resolved) { a.resolved = true; this.ix.tackleMissed(this, 'sliding', false, now); }
       return;
     }
     if (a && a.clip.name === 'standingTackle') {
       const t = a.time / a.clip.duration;
-      if (!a.resolved && t > 0.2 && t < 0.58 && this.ix.tackle(this, 'standing', a.foot, now)) a.resolved = true;
-      if (!a.resolved && t >= 0.58) { a.resolved = true; this.ix.tackleMissed(this, 'standing', this.tripCheck(ctx, a.foot, 0.95), now); }
+      if (!a.resolved && t > 0.2 && t < 0.58) {
+        if (this.ix.tackle(this, 'standing', a.foot, now)) a.resolved = true;
+        else {
+          const tripped = this.tripCheck(ctx, a.foot, 0.95);
+          if (tripped) { a.resolved = true; this.ix.tackleMissed(this, 'standing', true, now, tripped.id, this.closingOn(tripped)); }
+        }
+      }
+      if (!a.resolved && t >= 0.58) { a.resolved = true; this.ix.tackleMissed(this, 'standing', false, now); }
       return;
     }
     if (a && a.clip.interruptible === false) return;

@@ -662,7 +662,8 @@ export function createRenderer(canvasEl) {
         arrow.position.set(mp ? mp.x : p.pos.x, top + Math.sin(time * 5) * 0.08, mp ? mp.z : p.pos.z);
       }
       const { meter, fill } = markers[id];
-      const charge = p && live ? p.charge || 0 : 0;
+      const passCharging = !!(p && p.passCharge);
+      const charge = p && live ? Math.max(p.charge || 0, p.passCharge || 0) : 0;
       meter.visible = charge > 0;
       if (meter.visible) {
         const pm = playerMeshes[state.players.indexOf(p)];
@@ -670,7 +671,9 @@ export function createRenderer(canvasEl) {
         meter.position.set(mp ? mp.x : p.pos.x, (pm?.character.headHeight ?? 1.95) + 0.75, mp ? mp.z : p.pos.z);
         meter.quaternion.copy(camera.quaternion);
         fill.scale.x = Math.max(0.001, charge) * 0.94;
-        meterCol.setHSL(0.33 * (1 - Math.max(0, charge - 0.35) / 0.65), 0.85, 0.5);
+        // Pass power in blue, shot power green -> red.
+        if (passCharging) meterCol.setHSL(0.58, 0.85, 0.55);
+        else meterCol.setHSL(0.33 * (1 - Math.max(0, charge - 0.35) / 0.65), 0.85, 0.5);
         fill.material.color.copy(meterCol);
       }
     }

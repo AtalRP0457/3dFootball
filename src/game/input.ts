@@ -130,6 +130,7 @@ export class Input {
     let loftPressed = this.anyPressed(b.loft);
     let throughPressed = this.anyPressed(b.through);
     let drivenPressed = this.anyPressed(b.driven);
+    let passHeld = this.anyDown(b.pass) || this.anyDown(b.loft) || this.anyDown(b.through) || this.anyDown(b.driven);
     let finesseHeld = this.anyDown(b.finesse);
     let chipHeld = this.anyDown(b.chip);
     let shootHeld = this.anyDown(b.shoot) || finesseHeld || chipHeld;
@@ -146,6 +147,7 @@ export class Input {
       if (btn(15)) mx += 1;
       const pr = this.padPressed[i] || [];
       // RB + A: driven pass (A alone: ground pass).
+      passHeld = passHeld || btn(0) || btn(2) || btn(3);
       if (pr[0] && btn(5)) drivenPressed = true;
       else passPressed = passPressed || !!pr[0];
       throughPressed = throughPressed || !!pr[2];
@@ -167,7 +169,7 @@ export class Input {
     }
     const l = Math.hypot(mx, mz);
     if (l > 1) { mx /= l; mz /= l; }
-    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
+    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, passHeld, shootHeld, shootPressed, finesseHeld, chipHeld };
   }
 
   /** Gamepad Start/Options button, used for pause. */

@@ -103,7 +103,7 @@ export interface TeamData {
 }
 
 export type Action =
-  | { type: 'pass'; target: Player | null; kind?: PassKind; driven?: boolean; receive?: boolean }
+  | { type: 'pass'; target: Player | null; kind?: PassKind; driven?: boolean; receive?: boolean; power?: number }
   | { type: 'shoot'; power: number; aim?: number; shotType?: ShotType; receive?: boolean }
   | { type: 'tackle' };
 
@@ -153,6 +153,9 @@ export interface Player {
   aiTimer: number;
   /** AI: seconds on the ball in the current possession (raises pass urgency). */
   aiHold?: number;
+  /** Human pass power being charged (0 = not charging) and the pass kind chosen on press. */
+  passCharge?: number;
+  passChargeKind?: { kind?: PassKind; driven: boolean } | null;
   /** Match clock when aiHold was last advanced. */
   aiHoldAt?: number;
   lastShotChecked: number;
@@ -263,6 +266,10 @@ export interface MatchState {
   phaseTimer: number;
   halftimeDone: boolean;
   restart: { type: string; team: number } | null;
+  /** Advantage being played after a foul (play continues; may come back to the foul). */
+  advantage?: { team: number; spot: Vec2; foulerId: number; until: number; card: 'yellow' | 'red' | null } | null;
+  /** Cards for fouls played on with advantage, shown at the next stoppage (Law 12). */
+  pendingCards?: Array<{ playerId: number; color: 'yellow' | 'red' }>;
   events: MatchEvent[];
   banner: { text: string; time: number } | null;
   lastGoal?: GoalInfo;
@@ -288,6 +295,8 @@ export interface MatchConfig {
 export interface InputFrame {
   mx?: number; mz?: number; sprint?: boolean;
   passPressed?: boolean; loftPressed?: boolean; throughPressed?: boolean; drivenPressed?: boolean;
+  /** Any pass button still held (hold to charge pass power; released = pass). */
+  passHeld?: boolean;
   shootHeld?: boolean; shootPressed?: boolean; finesseHeld?: boolean; chipHeld?: boolean;
 }
 export type Inputs = Partial<Record<HumanId, InputFrame | null>>;

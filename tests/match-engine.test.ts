@@ -8,15 +8,9 @@ import { MatchPhysics, preparePhysics } from '../src/game/engineBridge.ts';
 import type { MatchState, TeamData } from '../src/types/game.ts';
 
 // AI decisions use randomness; fix the stream so each CI runner exercises the
-// same reduced-roster scenarios and does not occasionally miss all attacks.
-let randomState = 0x3df00d;
-Math.random = () => {
-  let t = randomState += 0x6d2b79f5;
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
-
+// same reduced-roster scenarios (Codex's seed 0x3df00d, shared helper).
+import { seedRandom } from './support/seed.ts';
+seedRandom(0x3df00d);
 await preparePhysics();
 let failed = 0;
 const check = (name: string, pass: boolean, detail: string) => {

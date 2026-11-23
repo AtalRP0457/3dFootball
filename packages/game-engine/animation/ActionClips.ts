@@ -69,22 +69,25 @@ function skill(name: ActionKind, dur: number, keys: Keyframe[], markers: AnimMar
 
 const arms = (z: number): PartialPose => ({ 'upperArm.L': { z }, 'upperArm.R': { z: -z } });
 
+// Kick wind-ups are kept short (contact ~0.2-0.25 s after the press; a power
+// shot ~0.36 s so its wind-up still reads): a long canned wind-up is the main
+// source of input-to-action delay.
 export const ACTION_CLIPS: Record<ActionKind, ActionClip> = {
   shortPass: kick('shortPass', { dur: 0.36, contact: 0.5, power: 0.25, lean: 0.12, lofted: 0, turnOut: 0.7, follow: 0 }),
   firstTimePass: kick('firstTimePass', { dur: 0.32, power: 0.3, lean: 0.12, lofted: 0, turnOut: 0.6, follow: 0, contact: 0.45 }),
-  drivenPass: kick('drivenPass', { dur: 0.5, power: 0.6, lean: 0.2, lofted: 0, turnOut: 0.2, follow: 0.2 }),
+  drivenPass: kick('drivenPass', { dur: 0.4, power: 0.6, lean: 0.2, lofted: 0, turnOut: 0.2, follow: 0.2 }),
   throughBall: kick('throughBall', { dur: 0.45, power: 0.4, lean: 0.15, lofted: 0, turnOut: 0.5, follow: 0.1 }),
-  lobPass: kick('lobPass', { dur: 0.55, power: 0.55, lean: -0.12, lofted: 0.8, turnOut: 0.2, follow: 0.6 }),
-  longPass: kick('longPass', { dur: 0.6, power: 0.8, lean: -0.1, lofted: 0.7, turnOut: 0.1, follow: 0.8 }),
-  cross: kick('cross', { dur: 0.6, power: 0.75, lean: -0.08, lofted: 0.6, turnOut: 0.5, follow: 0.7 }),
-  shot: kick('shot', { dur: 0.55, power: 0.75, lean: 0.18, lofted: 0, turnOut: 0, follow: 0.6 }),
-  powerShot: kick('powerShot', { dur: 0.78, power: 1, lean: 0.22, lofted: 0, turnOut: 0, follow: 1, contact: 0.6 }),
-  finesseShot: kick('finesseShot', { dur: 0.6, power: 0.6, lean: 0.12, lofted: 0.2, turnOut: 0.9, follow: 0.6 }),
-  placedShot: kick('placedShot', { dur: 0.5, power: 0.5, lean: 0.15, lofted: 0, turnOut: 0.6, follow: 0.3 }),
-  lowDrivenShot: kick('lowDrivenShot', { dur: 0.55, power: 0.85, lean: 0.32, lofted: 0, turnOut: 0, follow: 0.3 }),
-  chipShot: kick('chipShot', { dur: 0.55, power: 0.4, lean: -0.15, lofted: 1, turnOut: 0, follow: 0.2 }),
+  lobPass: kick('lobPass', { dur: 0.44, power: 0.55, lean: -0.12, lofted: 0.8, turnOut: 0.2, follow: 0.6 }),
+  longPass: kick('longPass', { dur: 0.48, power: 0.8, lean: -0.1, lofted: 0.7, turnOut: 0.1, follow: 0.8 }),
+  cross: kick('cross', { dur: 0.48, power: 0.75, lean: -0.08, lofted: 0.6, turnOut: 0.5, follow: 0.7 }),
+  shot: kick('shot', { dur: 0.42, power: 0.75, lean: 0.18, lofted: 0, turnOut: 0, follow: 0.6 }),
+  powerShot: kick('powerShot', { dur: 0.6, power: 1, lean: 0.22, lofted: 0, turnOut: 0, follow: 1, contact: 0.6 }),
+  finesseShot: kick('finesseShot', { dur: 0.46, power: 0.6, lean: 0.12, lofted: 0.2, turnOut: 0.9, follow: 0.6 }),
+  placedShot: kick('placedShot', { dur: 0.4, power: 0.5, lean: 0.15, lofted: 0, turnOut: 0.6, follow: 0.3 }),
+  lowDrivenShot: kick('lowDrivenShot', { dur: 0.42, power: 0.85, lean: 0.32, lofted: 0, turnOut: 0, follow: 0.3 }),
+  chipShot: kick('chipShot', { dur: 0.44, power: 0.4, lean: -0.15, lofted: 1, turnOut: 0, follow: 0.2 }),
   volley: {
-    ...kick('volley', { dur: 0.5, power: 0.8, lean: -0.05, lofted: 0, turnOut: 0, follow: 0.6 }),
+    ...kick('volley', { dur: 0.42, power: 0.8, lean: -0.05, lofted: 0, turnOut: 0, follow: 0.6 }),
     keys: [
       { t: 0, pose: {} },
       { t: 0.35, pose: { 'thigh.R': { x: -0.2, z: -0.3 }, 'shin.R': { x: 1.6 }, roll: 0.15, spine: { x: -0.1 }, ...arms(0.9) } },

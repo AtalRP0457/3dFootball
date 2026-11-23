@@ -44,7 +44,7 @@ export interface BridgeHooks {
   deflect(p: Player): void;
   woodwork(what: 'post' | 'bar'): void;
   /** Engine tackle outcome. */
-  tackle(p: Player, won: boolean, fouled: boolean): void;
+  tackle(p: Player, won: boolean, fouled: boolean, tripped?: Player | null, closing?: number, kind?: 'standing' | 'sliding'): void;
 }
 
 // ---------- coordinates: match (x along the pitch, z across) → engine (z along, x across)
@@ -326,7 +326,7 @@ export class MatchPhysics {
           else if (e.surface === 'player' && p && p !== b.owner) hooks.deflect(p);
           break;
         case 'TackleContact':
-          if (p) { this.tackling.delete(p); hooks.tackle(p, e.won, e.fouled); }
+          if (p) { this.tackling.delete(p); hooks.tackle(p, e.won, e.fouled, e.victim ? this.byId.get(e.victim) ?? null : null, e.closing ?? 0, e.kind); }
           break;
         default: break;
       }

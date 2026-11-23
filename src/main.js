@@ -139,6 +139,9 @@ let pendingReplay = null; // goal scored: replay after the celebration
 let replayFrameCount = 0; // absolute index of frames pushed to the buffer
 let replayCaptureElapsed = 0;
 let fps = 60;
+// Debug: simulation steps per second, and the last strike's charge and launch speed.
+let simHz = 60, simSteps = 0, simWindow = 0;
+let lastLaunch = null; // { kind, power, speed, steps }
 let lastInputs = {};
 
 // ---------- menu ----------
@@ -1314,6 +1317,8 @@ function finishReplay() {
 
 function handleEvents() {
   for (const e of match.events) {
+    if ((e.type === 'pass' || e.type === 'shot') && e.human) lastLaunch = { kind: e.type === 'pass' ? `${e.kind || 'ground'} pass` : `${e.shotType || 'normal'} shot`, power: e.power, speed: 0, steps: 0 };
+    if (e.type === 'foul' || e.type === 'advantageFailed') { /* restart set by the simulation in the same step */ }
     audio.playEvent(e);
     tutorialEvent(e);
     if (e.type === 'goal') {
@@ -1394,7 +1399,7 @@ function promptsFor(id, team) {
   if (b.owner === p && p.mustPass) {
     items.push(`${k(K.move)} aim`, `${k(K.pass)} <span class="act">${p.throwIn ? 'Throw' : 'Pass'}</span> → ${nextName}`);
   } else if (b.owner === p) {
-    items.push(`${k(K.pass)} <span class="act">Pass</span> → ${nextName}`,
+    items.push(`${k(K.pass)} <span class="act">Pass</span> → ${nextName} (hold = harder)`,
       `${k(K.driven)} Driven ${k(K.through)} Through ${k(K.loft)} Lob / Cross`,
       `hold ${k(K.shoot)} <span class="act">Shoot</span> ${k(K.finesse)} Curl ${k(K.chip)} Chip`, `${k(K.sprint)} Sprint`);
   } else if (b.owner && b.owner.team !== team.index && (b.owner.holding || b.owner.mustPass)) {
@@ -1424,8 +1429,9 @@ function updateDebug() {
   const b = match.ball;
   const f = (v) => v.toFixed(1);
   const lines = [];
-  lines.push(`fps ${fps.toFixed(0)}   speed ${dev.speed}%   assist ${match.assistName}`);
-  lines.push(`phase ${match.phase}   clock ${f(match.clock)}s`);
+  lines.push(`render ${fps.toFixed(0)} fps   simulation ${simHz.toFixed(0)} Hz   speed ${dev.speed}%   assist ${match.assistName}`);
+  lines.push(`phase ${match.phase}${match.restart ? ` (${match.restart.type})` : ''}   clock ${f(match.clock)}s${match.advantage ? `   ADVANTAGE ${f(match.advantage.until - match.clock)}s` : ''}`);
+  if (lastLaunch) lines.push(`last strike: ${lastLaunch.kind}  charge ${lastLaunch.power == null ? 'tap' : Number(lastLaunch.power).toFixed(2)}  launch ${f(lastLaunch.speed)} m/s`);
   lines.push(`keys down: ${[...input.down].join(' ') || '-'}`);
   const r = input.lastRaw;
   lines.push(`last key: ${r ? `code=${r.code || '∅'} key=${r.key} keyCode=${r.keyCode} → ${r.mapped}` : '-'}`);
@@ -1576,6 +1582,8 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
+  simWindow += dt;
+  if (simWindow >= 1) { simHz = simSteps / simWindow; simSteps = 0; simWindow = 0; }
 
   if (match) {
     input.pollPads();
@@ -1598,6 +1606,9 @@ function frame(now) {
         input.endStep();
         // Slow motion: each step advances the game by a smaller slice of time.
         stepMatch(match, inputs, FIXED_DT * scale);
+        simSteps++;
+        // Launch speed: the fastest the ball goes in the 4 steps after release.
+        if (lastLaunch && lastLaunch.steps < 4 && !match.ball.owner) { lastLaunch.steps++; lastLaunch.speed = Math.max(lastLaunch.speed, Math.hypot(match.ball.vel.x, match.ball.vel.z)); }
         tutorialTick(FIXED_DT, inputs.p1);
         drillTick(FIXED_DT);
         acc -= FIXED_DT;
