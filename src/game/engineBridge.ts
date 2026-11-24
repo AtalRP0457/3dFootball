@@ -89,20 +89,27 @@ export function shotKind(type: string): KickKind {
 /** Engine step mode: open play, frozen stoppage, or a restart being set up. */
 export type StepMode = boolean | 'setup';
 
-interface KickRequestArgs { command: KickCommand; kind: KickKind; vel: Vec3; commit: () => void; target?: Vec2 }
+/** How a planned strike is hit: the effort (0.25 tap … 1 full) and the spin the planner flew it with. */
+export interface StrikeOpts { power?: number; spin?: { top: number; side: number }; /** Ball position when planned (shots re-aim by bearing, see KickRequest.aimFrom). */ aimFrom?: Vec2 }
+interface KickRequestArgs { command: KickCommand; kind: KickKind; vel: Vec3; commit: () => void; target?: Vec2; strike?: StrikeOpts }
 
 /**
  * Local avoidance: a player heading into a teammate swerves round him
- * (footballers see each other), keeping his speed. Opponents are not
- * avoided: those contacts are part of the game. Gentler for a human's player.
+ * (footballers see each other), keeping his speed. Opponents off the ball
+ * are stepped round too; the ball carrier is not (challenges are part of
+ * the game). Gentler for a human's player.
  */
 function avoidTeammates(state: MatchState, p: Player, mx: number, mz: number): { x: number; z: number } {
   const mag = Math.hypot(mx, mz);
   if (mag < 0.05) return { x: mx, z: mz };
   const dx0 = mx / mag, dz0 = mz / mag;
   let ax = 0, az = 0;
+  const carrier = state.ball.owner;
   for (const o of state.players) {
-    if (o === p || o.team !== p.team || !o.onPitch || o.sentOff) continue;
+    if (o === p || !o.onPitch || o.sentOff) continue;
+    // Opponents: only the ball carrier is someone to run into (a challenge);
+    // anyone else off the ball is stepped round like a team-mate.
+    if (o.team !== p.team && (o === carrier || p === carrier)) continue;
     const ox = o.pos.x - p.pos.x, oz = o.pos.z - p.pos.z;
     const d = Math.hypot(ox, oz);
     if (d > AVOID_RADIUS || d < 1e-3) continue;
@@ -257,6 +264,8 @@ export class MatchPhysics {
       }
       // Match cooldowns: just kicked, stunned or beaten keeper can't play the ball.
       input.noBall = live === 'setup' || (b.owner !== p && (p.kickCd > 0 || p.stun > 0));
+      // Powering up a pass or shot on the ball: the dribble sets it for the strike.
+      input.windUp = b.owner === p && (p.charge > 0 || (p.passCharge ?? 0) > 0 || c.kicking);
       const receiving = b.intended === p && !b.owner && p.human;
       if (receiving && p.receiveFace) input.face = toE(p.receiveFace);
       if (receiving && p.receiveTouch) input.touch = toE(p.receiveTouch);
@@ -364,14 +373,32 @@ export class MatchPhysics {
    * (match coordinates). `commit` runs the match bookkeeping when the engine
    * actually releases the ball at the contact frame.
    */
-  kick(p: Player, command: KickCommand, kind: KickKind, vel: Vec3, commit: () => void, target?: Vec2, from?: Vec2): boolean {
+  kick(p: Player, command: KickCommand, kind: KickKind, vel: Vec3, commit: () => void, target?: Vec2, from?: Vec2, strike?: StrikeOpts): boolean {
     const c = this.ctrl.get(p);
     if (!c) return false;
-    const r = this.commandKick(p, c, command, kind, toE3(vel), target, from);
+    const r = this.commandKick(p, c, command, kind, toE3(vel), target, from, strike);
     if (r === 'rejected') return false;
     this.releases.set(c.id, commit);
-    if (p.human) this.humanKicks.set(p, { req: { command, kind, vel, commit, target }, tries: 0, retry: false });
+    if (p.human) this.humanKicks.set(p, { req: { command, kind, vel, commit, target, strike }, tries: 0, retry: false });
     return true;
+  }
+
+  /** Turn a player's body to face a direction (staging, set pieces). */
+  setFacing(p: Player, face: Vec2): void {
+    const c = this.ctrl.get(p);
+    if (!c) return;
+    c.yaw = yawOf(face);
+    p.face.x = face.x; p.face.z = face.z;
+  }
+
+  /** Re-plan a strike still in its wind-up (low-driven double tap). False if it has already been struck. */
+  amendShot(p: Player, vel: Vec3, spin: { top: number; side: number }): boolean {
+    const c = this.ctrl.get(p);
+    if (!c) return false;
+    const ok = c.amendKick({ velocity: toE3(vel), spin: { top: spin.top, side: -spin.side } });
+    const k = this.humanKicks.get(p);
+    if (ok && k) k.req = { ...k.req, vel, strike: { ...k.req.strike, spin } };
+    return ok;
   }
 
   /**
@@ -379,12 +406,18 @@ export class MatchPhysics {
    * keeps his feet and plays it), so a bump doesn't swallow the button press;
    * a real fall still has to finish.
    */
-  private commandKick(p: Player, c: PlayerController, command: KickCommand, kind: KickKind, ve: Vec3, target?: Vec2, from?: Vec2) {
+  private commandKick(p: Player, c: PlayerController, command: KickCommand, kind: KickKind, ve: Vec3, target?: Vec2, from?: Vec2, strike?: StrikeOpts) {
     const h = Math.hypot(ve.x, ve.z) || 1;
     const te = target ? toE(target) : undefined;
     const fe = from ? toE(from) : undefined;
+    // Spin is given relative to the direction of travel. Both frames share
+    // +y, but the components' conventions differ: the match's side spin is
+    // ω_y = +side, the engine's spinFromComponents uses ω_y = −side.
+    const spin = strike?.spin ? { top: strike.spin.top, side: -strike.spin.side } : undefined;
     const req = {
-      command, kind, power: 0.6, aim: { x: ve.x / h, z: ve.z / h }, velocity: ve,
+      command, kind, power: strike?.power ?? 0.6, aim: { x: ve.x / h, z: ve.z / h }, velocity: ve,
+      ...(spin ? { spin } : {}),
+      ...(strike?.aimFrom ? { aimFrom: toE(strike.aimFrom) } : {}),
       ...(te ? { target: te, targetDist: fe ? Math.hypot(te.x - fe.x, te.z - fe.z) : undefined } : {}),
     };
     let r = c.commandKick(req, this.sim.time);
@@ -413,8 +446,8 @@ export class MatchPhysics {
       if (!c || !live || k.tries >= 2) { this.humanKicks.delete(p); continue; }
       if (!k.retry || c.kicking) continue;
       if (c.sm.busy && c.sm.action?.clip.name !== 'stumble') continue; // down after a fall: wait
-      const { command, kind, vel, commit, target } = k.req;
-      const r = this.commandKick(p, c, command, kind, toE3(vel), target, target ? state.ball.pos : undefined);
+      const { command, kind, vel, commit, target, strike } = k.req;
+      const r = this.commandKick(p, c, command, kind, toE3(vel), target, target ? state.ball.pos : undefined, strike);
       if (r === 'rejected') continue; // not possible yet: try again next step
       k.retry = false;
       k.tries++;
@@ -498,6 +531,15 @@ export class MatchPhysics {
   /** Arrival time of a ground pass of this kind (same weight policy as the kick). */
   groundPassTime(distance: number, kind: 'ground' | 'through', driven = false, power?: number): number {
     return this.groundTime(distance, passArriveSpeed(kind, distance, driven, power));
+  }
+
+  /** Fine-grained flight (1/120 s steps) for solving shots; match coordinates. */
+  flight(pos: Vec3, vel: Vec3, spin: Vec3, horizon = 3): BallPathPoint[] {
+    return predictTrajectory(toE3(pos), toE3(vel), toE3(spin), this.sim.cal.ball, this.sim.cal.world.gravity, horizon, 1 / 120)
+      .map((point) => {
+        const p = toM3(point.p);
+        return { t: point.t, x: p.x, y: p.y, z: p.z };
+      });
   }
 
   /** Match-coordinate trajectory from the same model Rapier advances. */

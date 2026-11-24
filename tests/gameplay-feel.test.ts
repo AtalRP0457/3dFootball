@@ -261,8 +261,16 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
     return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
   };
   sim.pw.events.on((e) => {
-    if (e.type === 'playerCollision' && team.get(e.a!) === team.get(e.b!)) mates++;
-    if (e.type === 'balanceLost') { const c = [...ctl.values()].find((x) => x.id === e.playerId); if (c?.sm.action?.clip.name === 'fall') stepFalls++; }
+    if (e.type === 'playerCollision' && team.get(e.a!) === team.get(e.b!)) {
+      // A free-kick wall stands shoulder to shoulder on purpose (Law 13): not a collision to avoid.
+      // Players walking into a crowded box for a corner or free kick (and a
+      // wall) touch: only open play counts here.
+      const wall = new Set((s.setPiece?.wall ?? []).map((w) => `p${w.id}`));
+      if (s.phase !== 'play' || (wall.has(e.a!) && wall.has(e.b!))) return;
+      mates++;
+      if (process.env.SHOW_MATES) console.log('mates', e.a, e.b, s.clock.toFixed(1), s.phase);
+    }
+    if (e.type === 'balanceLost') { const c = [...ctl.values()].find((x) => x.id === e.playerId); if (c?.sm.action?.clip.name === 'fall') { stepFalls++; if (process.env.SHOW_FALLS) { const pl = s.players.find((q) => `p${q.id}` === e.playerId); console.log('fall', e.playerId, pl?.role, pl?.name, s.clock.toFixed(1), 'dive', pl?.dive.toFixed(2), 'ball', s.ball.owner?.name ?? '-', 'shotLive', s.ball.shotLive); } } }
   });
   let steps = 0;
   while (s.phase !== 'fulltime' && steps < 340 * 60) {

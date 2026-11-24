@@ -77,6 +77,7 @@ const OPTIONS = {
   playerIdentity: { label: 'Player names', values: [['real', 'Real players'], ['parody', 'Parody players']] },
   difficulty: { label: 'Difficulty', values: [['beginner', 'Amateur'], ['easy', 'Semi-Pro'], ['normal', 'Professional'], ['hard', 'World Class']] },
   duration: { label: 'Match length', values: [[120, '2 minutes'], [240, '4 minutes'], [360, '6 minutes']] },
+  drawRule: { label: 'Draws', values: [['draw', 'Stay a draw'], ['penalties', 'Penalty shoot-out']] },
   assist: { label: 'Control assist', values: [['off', 'Manual'], ['assisted', 'Assisted'], ['full', 'Full assist']] },
   dribbleStyle: { label: 'Dribbling', values: [['sticky', 'Arcade (ball at feet)'], ['touch', 'Realistic (touches)']] },
   physics: { label: 'Physics', values: [['engine', 'Gold Standard engine'], ['classic', 'Classic']] },
@@ -537,7 +538,7 @@ export function createFrontend(api) {
       <div class="set-col a-in" style="--i:1">
         <h3>Football universe</h3>${settingsRows(['roster', 'clubIdentity', 'playerIdentity'])}
         ${locked ? '<p class="set-note">A tournament in progress keeps the roster profile it started with. Names and crests follow your identity choice everywhere.</p>' : ''}
-        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'physics', 'camera', 'cameraZoom', 'graphics', 'intro', 'dribbleStyle', 'era'])}
+        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'drawRule', 'assist', 'physics', 'camera', 'cameraZoom', 'graphics', 'intro', 'dribbleStyle', 'era'])}
       </div>
       <div class="set-col a-in" style="--i:2"><h3>Help, tools & data</h3>
         <button class="set-link" data-nav data-act="controls" data-v="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>

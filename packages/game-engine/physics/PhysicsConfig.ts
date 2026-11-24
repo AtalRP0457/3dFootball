@@ -17,8 +17,20 @@ export interface BallConfig {
   groundFriction: number;
   /** Rolling resistance coefficient on grass (decel = c·g). */
   rollingResistance: number;
-  /** Drag coefficient (smooth-ish ball, subcritical/supercritical blend). */
+  /** Drag coefficient above the drag crisis (a struck ball in flight, and the rolling ball). */
   dragCoefficient: number;
+  /**
+   * Drag coefficient below the drag crisis: a slow ball in flight has a
+   * laminar boundary layer and ~1.7x the drag (soccer-ball wind tunnels:
+   * ~0.4-0.45 subcritical, ~0.2-0.25 supercritical).
+   */
+  dragCoefficientSubcritical: number;
+  /** Speed (m/s) at the middle of the drag crisis (~11-12 m/s for a panelled size-5 ball). */
+  dragCrisisSpeed: number;
+  /** Spin (rad/s) below which a fast ball knuckles: an unstable wake moves it about in flight. */
+  knuckleSpin: number;
+  /** Side-force coefficient amplitude of a non-spinning ball (wind tunnel: ~0.05-0.1). */
+  knuckleStrength: number;
   /** Air density kg/m³. */
   airDensity: number;
   /** Scale on the Magnus lift (1 = textbook). */
@@ -93,6 +105,10 @@ const DEFAULTS: PhysicsCalibration = {
     groundFriction: 0.55,
     rollingResistance: 0.06,
     dragCoefficient: 0.25,
+    dragCoefficientSubcritical: 0.42,
+    dragCrisisSpeed: 11,
+    knuckleSpin: 7,
+    knuckleStrength: 0.075,
     airDensity: 1.225,
     magnusScale: 1,
     spinDecayTime: 6,

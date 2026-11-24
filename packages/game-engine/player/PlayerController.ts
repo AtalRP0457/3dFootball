@@ -169,6 +169,7 @@ export class PlayerController implements InteractionActor {
   stick(): Vec2 { return (this.buffered && this.hasBall) || this.input.assisted ? { x: 0, z: 0 } : this.input.move; }
   /** The first-touch direction chosen while receiving (overrides the stick for the touch). */
   touchDir(): Vec2 | null { return this.input.touch ?? null; }
+  windingUp(): boolean { return !!this.input.windUp; }
   intendedSpeed(): number { return targetSpeedFor(this.input, this.tuning, this.stamina); }
 
   /** Simulate the movement model forward under the current input (dribble prediction). */
@@ -457,6 +458,16 @@ export class PlayerController implements InteractionActor {
     this.lastPose = { ...pose, bones: Object.fromEntries(Object.entries(pose.bones).map(([k, v]) => [k, [v[0], v[1], v[2]] as [number, number, number]])) };
   }
 
+  /**
+   * Change a kick that has not met the ball yet (a modifier pressed during
+   * the wind-up, e.g. the low-driven double tap). False once it is struck.
+   */
+  amendKick(patch: Partial<Pick<KickPlan, 'velocity' | 'spin' | 'aimFrom' | 'target'>>): boolean {
+    if (this.kick && this.sm.action && !this.sm.action.resolved) { this.kick = { ...this.kick, ...patch }; return true; }
+    if (this.buffered) { this.buffered = { ...this.buffered, req: { ...this.buffered.req, ...patch } }; return true; }
+    return false;
+  }
+
   /** Is a kick in progress or waiting for the ball? */
   get kicking(): boolean { return !!(this.kick || this.buffered); }
   /** Drop any kick in progress (possession changed hands, restart). */
@@ -545,7 +556,13 @@ export class PlayerController implements InteractionActor {
   private startKick(plan: KickPlan): void {
     this.kick = plan;
     this.actionAim = plan.aim;
-    this.sm.start(plan.kind, { foot: plan.foot, power: plan.power, aim: plan.aim, force: true });
+    // Effort shows in the swing: a full-power strike takes a longer back-swing,
+    // a tapped finish close in is hit almost without one (FC 26: "minimal
+    // wind-up" close-range finishes). Passes keep their quick swing.
+    const shot = plan.command === 'shot' && plan.kind !== 'header';
+    // (The power-shot clip already has the long wind-up: only a little slower.)
+    const rate = shot ? clamp(1.14 - 0.32 * plan.power, plan.kind === 'powerShot' ? 0.93 : 0.82, 1.1) : 1;
+    this.sm.start(plan.kind, { foot: plan.foot, power: plan.power, aim: plan.aim, force: true, rate });
     this.actionYaw0 = this.yaw;
   }
 

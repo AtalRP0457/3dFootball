@@ -510,8 +510,17 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
     return;
   }
 
-  let tx = gx + dir * 1.2;
-  let tz = clamp(b.pos.z * 0.3, -GOAL.width / 2 + 0.4, GOAL.width / 2 - 0.4);
+  // Set position: on the line from the ball to the middle of the goal (the
+  // bisector of the shooting angle), further off the line as the ball comes
+  // closer in front; a poorer positional keeper drifts towards the near post.
+  const pos = p.phys?.keeper?.positioning ?? 0.7;
+  const bvx = b.pos.x - gx, bvz = b.pos.z;
+  const bd = len(bvx, bvz) || 1;
+  const ahead = Math.abs(bvx) / bd; // 1 = straight in front, 0 = level with the line
+  const off = clamp(1.1 + (35 - Math.min(35, bd)) * 0.06, 1.1, 2.6) * (0.4 + 0.6 * ahead);
+  let tx = gx + (bvx / bd) * off;
+  let tz = clamp((bvz / bd) * off + (b.pos.z * 0.12) * (1 - pos), -GOAL.width / 2 + 0.3, GOAL.width / 2 - 0.3);
+  if (Math.abs(bvx) > 40) { tx = gx + dir * 1.2; tz = clamp(b.pos.z * 0.1, -2, 2); }
   let sprint = false;
 
   const towardUs = -b.vel.x * dir;
@@ -524,7 +533,8 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
       tx = gx + dir * 0.9;
       tz = clamp(zc, -GOAL.width / 2 - 0.6, GOAL.width / 2 + 0.6);
       sprint = true;
-      if (Math.abs(tz - p.pos.z) > 1.2 && p.dive <= 0 && t < 0.6) p.dive = 0.45;
+      // On the engine the save model (match keeperReadShot) decides when and where he dives.
+      if (!state.engine && Math.abs(tz - p.pos.z) > 1.2 && p.dive <= 0 && t < 0.6) p.dive = 0.45;
     }
   } else if (!b.owner && ballAx < BOX.depth && Math.abs(b.pos.z) < BOX.width / 2
              && len(b.vel.x, b.vel.z) < 12) {

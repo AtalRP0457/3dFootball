@@ -2,7 +2,7 @@ import './style.css';
 import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.ts';
 import { teamRecord, ERAS } from './db/index.ts';
 import { migrate, ls } from './state/store.ts';
-import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.ts';
+import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff, startShootout } from './game/match.ts';
 import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.ts';
 import { createFrontend } from './ui/frontend.js';
 import { Input } from './game/input.ts';
@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS = {
   awayKit: 'away',
   difficulty: 'normal',
   duration: 240,
+  drawRule: 'draw', // draw | penalties: a drawn match goes to a penalty shoot-out
   era: 'on', // era colour grading for the decade teams
   assist: 'assisted',
   dribbleStyle: 'sticky',
@@ -69,6 +70,7 @@ function loadSettings() {
       ...(saved && knownTeam(saved.away) ? { away: saved.away } : {}),
       ...(saved && ['beginner', 'easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
       ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
+      ...(saved && ['draw', 'penalties'].includes(saved.drawRule) ? { drawRule: saved.drawRule } : {}),
       ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
       ...pick('camera', CAMERA_ORDER),
       ...pick('graphics', ['low', 'medium', 'high']),
@@ -1056,6 +1058,8 @@ function startMatch() {
     difficulty: practice ? 'easy' : settings.difficulty,
     duration: settings.duration, practice, indoor: settings.mode === 'indoor',
     extraTime: settings.mode === 'cup', extraTimeDuration: Math.max(30, Math.round(settings.duration / 4)),
+    // Cup ties, and any match with "Draws: penalties", are settled by a shoot-out played on the pitch.
+    penalties: settings.mode === 'cup' || settings.drawRule === 'penalties',
     timeScale: dev.speed / 100,
     assist: settings.assist,
     dribbleStyle: settings.dribbleStyle,
@@ -1069,7 +1073,7 @@ function startMatch() {
   // Gold Standard engine: Rapier physics, the shared player controller and one
   // ball-interaction authority. Indoor fives (boards) and the shoot-out mode
   // still use the classic physics.
-  match.engine = settings.physics !== 'classic' && physicsReady() && !match.indoor && settings.mode !== 'penalties'
+  match.engine = settings.physics !== 'classic' && physicsReady() && !match.indoor
     ? new MatchPhysics(match) : null;
   match.events.length = 0;
   goals = [];
@@ -1109,8 +1113,9 @@ function startMatch() {
   input.enabled = true;
   $('game').focus?.();
   if (settings.mode === 'penalties') {
-    match.phase = 'fulltime';
-    beginCupShootout();
+    // The shoot-out mode: straight to penalties, every kick played on the pitch.
+    if (match.engine) startShootout(match);
+    else { match.phase = 'fulltime'; beginCupShootout(); }
   }
 }
 
@@ -1375,8 +1380,17 @@ function handleEvents() {
     } else if (e.type === 'halftime') {
       // (half time is shown on the scoreboard)
     } else if (e.type === 'fulltime') {
-      if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
+      const so = match.shootout;
+      if (so && so.winner != null) {
+        // Settled by the shoot-out played on the pitch.
+        cupShootoutOutcome = { winner: match.teams[so.winner].data, homeScore: so.scores[0], awayScore: so.scores[1] };
+        if (settings.mode === 'penalties') finishCupShootout();
+        else showFullTime();
+      } else if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
       else showFullTime();
+    } else if (e.type === 'shootoutKick') {
+      const kick = e;
+      showSub(`${kick.name}: ${kick.scored ? 'scores' : kick.how === 'saved' ? 'saved' : kick.how === 'post' ? 'hits the post' : 'misses'}  ·  ${kick.scores[0]} – ${kick.scores[1]}`, 2.2);
     }
   }
   match.events.length = 0;

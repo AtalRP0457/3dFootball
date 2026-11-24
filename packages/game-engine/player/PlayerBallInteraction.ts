@@ -41,6 +41,8 @@ export interface InteractionActor {
   stick(): Vec2;
   /** First-touch direction chosen while receiving, if any (overrides the stick). */
   touchDir?(): Vec2 | null;
+  /** Powering up a strike (see PlayerInput.windUp). */
+  windingUp?(): boolean;
   intendedSpeed(): number;
 }
 
@@ -68,6 +70,19 @@ export interface KickRequest {
    * parallel line.
    */
   target?: Vec2;
+  /**
+   * With `velocity`: the spin the planner solved the flight with (rad/s,
+   * relative to the direction of travel). Without it the kick table's spin
+   * is used, which would not fly the planned path.
+   */
+  spin?: { top: number; side: number };
+  /**
+   * With `target`: where the ball was when the strike was planned. The
+   * re-aim then turns the planned launch by the change in bearing to the
+   * target (keeping any curl allowance and the pace) instead of pointing it
+   * straight at the target. Used by shots.
+   */
+  aimFrom?: Vec2;
   /** Distance from the ball to `target` when the strike was planned. */
   targetDist?: number;
 }
@@ -429,7 +444,13 @@ export class PlayerBallInteraction {
         // Re-aim from the ball's real position at contact (see KickRequest.target).
         const h0 = Math.hypot(v.x, v.z);
         const tx = plan.target.x - b.x, tz = plan.target.z - b.z, td = Math.hypot(tx, tz);
-        if (h0 > 1e-3 && td > 1) {
+        if (h0 > 1e-3 && td > 1 && plan.aimFrom) {
+          // Shot: turn the launch by the change of bearing to the target.
+          const a0 = Math.atan2(plan.target.z - plan.aimFrom.z, plan.target.x - plan.aimFrom.x);
+          const da = Math.atan2(tz, tx) - a0;
+          const c = Math.cos(da), sn = Math.sin(da);
+          v = { x: v.x * c - v.z * sn, y: v.y, z: v.x * sn + v.z * c };
+        } else if (h0 > 1e-3 && td > 1) {
           // Pace for the changed distance (a rolling pass's v² grows ~ with distance).
           const k = plan.targetDist ? clamp(Math.sqrt(td / Math.max(1, plan.targetDist)), 0.85, 1.15) : 1;
           v = { x: (tx / td) * h0 * k, y: v.y * k, z: (tz / td) * h0 * k };
@@ -449,12 +470,19 @@ export class PlayerBallInteraction {
     const ce = Math.cos(elev * D2R), se = Math.sin(elev * D2R);
     const carry = plan.velocity ? 0 : shot ? 0.2 : 0.08;
     let vel: Vec3 = { x: dir.x * exit * ce + a.vel.x * carry, y: exit * se, z: dir.z * exit * ce + a.vel.z * carry };
-    if (plan.velocity && side !== 0 && elev > 6) {
+    if (plan.velocity && !plan.spin && side !== 0 && elev > 6) {
       // A planned curled ball (whipped cross): start it outside the aim line
       // by the angle the intended curl will bend it back, so it lands on target.
       const bend = this.curlAngle(vel, top, side);
       const d2 = rot({ x: vel.x, z: vel.z }, bend); // rot() turns by -angle
       vel = { x: d2.x, y: vel.y, z: d2.z };
+    }
+    if (plan.velocity && plan.spin) {
+      // The planner's spin (it solved curl and dip with it). A mishit
+      // (poor contact) slices it: sidespin and a little lift from striking
+      // off-centre, more on a harder strike.
+      top = plan.spin.top + (1 - q) * gauss(a) * 10 * (0.5 + p);
+      side = plan.spin.side;
     }
     let spin = spinFromComponents(vel, { top, side: side + (1 - q) * noise * 18 });
     if (elev < 4 && passing) {
@@ -547,9 +575,12 @@ export class PlayerBallInteraction {
     if (this.state !== st) this.setState(st, a.id, turning ? `turning ${(turnAngle / D2R).toFixed(0)}°` : sprinting ? 'sprinting with the ball' : 'dribbling', time);
 
     // Touch interval grows with pace; better dribblers touch more often.
-    const T = shield ? 0.3 : turning ? 0.34 : (0.3 + 0.055 * Math.max(speed, target * 0.7)) * (1.12 - 0.25 * t.dribbleSkill);
+    // Powering up a strike: a short touch that sets the ball into his stride
+    // (it stays within a stride, ready to be struck), not a knock-on.
+    const windUp = !!a.windingUp?.();
+    const T = shield ? 0.3 : turning ? 0.34 : windUp ? 0.28 : (0.3 + 0.055 * Math.max(speed, target * 0.7)) * (1.12 - 0.25 * t.dribbleSkill);
     const pred = a.predict(T);
-    const lead = shield ? 0.35 : 0.42 + 0.1 * pred.speed * (sprinting ? 1.6 : 1);
+    const lead = shield ? 0.35 : windUp ? 0.5 + 0.04 * pred.speed : 0.42 + 0.1 * pred.speed * (sprinting ? 1.6 : 1);
     // Alternate feet: aim slightly to the side of the foot that plays next.
     const nextFoot: Foot = this.lastTouchFoot === 'L' ? 'R' : 'L';
     const sideOff = (nextFoot === 'L' ? 1 : -1) * 0.1;

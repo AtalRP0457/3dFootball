@@ -414,6 +414,13 @@ export function createRenderer(canvasEl) {
    * will go, like a broadcast set-piece camera.
    */
   function setPieceCamera(state) {
+    // Penalty / shoot-out: behind the taker, looking at the goal and the keeper.
+    const so = state.shootout, pen = state.penalty;
+    if ((so && so.kicker && so.stage !== 'done') || pen?.active) {
+      const goalX = so ? so.goalX : HALF_L * state.teams[pen.attacker].dir;
+      const dir = Math.sign(goalX) || 1, spotX = goalX - dir * 11;
+      return { pos: V(spotX - dir * 8, 2.5, 1.1), look: V(goalX, 1.0, 0), fov: 36, rate: 3 };
+    }
     const sp = state.setPiece;
     if (!sp || sp.stage !== 'ready' || state.ball.owner !== sp.taker) return null;
     const dir = state.teams[sp.team].dir;

@@ -5,7 +5,7 @@
 // visualisation and AI.
 import { RAPIER, type PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { ballInertia, type BallConfig } from '../physics/PhysicsConfig.ts';
-import { aeroForce } from './BallAerodynamics.ts';
+import { aeroForce, knuckleForce } from './BallAerodynamics.ts';
 import { add3, cross3, lenH, scale3, type Vec3 } from '../physics/Vec3.ts';
 import type { BallState, TrajectoryPoint } from './BallTypes.ts';
 
@@ -13,6 +13,10 @@ export class BallPhysics {
   readonly body: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
   grounded = false;
+  /** Distance flown since the last strike and the knuckle phases chosen at it. */
+  private flown = 0;
+  private knucklePhase: [number, number, number] = [0, 0, 0];
+  private seed = 0x9e3779b9;
 
   constructor(private readonly pw: PhysicsWorld, start: Vec3) {
     const cfg = pw.cal.ball;
@@ -42,7 +46,13 @@ export class BallPhysics {
     b.resetTorques(false);
     const v = b.linvel(), w = b.angvel(), p = b.translation();
     this.grounded = p.y - cfg.radius < 0.012;
-    const F = aeroForce(v, w, cfg);
+    const F = aeroForce(v, w, cfg, !this.grounded);
+    if (!this.grounded) {
+      // A fast ball with almost no spin knuckles (not in the predictor: nobody can read it).
+      this.flown += Math.hypot(v.x, v.y, v.z) * h;
+      const K = knuckleForce(v, w, cfg, this.flown, this.knucklePhase);
+      F.x += K.x; F.y += K.y; F.z += K.z;
+    }
     b.addForce(F, true);
     const I = ballInertia(cfg);
     if (!this.grounded) {
@@ -71,6 +81,12 @@ export class BallPhysics {
   /** Apply a kick as an impulse that produces `velocity` and an angular impulse for `spin`. */
   kick(velocity: Vec3, spin: Vec3): void {
     const cfg = this.cfg, v = this.body.linvel(), w = this.body.angvel();
+    // New flight: new (pseudo-random, reproducible) knuckle phases.
+    this.flown = 0;
+    for (let k = 0; k < 3; k++) {
+      this.seed = (Math.imul(this.seed ^ (this.seed >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;
+      this.knucklePhase[k] = (this.seed / 4294967296) * Math.PI * 2;
+    }
     this.body.applyImpulse({ x: cfg.mass * (velocity.x - v.x), y: cfg.mass * (velocity.y - v.y), z: cfg.mass * (velocity.z - v.z) }, true);
     const I = ballInertia(cfg);
     this.body.applyTorqueImpulse({ x: I * (spin.x - w.x), y: I * (spin.y - w.y), z: I * (spin.z - w.z) }, true);
@@ -142,7 +158,7 @@ export function predictTrajectory(p0: Vec3, v0: Vec3, w0: Vec3, cfg: BallConfig,
   let settled = false;
   for (let t = dt, i = 1; t <= horizon; t += dt, i++) {
     const grounded = p.y - cfg.radius < 0.012 && Math.abs(v.y) < cfg.settleSpeed;
-    const F = aeroForce(v, w, cfg);
+    const F = aeroForce(v, w, cfg, p.y - cfg.radius >= 0.012);
     const a = { x: F.x / cfg.mass, y: F.y / cfg.mass - gravity, z: F.z / cfg.mass };
     if (grounded) {
       a.y = 0; v.y = 0;

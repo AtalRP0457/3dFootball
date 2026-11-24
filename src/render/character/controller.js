@@ -241,7 +241,8 @@ export class AnimationController {
     }
     // Goalkeeper dive, to the side he is moving.
     if ((p.dive || 0) > 0 && pr.dive <= 0) {
-      const left = p.vel.x * p.face.z - p.vel.z * p.face.x;
+      // The save model says which way he dives (+1 his left); else from his movement.
+      const left = p.diveSide ? p.diveSide : p.vel.x * p.face.z - p.vel.z * p.face.x;
       this.play(left >= 0 ? 'gkDiveL' : 'gkDiveR');
       this.oneShot.hold = false;
       this.oneShot.dur = 0.85;

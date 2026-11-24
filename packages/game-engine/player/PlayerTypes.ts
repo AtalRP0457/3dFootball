@@ -88,6 +88,8 @@ export interface PlayerInput {
   /** Slow modifiers. */
   jog: boolean;
   walk: boolean;
+  /** Powering up a strike: the next dribble touch sets the ball into his stride for it. */
+  windUp?: boolean;
   /** Defensive stance / jockey / shield (C). */
   defend: boolean;
   /** Skill modifier (Space). */
