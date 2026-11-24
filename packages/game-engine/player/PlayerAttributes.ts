@@ -50,6 +50,8 @@ export function deriveTuning(a: PlayerAttributes, cfg: PlayerConfig = PHYSICS_DE
     staminaDrain: 0.035 * (1.25 - 0.6 * u(a.stamina)),
     staminaRecover: 0.05 * (0.7 + 0.6 * u(a.stamina)),
     touchControl: u(a.ballControl),
+    firstTouch: u(0.6 * (a.firstTouch ?? a.ballControl) + 0.4 * a.ballControl),
+    weakFootQuality: 0.7 + 0.06 * Math.max(1, Math.min(5, a.weakFoot ?? 3)),
     dribbleSkill: u(a.dribbling),
     passSkill: u(a.passing),
     shotSkill: u(a.shooting),

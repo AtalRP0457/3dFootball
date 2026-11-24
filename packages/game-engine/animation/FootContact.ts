@@ -83,7 +83,8 @@ export function footAt(u: number, g: GaitParams, hipHeight: number): FootSample 
   const e = s * s * (3 - 2 * s);
   const z = -B + (F + B) * e - g.lift * 0.35 * Math.sin(Math.PI * Math.min(1, s * 1.4));
   const y = groundY + g.heel * (1 - s) + g.lift * Math.sin(Math.PI * Math.min(1, s * 1.1)) ** 0.85;
-  return { z, y, planted: false, progress: s, footPitch: 0.5 * (1 - e) - 0.15 * Math.sin(Math.PI * s) };
+  // Swing starts on the toes exactly where stance ended (0.9 rad) so toe-off doesn't flick the foot.
+  return { z, y, planted: false, progress: s, footPitch: 0.9 * (1 - e) - 0.15 * Math.sin(Math.PI * s) };
 }
 
 /** Tracks phase and emits foot-strike events. */

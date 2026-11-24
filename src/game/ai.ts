@@ -11,6 +11,7 @@ import type { MatchState, Player, Team, Ball, Vec2, PassKind, ShotType } from '.
 export interface TeamContext { chaser: Player | null; second: Player | null; humanCloser: boolean; humanD: number }
 import { HALF_L, HALF_W, GOAL, BOX, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.ts';
 import { predictGroundBall, samplePath } from './physics/ballPhysics.ts';
+import { laneRisk } from './mechanics/lanes.ts';
 
 const len = (x: number, z: number) => Math.hypot(x, z);
 const dist = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -114,15 +115,8 @@ function nearestOpponentDist(state: MatchState, p: Player) {
   return m;
 }
 
-function segmentDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number) {
-  const vx = bx - ax, vz = bz - az;
-  const l2 = vx * vx + vz * vz || 1;
-  const t = clamp(((px - ax) * vx + (pz - az) * vz) / l2, 0, 1);
-  return Math.hypot(px - (ax + vx * t), pz - (az + vz * t));
-}
-
 /** Score every teammate as a pass option. Returns {target, score} or null. */
-export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = false) {
+export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = false, safety = 0) {
   const team = state.teams[p.team];
   const dir = team.dir;
   const opps = opponents(state, p);
@@ -132,15 +126,19 @@ export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = fa
     if (t.role === 'GK' && !allowKeeper) continue;
     const d = dist(p.pos, t.pos);
     if (d < 4 || d > 42) continue;
-    let open = Infinity, blocked = false;
-    for (const o of opps) {
-      open = Math.min(open, dist(o.pos, t.pos));
-      if (d <= 24 && segmentDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, t.pos.x, t.pos.z) < 1.3) blocked = true;
-    }
+    let open = Infinity;
+    for (const o of opps) open = Math.min(open, dist(o.pos, t.pos));
+    // Lane by timing (can a defender get to the ball on its way?). A pass too
+    // long or too covered to play on the ground goes in the air (passKind),
+    // where the lane matters less but a marked receiver still does.
+    const risk = laneRisk(state, p.pos, t.pos, p.team);
+    const aerial = d > 40 || (risk > 0.6 && d > 12);
     const forward = (t.pos.x - p.pos.x) * dir;
-    const score = forward * 0.5 + Math.min(open, 8) * 1.2 - (blocked ? 12 : 0) - d * 0.08
-      + (t.role === 'GK' ? -6 : 0);
-    if (!best || score > best.score) best = { target: t, score };
+    // How likely it is lost: the lane (ground) or a marker close to the receiver (aerial).
+    const danger = aerial ? clamp((3 - open) / 3, 0, 1) * 0.8 + 0.15 : risk;
+    const score = forward * 0.5 * (1 - safety) + Math.min(open, 8) * 1.2 - (aerial ? 2.5 + Math.max(0, 3 - open) * 3 : risk * 22) - d * 0.08
+      - danger * 10 * safety + (t.role === 'GK' ? -6 : 0);
+    if (!best || score > best.score) best = { target: t, score, risk: danger };
   }
   return best;
 }
@@ -208,9 +206,12 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
     return;
   }
   if (b.intended === p && !b.owner) {
+    // Meet the ball where he can really get to it at a firm run (the same
+    // search a human receiver gets), not at an optimistic earliest point he
+    // can't reach in time, which lets the ball run past him.
     p.aiState = 'receive pass';
-    const q = interceptPoint(p, b);
-    setMove(p, q.x, q.z, true, 0.4);
+    const q = receivePoint(p, b);
+    setMove(p, q.x, q.z, q.t > 0.6 && dist(p.pos, q) > 2.5, 0.4);
     return;
   }
 
@@ -373,11 +374,7 @@ function passKind(state: MatchState, p: Player, target: Player): PassKind | unde
   const d = dist(p.pos, target.pos);
   const ahead = (target.pos.x - p.pos.x) * dir;
   const running = target.vel.x * dir > 3;
-  let blocked = false;
-  for (const o of opponents(state, p)) {
-    if (segmentDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, target.pos.x, target.pos.z) < 1.3
-        && dist(o.pos, p.pos) > 1.2) { blocked = true; break; }
-  }
+  const blocked = laneRisk(state, p.pos, target.pos, p.team) > 0.6;
   if (target.role !== 'GK' && ahead > 6 && running && !blocked && d < 30) return 'through';
   if (blocked && d > 12) return 'lofted';
   return undefined; // let the engine pick ground / lofted by distance
@@ -420,6 +417,21 @@ function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
   if (p.aiTimer > 0) return;
   p.aiTimer = team.diff.reaction + Math.random() * 0.25;
 
+  if (p.mustPass && state.kickoffPending) {
+    // Kick-off: a short pass to a teammate level with or behind him (keeps
+    // possession), never a punt forward into the opponents.
+    if (p.mustPassTimer < 0.35 + team.diff.reaction * 0.5) return;
+    let best: Player | null = null, bd = Infinity;
+    for (const t of state.players) {
+      if (t.team !== p.team || t === p || !t.onPitch || t.sentOff || t.role === 'GK') continue;
+      const ahead = (t.pos.x - p.pos.x) * dir;
+      const d = dist(p.pos, t.pos);
+      if (ahead > 1 || d < 3 || d > 22) continue;
+      const score = d + Math.max(0, -ahead - 12) * 0.5;
+      if (score < bd) { bd = score; best = t; }
+    }
+    if (best) { it.action = { type: 'pass', target: best }; return; }
+  }
   if (p.mustPass) {
     if (p.mustPassTimer < 0.5 + team.diff.reaction) return;
     const dGoal = len(goalX - p.pos.x, p.pos.z);
@@ -461,14 +473,19 @@ function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
     }
   }
 
-  const bp = bestPass(state, p);
+  // Tightly pressed: look for the safe ball rather than the ambitious one.
+  const bp = bestPass(state, p, false, press < 2.6 ? 0.7 : 0);
   if (!bp) return;
   // Keep the ball moving: pressure, a good option, or simply having had it
   // a while all make a pass more likely (no endless solo dribbles).
   // Near goal he may carry it on towards a shot instead.
   // (Not a reason for an unpressured back-pass to the keeper.)
+  // A pass likely to be cut out is held back (he keeps it, shields or carries
+  // it on) unless he is about to be tackled.
   const held = bp.target.role === 'GK' ? 0 : Math.min(1, (p.aiHold ?? 0) / 2.5) * (dGoal < 30 ? 0.35 : 1);
-  const urge = (press < 2.6 ? 0.6 : press < 4.5 ? 0.3 : 0) + (bp.score > 7 ? 0.3 : bp.score > 4 ? 0.15 : 0) + held * 0.45;
+  const doubt = press < 1.6 ? 0.3 : 1;
+  const urge = ((press < 2.6 ? 0.6 : press < 4.5 ? 0.3 : 0) + (bp.score > 7 ? 0.3 : bp.score > 4 ? 0.15 : 0) + held * 0.45)
+    * (1 - clamp(bp.risk, 0, 1) * 0.85 * doubt);
   if (Math.random() < Math.min(0.9, urge)) {
     it.action = { type: 'pass', target: bp.target, kind: passKind(state, p, bp.target) };
   }

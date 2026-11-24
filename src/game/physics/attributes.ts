@@ -42,6 +42,7 @@ export function physicalProfile(
   stats: Partial<EngineStats> | null | undefined,
   attrs?: Attributes | null,
   identity?: { heightCm?: number; weightKg?: number } | null,
+  weakFootStars?: number,
 ): PhysicalProfile {
   const s = stats || {};
   const a = attrs || {};
@@ -123,6 +124,9 @@ export function physicalProfile(
     curve: u(curve),
     passAccuracy: u(shortPassing * 0.8 + vision * 0.2),
     longPassing: u(longPassing),
+    vision: u(vision),
+    crossing: u(crossing),
+    weakFoot: clamp(((Number.isFinite(weakFootStars) ? (weakFootStars as number) : 3) - 1) / 4, 0, 1),
     distribution: u(distribution),
     tackling: u(tackling),
     interceptions: u(interceptions),

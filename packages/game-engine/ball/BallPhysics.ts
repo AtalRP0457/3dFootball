@@ -106,12 +106,40 @@ export class BallPhysics {
 }
 
 /**
+ * First touchdown of a predicted flight: the sample where the ball reaches
+ * the ground or where it has already bounced (vertical velocity flipped
+ * between two samples, which a sparse path can otherwise step over).
+ * Interpolated between the two samples. Null if it never comes down.
+ */
+export function firstLanding(path: TrajectoryPoint[], radius: number): { p: Vec3; t: number } | null {
+  let rose = false;
+  for (let k = 1; k < path.length; k++) {
+    const a = path[k - 1], b = path[k];
+    if (b.p.y > radius + 0.3) rose = true;
+    if (!rose) continue;
+    const bounced = a.v.y < 0 && b.v.y > 0;
+    if (bounced || (b.v.y < 0 && b.p.y <= radius + 0.02)) {
+      // Fraction of the step at which the descending ball met the ground.
+      const fall = a.p.y - radius, dy = bounced ? fall + (b.p.y - radius) : a.p.y - b.p.y;
+      const f = dy > 1e-6 ? Math.max(0, Math.min(1, fall / dy)) : 1;
+      return { p: { x: a.p.x + (b.p.x - a.p.x) * f, y: radius, z: a.p.z + (b.p.z - a.p.z) * f }, t: a.t + (b.t - a.t) * f };
+    }
+  }
+  return null;
+}
+
+/**
  * Predict the flight with the same aerodynamic model (ground bounces and
  * rolling approximated, no goal frame). Used for trajectory display and AI.
  */
 export function predictTrajectory(p0: Vec3, v0: Vec3, w0: Vec3, cfg: BallConfig, gravity: number, horizon = 4, dt = 1 / 120): TrajectoryPoint[] {
   let p = { ...p0 }, v = { ...v0 }, w = { ...w0 };
   const out: TrajectoryPoint[] = [{ t: 0, p: { ...p }, v: { ...v } }];
+  // On the ground the ball rolls: friction makes the spin slow with it, so
+  // forces at the centre decelerate it by F / (m + I/r²), and the
+  // rolling-resistance torque adds 40 % (the same as the Rapier body).
+  const rollShare = 1 / (1 + ballInertia(cfg) / (cfg.mass * cfg.radius * cfg.radius));
+  let settled = false;
   for (let t = dt, i = 1; t <= horizon; t += dt, i++) {
     const grounded = p.y - cfg.radius < 0.012 && Math.abs(v.y) < cfg.settleSpeed;
     const F = aeroForce(v, w, cfg);
@@ -120,8 +148,17 @@ export function predictTrajectory(p0: Vec3, v0: Vec3, w0: Vec3, cfg: BallConfig,
       a.y = 0; v.y = 0;
       const s = lenH(v);
       if (s < 0.04) break;
-      a.x -= (cfg.rollingResistance * gravity * v.x) / s;
-      a.z -= (cfg.rollingResistance * gravity * v.z) / s;
+      if (!settled) {
+        // A skidding ball (spin short of rolling) is brought to a roll by
+        // friction almost at once: momentum and spin even out.
+        const iR = ballInertia(cfg) / (cfg.mass * cfg.radius * cfg.radius);
+        const roll = (w.z * v.x - w.x * v.z) / s * cfg.radius * -1; // ω·(up×dir)·r
+        const s2 = (s + iR * roll) / (1 + iR);
+        if (s2 > 0 && s2 < s) { v.x *= s2 / s; v.z *= s2 / s; }
+        settled = true;
+      }
+      a.x = (a.x - (cfg.rollingResistance * gravity * 1.4 * v.x) / s) * rollShare;
+      a.z = (a.z - (cfg.rollingResistance * gravity * 1.4 * v.z) / s) * rollShare;
     } else {
       w = scale3(w, Math.exp(-dt / cfg.spinDecayTime));
     }

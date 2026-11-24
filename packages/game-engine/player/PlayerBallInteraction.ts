@@ -12,6 +12,7 @@
 // write conflicting velocities in the same step.
 import type { BallController } from '../ball/BallController.ts';
 import { rollingSpin, spinFromComponents } from '../ball/BallSpin.ts';
+import { firstLanding, predictTrajectory } from '../ball/BallPhysics.ts';
 import { ACTION_CLIPS } from '../animation/ActionClips.ts';
 import { applyPartial, emptyPose, mirrorPartial, sampleKeys } from '../animation/AnimationBlending.ts';
 import type { PhysicsCalibration } from '../physics/PhysicsConfig.ts';
@@ -26,6 +27,8 @@ export interface InteractionActor {
   readonly tuning: PlayerTuning;
   readonly dims: RigDims;
   readonly preferredFoot: Foot;
+  /** Team index, when known (opponent pressure on a first touch). */
+  readonly team?: number;
   pos: Vec2;
   vel: Vec2;
   yaw: number;
@@ -36,10 +39,14 @@ export interface InteractionActor {
   predict(T: number): { pos: Vec2; dir: Vec2; speed: number };
   /** Current stick direction (world, magnitude 0..1) and the speed it asks for. */
   stick(): Vec2;
+  /** First-touch direction chosen while receiving, if any (overrides the stick). */
+  touchDir?(): Vec2 | null;
   intendedSpeed(): number;
 }
 
 export type KickCommand = 'pass' | 'through' | 'lob' | 'shot';
+/** Which part of the body a first touch is taken with. */
+export type ReceivePart = 'foot' | 'thigh' | 'chest' | 'head';
 
 export interface KickRequest {
   command: KickCommand;
@@ -53,6 +60,16 @@ export interface KickRequest {
    * with contact quality; only its target changes.
    */
   velocity?: Vec3;
+  /**
+   * With `velocity`: the world point the planned line runs through. If the
+   * ball has moved by the contact frame (lining up, a dribble touch), the
+   * strike is re-aimed from where the ball really is to this point, and its
+   * pace adjusted for the changed distance, instead of being played along a
+   * parallel line.
+   */
+  target?: Vec2;
+  /** Distance from the ball to `target` when the strike was planned. */
+  targetDist?: number;
 }
 
 export interface KickPlan extends KickRequest {
@@ -103,6 +120,8 @@ export const powerFromHold = (seconds: number): number => clamp(0.25 + seconds /
 const FOOT_MASS = 1.2, FOOT_E = 0.5;
 
 /** Seconds a first-time swing may start early relative to the ball's arrival. */
+/** Share of the rolling spin a ground pass leaves the foot with (it skids for an instant). */
+export const PASS_ROLL_SPIN = 0.85;
 export const FIRST_TIME_SLACK = 0.04;
 /** How far (m) the wind-up may be from bringing the foot to the ball when a kick is accepted. */
 export const KICK_LINEUP_TOLERANCE = 0.8;
@@ -117,6 +136,8 @@ export class PlayerBallInteraction {
   private releasedBy: string | null = null;
   private releasedAt = -9;
   private lastTouchAt = -9;
+  /** A heavy first touch: who took it and until when he can't play the ball again (s). */
+  private recover: { id: string; until: number } | null = null;
   /** Foot used for the last touch (shown in the debug panel; drives alternation). */
   lastTouchFoot: Foot | null = null;
   private lostSince = -1;
@@ -127,6 +148,8 @@ export class PlayerBallInteraction {
   conflicts = 0;
   /** Player a pass is meant for (match rules): wins ties, others reach less far. */
   intendedFor: string | null = null;
+  /** Body part that took the last first touch (for the control animation). */
+  lastReceivePart: ReceivePart = 'foot';
   private queue: QueuedImpulse[] = [];
   private contactCache = new Map<string, { left: number; fwd: number }>();
 
@@ -267,6 +290,18 @@ export class PlayerBallInteraction {
     return { result: 'accepted', plan };
   }
 
+  /** Angle (rad) by which `side` spin bends a lofted ball's landing point off its launch line. */
+  private curlAngle(vel: Vec3, top: number, side: number): number {
+    const g = this.cal.world.gravity, start = { x: 0, y: this.cal.ball.radius, z: 0 };
+    const landOf = (sp: number): Vec2 | null => {
+      const l = firstLanding(predictTrajectory(start, vel, spinFromComponents(vel, { top, side: sp }), this.cal.ball, g, 6, 1 / 120), this.cal.ball.radius);
+      return l ? { x: l.p.x, z: l.p.z } : null;
+    };
+    const straight = landOf(0), curled = landOf(side);
+    if (!straight || !curled) return 0;
+    return Math.atan2(curled.z, curled.x) - Math.atan2(straight.z, straight.x);
+  }
+
   /** Where the ball centre must be (body frame) at the clip's contact frame. */
   private contactOffset(kind: KickKind, foot: Foot): { left: number; fwd: number } {
     const key = `${kind}|${foot}`;
@@ -354,7 +389,7 @@ export class PlayerBallInteraction {
     let q = 1 - clamp((gap - 0.03) / reach, 0, 1) * 0.5;
     q *= 1 - clamp((aimAngle - 35 * D2R) / (90 * D2R), 0, 0.4);
     q *= 0.75 + 0.25 * a.balance;
-    q *= plan.foot === a.preferredFoot ? 1 : 0.88;
+    q *= plan.foot === a.preferredFoot ? 1 : t.weakFootQuality;
     q *= 1 - clamp((relBall - 8) / 30, 0, 0.25);
     q = clamp(q, 0.2, 1);
     const passing = PASS_KINDS.has(plan.kind);
@@ -371,9 +406,10 @@ export class PlayerBallInteraction {
       case 'shortPass': case 'firstTimePass': foot = 4 + 13 * p; elev = 0.5; break;
       case 'drivenPass': foot = 7 + 14 * p; elev = 3; top = 14; break;
       case 'throughBall': foot = 6.5 + 12 * p; elev = p > 0.7 ? 2.5 : 0.5; break;
-      case 'lobPass': foot = lobFoot(12 + 30 * p, 36); elev = 36; top = -12; break;
-      case 'longPass': foot = lobFoot(25 + 35 * p, 28); elev = 28; top = -14; break;
-      case 'cross': foot = lobFoot(18 + 25 * p, 22); elev = 22; top = -10; side = plan.foot === 'R' ? -32 : 32; break;
+      case 'lobPass': foot = lobFoot(12 + 30 * p, 36); elev = 36; top = -22; break;
+      // Long balls are struck under the ball with real backspin (~5-6 rev/s): it carries and hangs.
+      case 'longPass': foot = lobFoot(25 + 35 * p, 28); elev = 28; top = -35; break;
+      case 'cross': foot = lobFoot(18 + 25 * p, 22); elev = 22; top = -15; side = plan.foot === 'R' ? -32 : 32; break;
       case 'shot': foot = 9.5 + 18 * p; elev = 3 + 7 * p; top = 6; break;
       case 'powerShot': foot = 12.5 + 18 * p; elev = 5 + 8 * p; top = 9; break;
       case 'finesseShot': foot = 10 + 10 * p; elev = 6 + 5 * p; side = (plan.foot === 'R' ? -1 : 1) * (36 + 18 * t.shotSkill); top = 4; break;
@@ -388,7 +424,17 @@ export class PlayerBallInteraction {
     let exit = foot * transfer * technique * (0.78 + 0.22 * q);
     if (plan.velocity) {
       // A planned strike: the planner chose speed and direction; contact quality still matters.
-      const v = plan.velocity;
+      let v = plan.velocity;
+      if (plan.target) {
+        // Re-aim from the ball's real position at contact (see KickRequest.target).
+        const h0 = Math.hypot(v.x, v.z);
+        const tx = plan.target.x - b.x, tz = plan.target.z - b.z, td = Math.hypot(tx, tz);
+        if (h0 > 1e-3 && td > 1) {
+          // Pace for the changed distance (a rolling pass's v² grows ~ with distance).
+          const k = plan.targetDist ? clamp(Math.sqrt(td / Math.max(1, plan.targetDist)), 0.85, 1.15) : 1;
+          v = { x: (tx / td) * h0 * k, y: v.y * k, z: (tz / td) * h0 * k };
+        }
+      }
       const h = Math.hypot(v.x, v.z);
       exit = len3(v) * (0.9 + 0.1 * q);
       elev = Math.atan2(v.y, h) / D2R;
@@ -402,12 +448,19 @@ export class PlayerBallInteraction {
     elev += noise * (spread / D2R) * 0.3;
     const ce = Math.cos(elev * D2R), se = Math.sin(elev * D2R);
     const carry = plan.velocity ? 0 : shot ? 0.2 : 0.08;
-    const vel: Vec3 = { x: dir.x * exit * ce + a.vel.x * carry, y: exit * se, z: dir.z * exit * ce + a.vel.z * carry };
+    let vel: Vec3 = { x: dir.x * exit * ce + a.vel.x * carry, y: exit * se, z: dir.z * exit * ce + a.vel.z * carry };
+    if (plan.velocity && side !== 0 && elev > 6) {
+      // A planned curled ball (whipped cross): start it outside the aim line
+      // by the angle the intended curl will bend it back, so it lands on target.
+      const bend = this.curlAngle(vel, top, side);
+      const d2 = rot({ x: vel.x, z: vel.z }, bend); // rot() turns by -angle
+      vel = { x: d2.x, y: vel.y, z: d2.z };
+    }
     let spin = spinFromComponents(vel, { top, side: side + (1 - q) * noise * 18 });
     if (elev < 4 && passing) {
       // Ground passes are struck through the middle and roll almost at once.
       const rs = rollingSpin(vel, this.cal.ball.radius);
-      spin = { x: rs.x * 0.85, y: spin.y, z: rs.z * 0.85 };
+      spin = { x: rs.x * PASS_ROLL_SPIN, y: spin.y, z: rs.z * PASS_ROLL_SPIN };
       vel.y = Math.min(vel.y, 0.6);
     }
     this.lastContact = { playerId: a.id, action: plan.kind, hit: true, gap, quality: q, time };
@@ -466,7 +519,9 @@ export class PlayerBallInteraction {
     const hasStick = Math.hypot(stick.x, stick.z) > 0.1;
     const speed = Math.hypot(a.vel.x, a.vel.z);
     // A running stride reaches further ahead of the hips than to the side or behind.
-    const inReach = this.reachable(L, speed) && since > 0.14;
+    // After a heavy first touch the ball has to be chased down first.
+    const recovering = !!this.recover && this.recover.id === a.id && time < this.recover.until;
+    const inReach = this.reachable(L, speed) && since > 0.14 && !recovering;
     const relV = { x: b.velocity.x - a.vel.x, z: b.velocity.z - a.vel.z };
 
     if (!hasStick) {
@@ -584,8 +639,17 @@ export class PlayerBallInteraction {
     const relPace = Math.hypot(b.velocity.x - a.vel.x, b.velocity.z - a.vel.z);
     const meant = this.intendedFor === a.id;
     const paceFactor = meant ? 1 : clamp(1.15 - relPace / 22, 0.45, 1);
-    const reach = (a.tuning.interceptReach + (defending ? 0.25 : 0)) * paceFactor * (this.intendedFor && !meant ? 0.85 : 1) + (meant ? 0.25 : 0);
-    if (L.dist > reach || b.position.y > 1.7) return null;
+    let reach = (a.tuning.interceptReach + (defending ? 0.25 : 0)) * paceFactor * (this.intendedFor && !meant ? 0.85 : 1) + (meant ? 0.25 : 0);
+    // A pass just struck past him: a defender needs a moment to react
+    // (~0.2 s, quicker for good interceptors). Until then he only gets it
+    // if it is played straight into him (a block), not by reaching for it.
+    const striker = this.releasedBy ? others.find((o) => o.id === this.releasedBy) : undefined;
+    const fresh = this.state === 'BallReleased' && !meant && !!striker && striker.team !== undefined && a.team !== undefined && striker.team !== a.team;
+    const react = 0.24 - 0.08 * a.tuning.tackleSkill;
+    if (fresh && time - this.releasedAt < react) reach = Math.min(reach, 0.4);
+    // Reach up to his head (a cushioned header to control it), not beyond.
+    const headTop = a.tuning.heightM + 0.08;
+    if (L.dist > reach || b.position.y > headTop) return null;
     if (this.owner) {
       // Someone is dribbling: only a ball knocked away from him can be taken.
       const o = others.find((p) => p.id === this.owner);
@@ -596,6 +660,10 @@ export class PlayerBallInteraction {
     const toward = -(rel.x * (b.position.x - a.pos.x) + rel.z * (b.position.z - a.pos.z)) / Math.max(L.dist, 1e-3);
     if (relSpeed > 1.2 && toward < 0.2 && L.dist > 0.6) return null;
     const foot: Foot = L.left > 0 ? 'L' : 'R';
+    // Which part of the body takes it, by the ball's height.
+    const by = b.position.y, hm = a.tuning.heightM / 1.8;
+    const part: ReceivePart = by < 0.45 * hm ? 'foot' : by < 0.95 * hm ? 'thigh' : by < 1.5 * hm ? 'chest' : 'head';
+    this.lastReceivePart = part;
     const prevOwner = this.owner;
     if (len3(b.velocity) > 15 && b.position.y < 1.2 && defending) {
       const back: Vec3 = { x: -b.velocity.x * 0.25, y: Math.abs(b.velocity.y) * 0.3 + 0.5, z: -b.velocity.z * 0.25 };
@@ -604,24 +672,50 @@ export class PlayerBallInteraction {
       return foot;
     }
     // Cushioned first touch to the player's pace, nudged along the stick.
-    const hard = clamp((relSpeed - 5) / 20, 0, 1) + clamp((b.position.y - 0.45) / 1.2, 0, 1) * 0.5;
-    const miss = (1 - a.tuning.touchControl) * (0.4 + hard);
-    const stick = a.stick();
+    // How hard it is (FC 26's first-touch factors): the ball's pace relative
+    // to the player, its height, how sharply the touch turns it, an opponent
+    // closing in, and stretching for it. The first-touch / ball-control
+    // ratings decide how much of that difficulty turns into a heavy touch.
+    const stick = a.touchDir?.() ?? a.stick();
     const steering = Math.hypot(stick.x, stick.z) > 0.1;
     const dir = steering ? norm2(stick) : dirOf(a.yaw);
+    const pace = clamp((relSpeed - 8) / 12, 0, 1.4);
+    const height = clamp((b.position.y - 0.3) / 1.2, 0, 1);
+    let turn = 0;
+    if (relSpeed > 2) {
+      // The ball carries on along `rel`; taking it off at an angle costs control.
+      const c = clamp((rel.x * dir.x + rel.z * dir.z) / relSpeed, -1, 1);
+      turn = Math.acos(c) / Math.PI; // 0 = with the ball, 1 = straight back against it
+    }
+    let nearest = Infinity;
+    if (a.team !== undefined) for (const o of others) if (o.team !== undefined && o.team !== a.team) nearest = Math.min(nearest, Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z));
+    const pressure = clamp((2.5 - nearest) / 1.8, 0, 1);
+    const stretch = clamp((L.dist - 0.65) / 0.7, 0, 1);
+    const hard = pace + height * 0.6 + turn * pace * 0.5 + pressure * 0.35 + stretch * 0.4;
+    // 0 at a perfect touch rating, ~0.65 for a poor one.
+    const clumsy = 1.05 - a.tuning.firstTouch;
+    const miss = clamp(clumsy * hard * 0.8 + clumsy * 0.05, 0, 1.3);
     const push = steering ? 0.6 + 0.8 * Math.hypot(stick.x, stick.z) : 0.4;
     const noise = gauss(a);
+    const noiseS = clamp(noise, -2, 2);
     // With the stick: a directional touch at his pace along it. Without: the
     // ball is cushioned dead just in front of him (it keeps only part of his
     // momentum), instead of being carried on at full running speed.
     const carry = steering ? 1 : 0.75;
+    // Off the thigh, chest or head the ball drops in front of him (it pops up
+    // a little and comes down at his feet); a foot touch stays on the ground.
+    const lift = part === 'foot' ? 0 : part === 'thigh' ? 0.6 : part === 'chest' ? 0.9 : 1.4;
+    const giveH = part === 'foot' ? 1 : part === 'head' ? 0.5 : 0.65;
     const vel: Vec3 = {
-      x: a.vel.x * carry + dir.x * push + rel.x * miss * 0.3 + noise * miss * 0.6,
-      y: Math.max(0, b.velocity.y * 0.15),
-      z: a.vel.z * carry + dir.z * push + rel.z * miss * 0.3 + noise * miss * 0.6,
+      // A heavy touch keeps part of the ball's pace and glances off sideways.
+      x: (a.vel.x * carry + dir.x * push) * giveH + rel.x * miss * 0.42 + noiseS * rel.z * miss * 0.25,
+      y: part === 'foot' ? Math.max(0, b.velocity.y * 0.15) : lift + Math.max(0, b.velocity.y * 0.1),
+      z: (a.vel.z * carry + dir.z * push) * giveH + rel.z * miss * 0.42 - noiseS * rel.x * miss * 0.25,
     };
     this.lastTouchAt = time;
     this.lastTouchFoot = foot;
+    // A clean touch can be followed up at once; a heavy one gets away first.
+    this.recover = { id: a.id, until: time + clamp((miss - 0.1) * 0.6, 0, 0.45) };
     this.enqueue({ playerId: a.id, priority: 2, vel, spin: rollingSpin(vel, this.cal.ball.radius), touchKind: 'touch', source: 'control', kind: 'first touch', foot, quality: 1 - miss, footSpeed: 0,
       after: () => this.setState('PossessionAcquired', a.id, prevOwner ? `won from ${prevOwner}` : relSpeed > 3 ? 'first touch' : 'picked up loose ball', time) });
     return foot;

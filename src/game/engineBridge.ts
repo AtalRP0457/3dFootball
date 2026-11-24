@@ -17,10 +17,11 @@
 import { Simulation } from '../../packages/game-engine/physics/Simulation.ts';
 import { createCalibration } from '../../packages/game-engine/physics/PhysicsConfig.ts';
 import { initPhysics } from '../../packages/game-engine/physics/PhysicsWorld.ts';
-import { predictTrajectory } from '../../packages/game-engine/ball/BallPhysics.ts';
+import { firstLanding, predictTrajectory } from '../../packages/game-engine/ball/BallPhysics.ts';
 import { spinFromComponents } from '../../packages/game-engine/ball/BallSpin.ts';
 import type { PlayerController } from '../../packages/game-engine/player/PlayerController.ts';
-import type { KickCommand } from '../../packages/game-engine/player/PlayerBallInteraction.ts';
+import { PASS_ROLL_SPIN, type KickCommand } from '../../packages/game-engine/player/PlayerBallInteraction.ts';
+import { passArriveSpeed } from './mechanics/passing.ts';
 import { emptyInput, type KickKind, type PlayerAttributes, type PoseData } from '../../packages/game-engine/player/PlayerTypes.ts';
 import { REFERENCE_ATTRIBUTES } from '../../packages/game-engine/player/PlayerAttributes.ts';
 import type { BallPathPoint, MatchState, Player, Vec2, Vec3 } from '../types/game.ts';
@@ -69,6 +70,7 @@ function engineAttributes(p: Player): PlayerAttributes {
     ballControl: g('ballControl', 'firstTouch'), dribbling: g('dribbling'), passing: g('passing', 'shortPassing'),
     shooting: g('shooting', 'shotPower'), finishing: g('finishing'), defensiveAwareness: g('defensiveAwareness', 'marking'),
     tackling: g('tackling'), interceptions: g('interceptions'), jumping: g('jumping'), heading: g('heading'),
+    firstTouch: g('firstTouch', 'ballControl'), weakFoot: p.weakFoot ?? 3,
     ...(gk ? { pace: Math.min(g('pace'), 65), sprintSpeed: Math.min(g('sprintSpeed', 'pace'), 65) } : {}),
   };
 }
@@ -84,7 +86,10 @@ export function shotKind(type: string): KickKind {
   }
 }
 
-interface KickRequestArgs { command: KickCommand; kind: KickKind; vel: Vec3; commit: () => void }
+/** Engine step mode: open play, frozen stoppage, or a restart being set up. */
+export type StepMode = boolean | 'setup';
+
+interface KickRequestArgs { command: KickCommand; kind: KickKind; vel: Vec3; commit: () => void; target?: Vec2 }
 
 /**
  * Local avoidance: a player heading into a teammate swerves round him
@@ -185,16 +190,17 @@ export class MatchPhysics {
   }
 
   /** Is the ball held by the rules this step (set piece not taken, keeper's hands, stoppage)? */
-  private heldBy(state: MatchState, live: boolean): Player | null {
+  private heldBy(state: MatchState, live: StepMode): Player | null {
     const o = state.ball.owner;
     if (!o) return null;
+    if (live === 'setup') return o; // carried to a restart spot / placed there
     const c = this.ctrl.get(o);
     if (c?.kicking || this.throwing.has(o)) return null; // the taker is striking/throwing it: it's a free ball now
     const penaltyTaker = state.penalty?.active && state.penalty.shooter === o;
-    return o.mustPass || o.holding || penaltyTaker || !live ? o : null;
+    return o.mustPass || o.holding || penaltyTaker || live !== true ? o : null;
   }
 
-  private pushBall(state: MatchState, force: boolean, live = true): void {
+  private pushBall(state: MatchState, force: boolean, live: StepMode = true): void {
     const b = state.ball;
     const held = this.heldBy(state, live);
     const c = held ? this.ctrl.get(held) : undefined;
@@ -216,8 +222,13 @@ export class MatchPhysics {
   }
 
   // =============================================================== step
-  /** One fixed step of engine physics for the match. `live` = open play. */
-  step(state: MatchState, dt: number, hooks: BridgeHooks, live: boolean): void {
+  /**
+   * One fixed step of engine physics for the match. `live` = open play;
+   * false = a frozen stoppage; 'setup' = a restart being set up: players move
+   * under their intents but nobody can play the dead ball (it rolls freely,
+   * or is held where the match puts it while carried).
+   */
+  step(state: MatchState, dt: number, hooks: BridgeHooks, live: StepMode): void {
     this.syncRoster(state);
     this.pushTeleports();
     this.pushBall(state, false, live);
@@ -227,7 +238,7 @@ export class MatchPhysics {
       // Restart takers stay planted until the kick, but a keeper carrying the
       // ball is allowed to move and choose his distribution. Treating every
       // mustPass holder as frozen made hand possessions feel like a hard lock.
-      const frozen = (!live && state.phase !== 'goal')
+      const frozen = (live === false && state.phase !== 'goal')
         || (p.mustPass && !p.holding && b.owner === p && !c.kicking);
       if (frozen) {
         c.yaw = yawOf(p.face);
@@ -245,7 +256,10 @@ export class MatchPhysics {
         input.speedScale = scale;
       }
       // Match cooldowns: just kicked, stunned or beaten keeper can't play the ball.
-      input.noBall = b.owner !== p && (p.kickCd > 0 || p.stun > 0);
+      input.noBall = live === 'setup' || (b.owner !== p && (p.kickCd > 0 || p.stun > 0));
+      const receiving = b.intended === p && !b.owner && p.human;
+      if (receiving && p.receiveFace) input.face = toE(p.receiveFace);
+      if (receiving && p.receiveTouch) input.touch = toE(p.receiveTouch);
       c.input = input;
     }
     this.retryHumanKicks(state);
@@ -259,7 +273,7 @@ export class MatchPhysics {
   }
 
   // =============================================================== sync out
-  private pull(state: MatchState, live: boolean): void {
+  private pull(state: MatchState, live: StepMode): void {
     for (const [p, c] of this.ctrl) {
       const m = toM(c.pos);
       // Keep players on (or just off) the field, like the match always has.
@@ -350,13 +364,13 @@ export class MatchPhysics {
    * (match coordinates). `commit` runs the match bookkeeping when the engine
    * actually releases the ball at the contact frame.
    */
-  kick(p: Player, command: KickCommand, kind: KickKind, vel: Vec3, commit: () => void): boolean {
+  kick(p: Player, command: KickCommand, kind: KickKind, vel: Vec3, commit: () => void, target?: Vec2, from?: Vec2): boolean {
     const c = this.ctrl.get(p);
     if (!c) return false;
-    const r = this.commandKick(p, c, command, kind, toE3(vel));
+    const r = this.commandKick(p, c, command, kind, toE3(vel), target, from);
     if (r === 'rejected') return false;
     this.releases.set(c.id, commit);
-    if (p.human) this.humanKicks.set(p, { req: { command, kind, vel, commit }, tries: 0, retry: false });
+    if (p.human) this.humanKicks.set(p, { req: { command, kind, vel, commit, target }, tries: 0, retry: false });
     return true;
   }
 
@@ -365,9 +379,14 @@ export class MatchPhysics {
    * keeps his feet and plays it), so a bump doesn't swallow the button press;
    * a real fall still has to finish.
    */
-  private commandKick(p: Player, c: PlayerController, command: KickCommand, kind: KickKind, ve: Vec3) {
+  private commandKick(p: Player, c: PlayerController, command: KickCommand, kind: KickKind, ve: Vec3, target?: Vec2, from?: Vec2) {
     const h = Math.hypot(ve.x, ve.z) || 1;
-    const req = { command, kind, power: 0.6, aim: { x: ve.x / h, z: ve.z / h }, velocity: ve };
+    const te = target ? toE(target) : undefined;
+    const fe = from ? toE(from) : undefined;
+    const req = {
+      command, kind, power: 0.6, aim: { x: ve.x / h, z: ve.z / h }, velocity: ve,
+      ...(te ? { target: te, targetDist: fe ? Math.hypot(te.x - fe.x, te.z - fe.z) : undefined } : {}),
+    };
     let r = c.commandKick(req, this.sim.time);
     if (r === 'rejected' && p.human && c.sm.action?.clip.name === 'stumble') {
       c.sm.action = null;
@@ -394,8 +413,8 @@ export class MatchPhysics {
       if (!c || !live || k.tries >= 2) { this.humanKicks.delete(p); continue; }
       if (!k.retry || c.kicking) continue;
       if (c.sm.busy && c.sm.action?.clip.name !== 'stumble') continue; // down after a fall: wait
-      const { command, kind, vel, commit } = k.req;
-      const r = this.commandKick(p, c, command, kind, toE3(vel));
+      const { command, kind, vel, commit, target } = k.req;
+      const r = this.commandKick(p, c, command, kind, toE3(vel), target, target ? state.ball.pos : undefined);
       if (r === 'rejected') continue; // not possible yet: try again next step
       k.retry = false;
       k.tries++;
@@ -441,22 +460,44 @@ export class MatchPhysics {
    * Speed for a ground pass to reach `aim` from `from` with the engine's real
    * rolling ball (it rolls much further than the old model), arriving firm.
    */
-  groundPassSpeed(from: Vec2, aim: Vec2, arrive = 3.2): number {
-    const d = Math.hypot(aim.x - from.x, aim.z - from.z);
-    const a = this.sim.cal.ball.rollingResistance * this.sim.cal.world.gravity;
-    return Math.sqrt(2 * a * d + arrive * arrive);
+  /**
+   * Rolling model of the engine ball, from its own calibration. A rolling
+   * ball's drag and grass resistance act at its centre while friction keeps
+   * it rolling, so its spin has to slow too: the linear deceleration is
+   * F / (m + I/r²) (60 % for the hollow ball), and the rolling-resistance
+   * torque adds 40 % of that force again. A pass is struck with 85 % of the
+   * rolling spin, so it skids for an instant and keeps `skid` of its pace.
+   * dv/dt = -(a + k v²), solved in closed form (v = c·tan φ).
+   */
+  private rollModel() {
+    const b = this.sim.cal.ball, g = this.sim.cal.world.gravity;
+    const iRatio = (2 / 3); // I / (m r²), hollow sphere (ballInertia)
+    const f = 1 / (1 + iRatio);
+    const a = b.rollingResistance * g * 1.4 * f;
+    const k = ((0.5 * b.airDensity * b.dragCoefficient * Math.PI * b.radius * b.radius) / b.mass) * f;
+    const skid = (1 + iRatio * PASS_ROLL_SPIN) / (1 + iRatio);
+    return { a, k, c: Math.sqrt(a / k), w: Math.sqrt(a * k), skid };
   }
 
-  /** Rolling arrival time under this engine's actual constant grass drag. */
-  groundPassTime(distance: number, kind: 'ground' | 'through', driven = false): number {
-    const d = Math.max(0, distance);
-    const arrive = kind === 'through'
-      ? Math.max(2.8, Math.min(6.2, 3.1 + d * 0.075))
-      : driven ? Math.max(7.5, Math.min(12, 7 + d * 0.12))
-        : Math.max(3.2, Math.min(8, 4 + d * 0.1));
-    const a = this.sim.cal.ball.rollingResistance * this.sim.cal.world.gravity;
-    const start = Math.sqrt(2 * a * d + arrive * arrive);
-    return a > 0 ? (start - arrive) / a : d / Math.max(arrive, 0.1);
+  /** Launch speed (m/s) so a ground pass is still doing `arrive` m/s after `d` metres. */
+  groundLaunch(d: number, arrive: number): number {
+    const m = this.rollModel();
+    const p1 = Math.atan(Math.max(0, arrive) / m.c);
+    const cos0 = Math.cos(p1) * Math.exp(-m.k * Math.max(0, d));
+    return (m.c * Math.tan(Math.acos(cos0))) / m.skid;
+  }
+
+  /** Seconds a ground pass takes to cover `d` metres when it arrives at `arrive` m/s. */
+  groundTime(d: number, arrive: number): number {
+    const m = this.rollModel();
+    const p1 = Math.atan(Math.max(0, arrive) / m.c);
+    const cos0 = Math.cos(p1) * Math.exp(-m.k * Math.max(0, d));
+    return (Math.acos(cos0) - p1) / m.w;
+  }
+
+  /** Arrival time of a ground pass of this kind (same weight policy as the kick). */
+  groundPassTime(distance: number, kind: 'ground' | 'through', driven = false, power?: number): number {
+    return this.groundTime(distance, passArriveSpeed(kind, distance, driven, power));
   }
 
   /** Match-coordinate trajectory from the same model Rapier advances. */
@@ -468,21 +509,43 @@ export class MatchPhysics {
       });
   }
 
-  /** Speed at a launch angle so the engine ball (drag + spin) lands at `aim`. */
-  loftedSpeed(from: Vec3, aim: Vec2, elevDeg: number, top: number): number {
-    const d = Math.hypot(aim.x - from.x, aim.z - from.z);
+  /**
+   * Launch speed at an elevation so the engine ball (drag + spin) first lands
+   * `d` metres away, and its flight time. Simulated with the engine's own
+   * trajectory model (long balls fly up to ~4 s, so the horizon is 7 s).
+   */
+  loftedFlight(d: number, elevDeg: number, top: number): { speed: number; time: number } {
     const e = (elevDeg * Math.PI) / 180;
-    const dirM = { x: (aim.x - from.x) / (d || 1), z: (aim.z - from.z) / (d || 1) };
-    let lo = 4, hi = 40;
-    for (let i = 0; i < 16; i++) {
+    const r = this.sim.cal.ball.radius;
+    const land = (s: number): { x: number; t: number } => {
+      const v = { x: s * Math.cos(e), y: s * Math.sin(e), z: 0 };
+      const path = predictTrajectory({ x: 0, y: r, z: 0 }, v, spinFromComponents(v, { top }), this.sim.cal.ball, this.sim.cal.world.gravity, 7, 1 / 120);
+      const l = firstLanding(path, r);
+      return l ? { x: l.p.x, t: l.t } : { x: Infinity, t: Infinity };
+    };
+    let lo = 3, hi = 45;
+    for (let i = 0; i < 22; i++) {
       const s = (lo + hi) / 2;
-      const v = toE3({ x: dirM.x * s * Math.cos(e), y: s * Math.sin(e), z: dirM.z * s * Math.cos(e) });
-      const path = predictTrajectory(toE3(from), v, spinFromComponents(v, { top }), this.sim.cal.ball, this.sim.cal.world.gravity, 4, 1 / 60);
-      let land = Infinity;
-      for (let k = 1; k < path.length; k++) if (path[k].v.y < 0 && path[k].p.y <= this.sim.cal.ball.radius + 0.05) { const q = toM(path[k].p); land = Math.hypot(q.x - from.x, q.z - from.z); break; }
-      if (land < d) lo = s; else hi = s;
+      if (land(s).x < d) lo = s; else hi = s;
     }
-    return (lo + hi) / 2;
+    const speed = (lo + hi) / 2;
+    return { speed, time: land(speed).t };
+  }
+
+  /** Speed at a launch angle so the engine ball lands at `aim` (see loftedFlight). */
+  loftedSpeed(from: Vec3, aim: Vec2, elevDeg: number, top: number): number {
+    return this.loftedFlight(Math.hypot(aim.x - from.x, aim.z - from.z), elevDeg, top).speed;
+  }
+
+  /** A keeper puts the ball down at his feet (it is then played normally). */
+  dropBall(p: Player): void {
+    const c = this.ctrl.get(p);
+    if (c) this.sim.giveBall(c, 0.55);
+  }
+
+  /** Slow the engine ball (a dead ball being stopped at a stoppage). */
+  dampBall(k: number): void {
+    this.sim.ball.physics.damp(k);
   }
 
   dispose(): void { this.sim.dispose(); }

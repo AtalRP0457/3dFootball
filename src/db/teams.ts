@@ -166,7 +166,7 @@ export function buildTeam(teamId: string, kitType = 'home'): BuiltTeam {
   const bench = [...(gkIdx >= 0 ? pool.splice(gkIdx, 1) : []), ...pool].slice(0, 7);
   const toEngine = (c: PlayerCard, role?: PlayerData['role']): PlayerData => ({
     name: c.name, number: c.number, stats: c.stats, attributes: c.attributes, playerId: c.playerId,
-    position: c.position, overall: c.overall, identity: c.identity, nationality: c.nationality, foot: c.foot,
+    position: c.position, overall: c.overall, identity: c.identity, nationality: c.nationality, foot: c.foot, weakFoot: c.weakFoot,
     ...(role ? { role } : {}),
   });
   const custom = era === 'custom';

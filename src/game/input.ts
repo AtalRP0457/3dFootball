@@ -24,7 +24,7 @@ export const BINDINGS: Record<HumanId, Binding> = {
   },
 };
 
-const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b).flat()).concat(['KeyK', 'Numpad8']));
+const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b).flat()).concat(['KeyK', 'Numpad8', 'KeyB', 'Numpad9']));
 
 // Fallbacks for keyboards / input sources where event.code is missing or
 // unusual: map by the printed key or the legacy keyCode instead.
@@ -132,6 +132,8 @@ export class Input {
     let drivenPressed = this.anyPressed(b.driven);
     let passHeld = this.anyDown(b.pass) || this.anyDown(b.loft) || this.anyDown(b.through) || this.anyDown(b.driven);
     let keeperSwitchPressed = this.anyPressed(id === 'p1' ? ['KeyK'] : ['Numpad8']);
+    // Keeper with the ball in his hands: put it down at his feet.
+    let dropPressed = this.anyPressed(id === 'p1' ? ['KeyB'] : ['Numpad9']);
     let finesseHeld = this.anyDown(b.finesse);
     let chipHeld = this.anyDown(b.chip);
     let shootHeld = this.anyDown(b.shoot) || finesseHeld || chipHeld;
@@ -152,6 +154,7 @@ export class Input {
       if (pr[0] && btn(5)) drivenPressed = true;
       else passPressed = passPressed || !!pr[0];
       keeperSwitchPressed = keeperSwitchPressed || !!pr[8];
+      dropPressed = dropPressed || !!pr[12]; // d-pad up
       throughPressed = throughPressed || !!pr[2];
       loftPressed = loftPressed || !!pr[3];
       // LB / LT held while shooting: finesse / chip.
@@ -171,7 +174,7 @@ export class Input {
     }
     const l = Math.hypot(mx, mz);
     if (l > 1) { mx /= l; mz /= l; }
-    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, passHeld, keeperSwitchPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
+    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, passHeld, keeperSwitchPressed, dropPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
   }
 
   /** Gamepad Start/Options button, used for pause. */

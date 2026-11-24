@@ -116,7 +116,7 @@ export class AnimationController {
     else if (cel === 'beaten') want.dejected = speed < 1 ? 1 : 0;
     if (ctx.forceState && ctx.forceState in want) want[ctx.forceState] = 1;
     else if (!cel) {
-      if (p.holding && ctx.owner) want.gkHold = 1;
+      if ((p.holding || p.carrying) && ctx.owner) want.gkHold = 1;
       else if (p.throwIn && ctx.owner && p.mustPass) want.throwHold = 1;
       else if (p.role === 'GK' && ctx.keeperAlert && speed < 2.5) want.gkReady = 1 - speed / 2.5;
       if (speed < 0.5 && Math.abs(ctx.yawRate || 0) > 1.2 && !want.gkHold && !want.throwHold) {
@@ -224,7 +224,7 @@ export class AnimationController {
     if ((p.kickAnim || 0) > pr.kickAnim + 0.02) {
       const k = p.kickType;
       if (k === 'tackle') this.play(Math.hypot(p.vel.x, p.vel.z) > 4 ? 'tackle' : 'poke');
-      else if (pr.throwIn || p.throwIn) this.play('throwIn');
+      else if (pr.throwIn || p.throwIn || k === 'throw') this.play('throwIn');
       else if (k === 'shot') this.play(this.kickName('shoot'));
       else if (k === 'longPass' || k === 'lofted' || k === 'chip' || k === 'through') this.play(this.kickName('longPass'));
       else this.play(this.kickName('pass'));

@@ -17,14 +17,18 @@ export type DribbleStyle = 'sticky' | 'touch';
 export type ShotType = 'normal' | 'power' | 'low' | 'finesse' | 'chip';
 export type PassKind = 'ground' | 'lofted' | 'through' | 'chip';
 export type Phase = 'kickoff' | 'play' | 'restart' | 'penalty' | 'goal' | 'halftime' | 'fulltime';
-export type MatchFlow = 'PLAYING' | 'GOAL_SCORED' | 'OUT_OF_BOUNDS_TRANSITION' | 'SET_PIECE_SETUP' | 'KICKOFF';
+export type MatchFlow = 'PLAYING' | 'GOAL_SCORED' | 'SET_PIECE_SETUP' | 'KICKOFF' | 'CUT_TO_KICKOFF' | 'CUT';
+/**
+ * A camera cut (fade through black) that hides a large repositioning: the
+ * kick-off shape after a goal or half-time, or the penalty line-up. The
+ * renderer fades out and back in; positions change at the darkest point.
+ */
 export interface FlowTransition {
-  state: 'OUT_OF_BOUNDS_TRANSITION' | 'SET_PIECE_SETUP';
+  state: 'CUT_TO_KICKOFF' | 'CUT';
   elapsed: number;
   duration: number;
-  fromPlayers: Record<number, Vec2>;
-  fromBall: Vec3;
-  pendingRestart?: { type: string; team: number; spot: Vec2 };
+  /** Kick-off team to set up at the midpoint of the cut. */
+  pendingKickoff?: number;
 }
 
 /** Six legacy engine stats (0-99). */
@@ -73,6 +77,11 @@ export interface PhysicalProfile {
   control: number; firstTouch: number; dribbling: number;
   shotAccuracy: number; shotPower: number; curve: number;
   passAccuracy: number; longPassing: number; distribution: number;
+  /** Through-ball reading and lead (0..1). */
+  vision: number;
+  crossing: number;
+  /** Weak-foot rating 1..5 as 0..1 (5 stars = 1). */
+  weakFoot: number;
   tackling: number; interceptions: number; defending: number;
   keeper: KeeperProfile;
 }
@@ -94,6 +103,8 @@ export interface PlayerData {
   identity?: Identity;
   nationality?: string;
   foot?: string;
+  /** Weak-foot rating 1..5. */
+  weakFoot?: number;
   role?: Role;
   captain?: boolean;
   appearance?: Partial<Identity>;
@@ -120,6 +131,30 @@ export interface Intent { mx: number; mz: number; sprint: boolean; action: Actio
 
 export interface KeepRun { until: number; spot: Vec2; running: boolean; sprint: boolean }
 
+/**
+ * A restart in progress: the taker fetches (or is thrown) the ball, carries
+ * it to the spot and places it; everyone else walks to his set-piece
+ * position; then it can be taken. Nobody is moved by the rules.
+ */
+export interface SetPieceState {
+  type: string;
+  team: number;
+  spot: Vec2;
+  taker: Player;
+  stage: 'fetch' | 'carry' | 'ready';
+  /** Seconds since the whistle. */
+  t: number;
+  readyAt?: number;
+  /** The ball went far away: a ball boy throws a new one to the taker. */
+  boyToss?: boolean;
+  /** Defenders forming the wall (free kicks near goal). */
+  wall: Player[];
+  /** The referee has blown for it to be taken. */
+  whistled?: boolean;
+  /** The dead ball has come to rest (it is pinned until picked up). */
+  settled?: boolean;
+}
+
 export interface Player {
   id: number;
   team: number;
@@ -132,6 +167,14 @@ export interface Player {
   number: number;
   stats: EngineStats;
   attributes: Attributes | null;
+  /** Weak-foot rating 1..5 (3 when unknown). */
+  weakFoot?: number;
+  /** Carrying the dead ball to a restart spot (ball in his hands). */
+  carrying?: boolean;
+  /** Receiving a pass: keep the body facing this way (the incoming ball). */
+  receiveFace?: Vec2 | null;
+  /** Receiving a pass: the first-touch direction the user is asking for. */
+  receiveTouch?: Vec2 | null;
   overall: number | null;
   captain: boolean;
   identity: Identity;
@@ -289,6 +332,12 @@ export interface MatchState {
   banner: { text: string; time: number } | null;
   lastGoal?: GoalInfo;
   kickoffNext?: number;
+  /** A restart being set up or waiting to be taken (see stepSetPiece). */
+  setPiece?: SetPieceState | null;
+  /** Law 8: a kick-off is set but the ball has not been kicked yet (everyone holds his half). */
+  kickoffPending?: boolean;
+  /** Player id taking the pending kick-off. */
+  kickoffTaker?: number;
 }
 
 export interface MatchConfig {
@@ -313,6 +362,8 @@ export interface InputFrame {
   /** Any pass button still held (hold to charge pass power; released = pass). */
   passHeld?: boolean;
   keeperSwitchPressed?: boolean;
+  /** Keeper holding the ball: drop it to his feet. */
+  dropPressed?: boolean;
   shootHeld?: boolean; shootPressed?: boolean; finesseHeld?: boolean; chipHeld?: boolean;
 }
 export type Inputs = Partial<Record<HumanId, InputFrame | null>>;

@@ -20,6 +20,10 @@ export interface PlayerAttributes {
   interceptions: number;
   jumping: number;
   heading: number;
+  /** First touch (falls back to ballControl). */
+  firstTouch?: number;
+  /** Weak-foot rating 1..5 (falls back to 3). */
+  weakFoot?: number;
 }
 
 /** Physical tuning derived from attributes (SI units). */
@@ -42,6 +46,10 @@ export interface PlayerTuning {
   staminaDrain: number;
   staminaRecover: number;
   touchControl: number;
+  /** First-touch quality 0..1 (first touch 60 %, ball control 40 %). */
+  firstTouch: number;
+  /** Weak-foot strike quality multiplier: 0.76 (1 star) .. 1 (5 stars). */
+  weakFootQuality: number;
   dribbleSkill: number;
   passSkill: number;
   shotSkill: number;
@@ -63,7 +71,7 @@ export type KickKind =
 
 export type SkillKind = 'stepOver' | 'doubleStepOver' | 'bodyFeint' | 'dragBack' | 'ballRoll' | 'roulette' | 'heelToHeel' | 'fakeShot';
 
-export type ActionKind = KickKind | SkillKind | 'standingTackle' | 'slidingTackle' | 'jump' | 'celebrate' | 'stumble' | 'fall' | 'getUp' | 'trap';
+export type ActionKind = KickKind | SkillKind | 'standingTackle' | 'slidingTackle' | 'jump' | 'celebrate' | 'stumble' | 'fall' | 'getUp' | 'trap' | 'thighControl' | 'chestControl' | 'headControl';
 
 /** Locomotion / posture state the animation system shows. */
 export type MovementState =
@@ -106,6 +114,17 @@ export interface PlayerInput {
   speedScale?: number;
   /** Match rules: this player may not play the ball this step (cooldown, stunned). */
   noBall?: boolean;
+  /**
+   * Keep the body facing this way (world, unit) while moving, e.g. square to
+   * an incoming pass while stepping to meet it.
+   */
+  face?: Vec2;
+  /**
+   * Direction of the first touch the user asked for (world, magnitude 0..1).
+   * Set while receiving a pass so the stick shapes the touch without turning
+   * the body away from the ball beforehand.
+   */
+  touch?: Vec2;
 }
 
 export const emptyInput = (): PlayerInput => ({

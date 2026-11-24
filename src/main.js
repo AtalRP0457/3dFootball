@@ -1320,6 +1320,7 @@ function handleEvents() {
     if ((e.type === 'pass' || e.type === 'shot') && e.human) lastLaunch = { kind: e.type === 'pass' ? `${e.kind || 'ground'} pass` : `${e.shotType || 'normal'} shot`, power: e.power, speed: 0, steps: 0 };
     if (e.type === 'foul' || e.type === 'advantageFailed') { /* restart set by the simulation in the same step */ }
     audio.playEvent(e);
+    renderer.matchEvent?.(match, e);
     tutorialEvent(e);
     if (e.type === 'goal') {
       const team = match.teams[e.team];

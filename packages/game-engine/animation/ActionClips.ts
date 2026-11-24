@@ -255,6 +255,36 @@ export const ACTION_CLIPS: Record<ActionKind, ActionClip> = {
       { t: 1, pose: {} },
     ],
   },
+  // Thigh control: the knee comes up to meet a ball at hip height and gives with it.
+  thighControl: {
+    name: 'thighControl', duration: 0.42, blendIn: 0.05, blendOut: 0.12, move: 'action', control: 0.5, interruptible: true,
+    markers: [{ t: 1, kind: 'end' }],
+    keys: [
+      { t: 0, pose: { 'thigh.R': { x: -1.15 }, 'shin.R': { x: 1.2 }, 'foot.R': { x: 0.3 }, spine: { x: 0.1 }, hipDrop: 0.04, ...arms(0.55) } },
+      { t: 0.35, pose: { 'thigh.R': { x: -0.8 }, 'shin.R': { x: 1.0 }, spine: { x: 0.08 }, hipDrop: 0.05, ...arms(0.5) } },
+      { t: 1, pose: {} },
+    ],
+  },
+  // Chest control: arms out, chest pushed into the ball then leaning back to cushion it down.
+  chestControl: {
+    name: 'chestControl', duration: 0.5, blendIn: 0.05, blendOut: 0.14, move: 'action', control: 0.45, interruptible: true,
+    markers: [{ t: 1, kind: 'end' }],
+    keys: [
+      { t: 0, pose: { spine: { x: -0.1 }, chest: { x: -0.15 }, head: { x: 0.25 }, 'upperArm.L': { x: -0.2, z: 1.0 }, 'upperArm.R': { x: -0.2, z: -1.0 }, hipDrop: 0.06 } },
+      { t: 0.3, pose: { spine: { x: -0.28 }, chest: { x: -0.25 }, head: { x: 0.35 }, 'upperArm.L': { x: -0.3, z: 1.1 }, 'upperArm.R': { x: -0.3, z: -1.1 }, hipDrop: 0.09, 'thigh.L': { x: -0.2 }, 'shin.L': { x: 0.35 }, 'thigh.R': { x: -0.2 }, 'shin.R': { x: 0.35 } } },
+      { t: 1, pose: {} },
+    ],
+  },
+  // Cushioned header: neck gives as the ball arrives so it drops in front.
+  headControl: {
+    name: 'headControl', duration: 0.45, blendIn: 0.05, blendOut: 0.14, move: 'action', control: 0.45, interruptible: true,
+    markers: [{ t: 1, kind: 'end' }],
+    keys: [
+      { t: 0, pose: { head: { x: -0.35 }, spine: { x: -0.1 }, lift: 0.08, ...arms(0.6) } },
+      { t: 0.3, pose: { head: { x: 0.25 }, spine: { x: 0.05 }, lift: 0, hipDrop: 0.05, ...arms(0.45) } },
+      { t: 1, pose: {} },
+    ],
+  },
 };
 
 export const KICK_ACTIONS: ReadonlySet<ActionKind> = new Set<ActionKind>([

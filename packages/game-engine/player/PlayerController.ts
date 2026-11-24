@@ -167,6 +167,8 @@ export class PlayerController implements InteractionActor {
   // touches), or the touches push it away and the foot never reaches it.
   /** The user's steering for touches: none while lining up a kick or when the movement is only assistance. */
   stick(): Vec2 { return (this.buffered && this.hasBall) || this.input.assisted ? { x: 0, z: 0 } : this.input.move; }
+  /** The first-touch direction chosen while receiving (overrides the stick for the touch). */
+  touchDir(): Vec2 | null { return this.input.touch ?? null; }
   intendedSpeed(): number { return targetSpeedFor(this.input, this.tuning, this.stamina); }
 
   /** Simulate the movement model forward under the current input (dribble prediction). */
@@ -230,6 +232,7 @@ export class PlayerController implements InteractionActor {
     const a = this.sm.action;
     const defend = this.input.defend;
     const mode = this.moveMode(ctx);
+    if (this.input.face && mode.facing === undefined && !a) mode.facing = headingOf(this.input.face.x, this.input.face.z);
     if (this.balance < 0.6) mode.control = (mode.control ?? 1) * clamp(this.balance / 0.6, 0.25, 1);
     const res = stepMovement({ vel: this.vel, yaw: this.yaw, yawRate: this.yawRate, stamina: this.stamina }, moveInput, this.tuning, mode, dt);
     this.vel = res.vel;
@@ -288,7 +291,11 @@ export class PlayerController implements InteractionActor {
       this.blendT = 0;
       this.lastAction = this.sm.action;
     }
+    // Ease the turn-in-place stepping weight in and out.
+    const wantTurn = this.sm.locomotion === 'turn' ? 1 : 0;
+    this.turnW += clamp(wantTurn - this.turnW, -dt / 0.15, dt / 0.15);
     this.pose = computePose({
+      turnWeight: this.turnW,
       sm: this.sm, gait: this.gait, contact: this.contact, dims: this.dims, movement: this.sm.locomotion, speed, gaitYaw,
       accelForward: this.accel.x * f.x + this.accel.z * f.z, accelLeft: this.accel.x * f.z - this.accel.z * f.x,
       yawRate: this.yawRate, time: now, readiness,
@@ -301,6 +308,7 @@ export class PlayerController implements InteractionActor {
       if (k >= 1) this.blendFrom = null;
       else blendPoseFrom(this.pose, this.blendFrom, 1 - k * k * (3 - 2 * k));
     }
+    this.limitPoseRate(dt);
     if (this.sm.action && SPIN_SKILLS.has(this.sm.action.clip.name)) {
       // Skills that turn the body hand their rotation to the physics yaw.
       this.yaw = this.actionYaw0 + this.pose.yawOffset;
@@ -365,14 +373,20 @@ export class PlayerController implements InteractionActor {
   }
 
   /** Balance damage from contact (0..1+). */
-  knock(severity: number): void {
-    if (severity <= 0.02) return;
+  /** Take a hit; returns true when it costs him his footing (stumble or fall). */
+  knock(severity: number): boolean {
+    if (severity <= 0.02) return false;
     this.balance = Math.max(0, this.balance - severity);
     const name = this.sm.action?.clip.name;
-    if (name === 'fall' || name === 'getUp' || name === 'slidingTackle') return;
+    if (name === 'fall' || name === 'getUp') return true;
+    if (name === 'slidingTackle') return false;
     const lose = () => { this.kick = null; this.buffered = null; };
-    if (this.balance < 0.12) { this.sm.start('fall', { foot: 'R', force: true }); lose(); this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
-    else if (this.balance < 0.45 && name !== 'stumble') { this.sm.start('stumble', { foot: 'R', force: true }); lose(); this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
+    if (this.balance < 0.12) { this.sm.start('fall', { foot: 'R', force: true }); lose(); this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); return true; }
+    if (this.balance < 0.45) {
+      if (name !== 'stumble') { this.sm.start('stumble', { foot: 'R', force: true }); lose(); this.pw.events.emit({ type: 'balanceLost', playerId: this.id, severity, time: this.pw.time }); }
+      return true;
+    }
+    return false;
   }
 
   teleport(p: Vec2, yaw = this.yaw): void {
@@ -406,6 +420,43 @@ export class PlayerController implements InteractionActor {
     } else this.startAction('standingTackle', this.preferredFoot);
     return true;
   }
+  /**
+   * Limit how fast each pose channel may change in one step, so a sudden
+   * direction change (a plant, a brake, a gait switch) never pops a limb or
+   * tips the whole body in a single frame. Limits sit above a real sprint
+   * stride (~7 rad/s at the shin); actions (kicks, tackles) get a much higher
+   * limit so their swing keeps its snap.
+   */
+  private turnW = 0;
+  private lastPose: PoseData | null = null;
+  private lastLoco: string | null = null;
+  private locoChangedAt = -9;
+  private limitPoseRate(dt: number): void {
+    const prev = this.lastPose;
+    const pose = this.pose;
+    const loco = this.sm.locomotion;
+    if (loco !== this.lastLoco) { this.lastLoco = loco; this.locoChangedAt = this.pw.time; }
+    if (prev) {
+      const act = !!this.sm.action;
+      const body = (act ? 8 : 2.6) * dt, hip = (act ? 2 : 0.9) * dt;
+      // Limbs: only around a change of movement state (run → brake → turn),
+      // where the gait switch would pop the legs; a steady stride is left to
+      // the IK so the stance foot stays planted.
+      if (!act && this.pw.time - this.locoChangedAt < 0.3) {
+        const limb = 11 * dt;
+        for (const key of Object.keys(pose.bones)) {
+          const a = pose.bones[key], b = prev.bones[key];
+          if (!b) continue;
+          for (let c = 0; c < 3; c++) a[c] = b[c] + clamp(a[c] - b[c], -limb, limb);
+        }
+      }
+      pose.roll = prev.roll + clamp(pose.roll - prev.roll, -body, body);
+      pose.pitch = prev.pitch + clamp(pose.pitch - prev.pitch, -body, body);
+      pose.hipDrop = prev.hipDrop + clamp(pose.hipDrop - prev.hipDrop, -hip, hip);
+    }
+    this.lastPose = { ...pose, bones: Object.fromEntries(Object.entries(pose.bones).map(([k, v]) => [k, [v[0], v[1], v[2]] as [number, number, number]])) };
+  }
+
   /** Is a kick in progress or waiting for the ball? */
   get kicking(): boolean { return !!(this.kick || this.buffered); }
   /** Drop any kick in progress (possession changed hands, restart). */
@@ -558,12 +609,19 @@ export class PlayerController implements InteractionActor {
    * Returns the opponent caught (teammates are never tripped by a tackle).
    */
   private tripCheck(ctx: StepContext, foot: Foot, severity: number): PlayerController | null {
+    // Law 12: contact alone is not a foul. The tackling foot has to catch his
+    // legs hard enough to take him off his feet; how hard depends on how fast
+    // the tackler comes in. A soft touch leaves him standing and play goes on.
     const p = this.ix.footPoint(this, foot);
     let hit: PlayerController | null = null;
     for (const o of ctx.others) {
       if (this.team >= 0 && o.team === this.team) continue;
       const d = Math.hypot(o.pos.x - p.x, o.pos.z - p.z);
-      if (d < 0.42 && p.y < 0.7) { o.knock(severity); hit = hit ?? o; }
+      // The foot has to catch his legs (within ~0.3 m of them), not brush past.
+      if (d < 0.32 && p.y < 0.6) {
+        const force = severity * Math.min(1.2, Math.max(0.1, (this.closingOn(o) - 0.8) / 4.2));
+        if (o.knock(force)) hit = hit ?? o;
+      }
     }
     return hit;
   }
@@ -606,7 +664,10 @@ export class PlayerController implements InteractionActor {
     if (this.buffered) return;
     if (this.input.noBall) return;
     const foot = this.ix.receive(this, ctx.others, this.input.defend, now);
-    if (foot) this.sm.start('trap', { foot, force: true });
+    if (foot) {
+      const part = this.ix.lastReceivePart;
+      this.sm.start(part === 'thigh' ? 'thighControl' : part === 'chest' ? 'chestControl' : part === 'head' ? 'headControl' : 'trap', { foot, force: true });
+    }
   }
 }
 

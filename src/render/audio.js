@@ -114,6 +114,12 @@ export class MatchAudio {
       || event.type === 'directRestartOwnGoal' || event.type === 'freeKickDirectGoal') {
       this.tone(1800, 0.24, 0.08, 'sine', 2350);
       this.tone(1650, 0.2, 0.06, 'sine', 2100);
+    } else if (event.type === 'whistle') {
+      // Referee: short blast for a restart / to take the set piece, longer for kick-off.
+      const len = event.kind === 'kickoff' ? 0.45 : event.kind === 'restart' ? 0.18 : 0.26;
+      if (event.kind === 'throw-in' || event.kind === 'goal kick' || event.kind === 'corner') return; // ball out: no whistle needed
+      this.tone(2050, len, 0.07, 'sine', 2250);
+      this.noise(len, 0.02, 2600);
     } else if (event.type === 'card') {
       this.tone(event.color === 'red' ? 920 : 1320, 0.22, 0.07, 'triangle', 760);
     } else if (event.type === 'substitution') {

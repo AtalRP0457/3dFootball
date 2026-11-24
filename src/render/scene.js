@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { createCharacter } from './character/character.js';
+import { createOfficials } from './officials.js';
 import { applyEnginePose } from '../../packages/game-engine/player/applyPose.ts';
 import { playerIdentity } from '../game/players/identity.ts';
 import { buildPitch } from './stadium/pitch.js';
@@ -109,6 +110,12 @@ function ballTexture(renderer) {
 // ---------- renderer ----------
 export function createRenderer(canvasEl) {
   const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, powerPreference: 'high-performance' });
+  // Black layer for broadcast cuts (kick-off after a goal, penalty line-up).
+  const fadeEl = typeof document !== 'undefined' && canvasEl.parentElement ? document.createElement('div') : null;
+  if (fadeEl) {
+    Object.assign(fadeEl.style, { position: 'absolute', inset: '0', background: '#000', opacity: '0', pointerEvents: 'none', zIndex: '2' });
+    canvasEl.parentElement.appendChild(fadeEl);
+  }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -256,6 +263,8 @@ export function createRenderer(canvasEl) {
   let time = 0;
 
   let stadiumName = '';
+  // Referee and assistant referees (visual only).
+  const officials = createOfficials(scene);
   function setMatch(state) {
     stadiumName = state.stadium || state.teams[0].data.stadium || '';
     arenaGlow.visible = !!state.indoor;
@@ -264,6 +273,7 @@ export function createRenderer(canvasEl) {
     // Fans wear their team's colours (home end busiest, away fans grouped).
     const kitCols = (k) => [k.shirt, k.secondary || k.shirt, k.shirt].filter(Boolean);
     arena.setColors(kitCols(state.teams[0].kit), kitCols(state.teams[1].kit));
+    officials.build(state);
     for (const m of playerMeshes) m.character.dispose();
     playerMeshes = state.players.map((p) => {
       const team = state.teams[p.team];
@@ -314,14 +324,7 @@ export function createRenderer(canvasEl) {
    */
   function cameraTarget(state, dt = 0) {
     const mode = CAMERA_MODES[camMode] || CAMERA_MODES.broadcast;
-    const tr = state.transition;
-    const u = tr ? THREE.MathUtils.clamp(tr.elapsed / tr.duration, 0, 1) : 1;
-    const eased = u * u * (3 - 2 * u);
-    const b = tr ? {
-      x: tr.fromBall.x + (state.ball.pos.x - tr.fromBall.x) * eased,
-      y: tr.fromBall.y + (state.ball.pos.y - tr.fromBall.y) * eased,
-      z: tr.fromBall.z + (state.ball.pos.z - tr.fromBall.z) * eased,
-    } : state.ball.pos;
+    const b = state.ball.pos;
     const bv = state.ball.vel;
     const ctrl = controlledPlayer(state);
     let fx = b.x, fz = b.z;
@@ -404,6 +407,28 @@ export function createRenderer(canvasEl) {
   function shownPos(state, p) {
     const m = playerMeshes[state.players.indexOf(p)];
     return m ? m.root.position : V(p.pos.x, 0, p.pos.z);
+  }
+  /**
+   * Set-piece view (goal kick, corner, free kick in range) once the ball is
+   * placed and until it is played: behind the ball, looking where the kick
+   * will go, like a broadcast set-piece camera.
+   */
+  function setPieceCamera(state) {
+    const sp = state.setPiece;
+    if (!sp || sp.stage !== 'ready' || state.ball.owner !== sp.taker) return null;
+    const dir = state.teams[sp.team].dir;
+    const b = state.ball.pos, goalX = HALF_L * dir;
+    if (sp.type === 'goal kick') {
+      return { pos: V(b.x - dir * 10, 5.2, b.z * 0.6), look: V(b.x + dir * 32, 1.0, b.z * 0.3), fov: 46, rate: 2.2 };
+    }
+    const toGoal = Math.hypot(goalX - b.x, b.z);
+    if (sp.type === 'corner' || ((sp.type === 'free kick' || sp.type === 'indirect free kick') && toGoal < 36)) {
+      // From behind the ball towards the far post / the goal.
+      const tx = goalX - dir * (sp.type === 'corner' ? 6 : 0), tz = sp.type === 'corner' ? -Math.sign(b.z) * 2 : 0;
+      let vx = tx - b.x, vz = tz - b.z; const l = Math.hypot(vx, vz) || 1; vx /= l; vz /= l;
+      return { pos: V(b.x - vx * 7.5, 3.2, b.z - vz * 7.5), look: V(b.x + vx * 18, 1.2, b.z + vz * 18), fov: 44, rate: 2.2 };
+    }
+    return null;
   }
   function celebrationCamera(state) {
     const sc = byId(state, state.lastGoal?.scorerId);
@@ -506,9 +531,11 @@ export function createRenderer(canvasEl) {
 
   function update(state, dt, alpha = 1, view = null) {
     time += dt;
+    // A cut (kick-off / penalty line-up): fade through black; nothing slides.
     const transition = state.transition;
-    const rawTransition = transition ? THREE.MathUtils.clamp(transition.elapsed / transition.duration, 0, 1) : 1;
-    const transitionT = rawTransition * rawTransition * (3 - 2 * rawTransition);
+    const cutU = transition ? THREE.MathUtils.clamp(transition.elapsed / transition.duration, 0, 1) : 1;
+    const fade = transition ? Math.max(0, 1 - Math.abs(cutU * 2 - 1) * 1.15) : 0;
+    if (fadeEl) fadeEl.style.opacity = String(Math.min(1, fade * 1.1));
     // Advance the intro (real time); its last shot hands over to the match camera.
     if (intro) {
       intro.shotT += dt; intro.total += dt;
@@ -541,8 +568,6 @@ export function createRenderer(canvasEl) {
       }
       const pa = blendable(p.prevPos, p.pos) ? alpha : 1;
       let px = lerpPos(p.prevPos, p.pos, pa, 'x'), pz = lerpPos(p.prevPos, p.pos, pa, 'z');
-      const start = transition?.fromPlayers?.[p.id];
-      if (start) { px = start.x + (px - start.x) * transitionT; pz = start.z + (pz - start.z) * transitionT; }
       m.root.position.set(px, 0, pz);
       // Body yaw rate, for turn-in-place steps.
       const yaw = Math.atan2(p.face.x, p.face.z), pyaw = Math.atan2(m.prevFace.x, m.prevFace.z);
@@ -582,7 +607,7 @@ export function createRenderer(canvasEl) {
       const own = -HALF_L * state.teams[p.team].dir;
       // Gold Standard engine pose (stride-synced IK, kicks at the contact frame).
       // Keeper dives/holds, throw-ins and celebrations keep their own clips.
-      const usePose = p.pose && !(p.dive > 0 || p.holding || (p.throwIn && p.mustPass) || celebration);
+      const usePose = p.pose && !(p.dive > 0 || p.holding || p.carrying || (p.throwIn && p.mustPass) || celebration);
       if (usePose) {
         const r = applyEnginePose(m.character, p.posePrev || p.pose, p.pose, pa, m.hipsBindY);
         m.root.rotation.set(r.pitch, visualYaw + r.yawOffset, r.roll, 'YXZ');
@@ -608,15 +633,10 @@ export function createRenderer(canvasEl) {
     const b = state.ball;
     const ba = blendable(b.prevPos, b.pos) ? alpha : 1;
     let bx = lerpPos(b.prevPos, b.pos, ba, 'x'), by = lerpPos(b.prevPos, b.pos, ba, 'y'), bz = lerpPos(b.prevPos, b.pos, ba, 'z');
-    if (transition) {
-      bx = transition.fromBall.x + (bx - transition.fromBall.x) * transitionT;
-      by = transition.fromBall.y + (by - transition.fromBall.y) * transitionT;
-      bz = transition.fromBall.z + (bz - transition.fromBall.z) * transitionT;
-    }
     ball.position.set(bx, by, bz);
     // Ball in the hands (keeper, throw-in): between the two hands.
-    const holder = b.owner && (b.owner.holding || (b.owner.throwIn && b.owner.mustPass)) ? b.owner : null;
-    if (holder && !transition) {
+    const holder = b.owner && (b.owner.holding || b.owner.carrying || (b.owner.throwIn && b.owner.mustPass)) ? b.owner : null;
+    if (holder) {
       const hm = playerMeshes[state.players.indexOf(holder)];
       const hl = hm?.character.bones['hand.L'], hr = hm?.character.bones['hand.R'];
       if (hl && hr) {
@@ -702,12 +722,14 @@ export function createRenderer(canvasEl) {
       }
     }
 
+    if (!intro) officials.update(state, view?.replay ? 0 : dt);
     // Camera: broadcast play, celebration close-up, or the replay director.
     let t = null;
     let mode = 'live';
     if (intro) { t = introCamera(state); mode = 'intro'; camPos.copy(t.pos); camLook.copy(t.look); }
     else if (view?.replay) { t = replayCamera(state, view.replay); mode = 'replay'; }
     else if (state.phase === 'goal') { t = celebrationCamera(state); if (t) mode = 'celebration'; }
+    else { t = setPieceCamera(state); if (t) mode = 'setpiece'; }
     const camDt = view?.realDt ?? dt;
     if (!t) t = cameraTarget(state, camDt);
     // Cut (rather than swoop) into and out of the replay, like a broadcast.
@@ -732,6 +754,7 @@ export function createRenderer(canvasEl) {
       });
     }
     const k = 1 - Math.exp(-camDt * (t.rate || 3.2));
+    if (fade > 0.9) { camPos.copy(t.pos); camLook.copy(t.look); } // hidden by the cut: jump straight there
     camPos.lerp(t.pos, k);
     camLook.lerp(t.look, k);
     // The smoothing lags a fast ball; never let it leave the frame. If it gets
@@ -764,6 +787,8 @@ export function createRenderer(canvasEl) {
 
   return {
     setMatch, update, resize, cycleCamera, setCamera, setGraphics, playIntro, skipIntro,
+    /** Forward a match event to the officials (flags, pointing). */
+    matchEvent: (state, e) => officials.onEvent(state, e),
     get introActive() { return !!intro; },
     /** Dev/testing: jump to a shot (name) at a fraction of it. */
     introSeek(name, frac = 0.5) {

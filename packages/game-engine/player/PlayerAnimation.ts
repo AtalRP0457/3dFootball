@@ -30,6 +30,8 @@ export interface PoseContext {
   lookDown: number;
   /** Defensive stance (jockey / shield). */
   defending: boolean;
+  /** 0..1, eased: stepping on the spot while turning (avoids a pop when the turn starts/ends). */
+  turnWeight?: number;
 }
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
@@ -40,7 +42,7 @@ export function computePose(c: PoseContext): PoseData {
   const g = c.gait;
   const B = p.bones;
   const moving = smooth(0.12, 0.7, c.speed);
-  const stepping = c.movement === 'turn' ? 1 : moving;
+  const stepping = Math.max(moving, c.turnWeight ?? (c.movement === 'turn' ? 1 : 0));
   const jockey = c.defending;
   const idleCrouch = 0.02 + 0.06 * c.readiness;
 

@@ -20,6 +20,7 @@ type Frame = Record<string, unknown>;
 function toPlay(s: MatchState) {
   for (let k = 0; k < 600 && s.phase !== 'play'; k++) stepMatch(s, {}, FIXED_DT);
   if (s.phase !== 'play') { s.phase = 'play'; s.restart = null; }
+  s.kickoffPending = false; // a staged scenario, not a real kick-off
 }
 const ofIdx = (s: MatchState, idx: number) => s.players.find((p) => p.team === 0 && p.idx === idx)!;
 
