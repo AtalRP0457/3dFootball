@@ -77,6 +77,7 @@ const OPTIONS = {
   playerIdentity: { label: 'Player names', values: [['real', 'Real players'], ['parody', 'Parody players']] },
   difficulty: { label: 'Difficulty', values: [['beginner', 'Amateur'], ['easy', 'Semi-Pro'], ['normal', 'Professional'], ['hard', 'World Class']] },
   duration: { label: 'Match length', values: [[120, '2 minutes'], [240, '4 minutes'], [360, '6 minutes']] },
+  drawRule: { label: 'Draws', values: [['draw', 'Stay a draw'], ['penalties', 'Penalty shoot-out']] },
   assist: { label: 'Control assist', values: [['off', 'Manual'], ['assisted', 'Assisted'], ['full', 'Full assist']] },
   dribbleStyle: { label: 'Dribbling', values: [['sticky', 'Arcade (ball at feet)'], ['touch', 'Realistic (touches)']] },
   physics: { label: 'Physics', values: [['engine', 'Gold Standard engine'], ['classic', 'Classic']] },
@@ -537,7 +538,7 @@ export function createFrontend(api) {
       <div class="set-col a-in" style="--i:1">
         <h3>Football universe</h3>${settingsRows(['roster', 'clubIdentity', 'playerIdentity'])}
         ${locked ? '<p class="set-note">A tournament in progress keeps the roster profile it started with. Names and crests follow your identity choice everywhere.</p>' : ''}
-        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'assist', 'physics', 'camera', 'cameraZoom', 'graphics', 'intro', 'dribbleStyle', 'era'])}
+        <h3>Match settings</h3>${settingsRows(['difficulty', 'duration', 'drawRule', 'assist', 'physics', 'camera', 'cameraZoom', 'graphics', 'intro', 'dribbleStyle', 'era'])}
       </div>
       <div class="set-col a-in" style="--i:2"><h3>Help, tools & data</h3>
         <button class="set-link" data-nav data-act="controls" data-v="controls"><b>Controller settings</b><small>Keyboard, gamepad and touch layout</small></button>
@@ -996,9 +997,9 @@ export function createFrontend(api) {
       const pad = (k) => `<kbd>${k}</kbd>`;
       card.innerHTML = `<h2>Controller settings</h2>
         <div class="ctl-grid">
-          <div class="ctl-col"><h4>Player 1 · keyboard</h4><p><span>Move</span>${pad('W')}${pad('A')}${pad('S')}${pad('D')}</p><p><span>Pass / switch</span>${pad('F')} or ${pad('Space')}</p><p><span>Shoot (hold) / tackle</span>${pad('G')}</p><p><span>Sprint</span>${pad('Left Shift')}</p></div>
-          <div class="ctl-col"><h4>Player 2 · keyboard</h4><p><span>Move</span>${pad('↑')}${pad('←')}${pad('↓')}${pad('→')}</p><p><span>Pass / switch</span>${pad('.')}</p><p><span>Shoot (hold) / tackle</span>${pad('/')}</p><p><span>Sprint</span>${pad('Right Shift')}</p></div>
-          <div class="ctl-col"><h4>Gamepad</h4><p><span>Move</span>${pad('Left stick')}</p><p><span>Pass / switch</span>${pad('A')} / ${pad('✕')}</p><p><span>Shoot / tackle</span>${pad('B')} / ${pad('○')}</p><p><span>Sprint</span>${pad('RT')} ${pad('RB')}</p></div>
+          <div class="ctl-col"><h4>Player 1 · keyboard</h4><p><span>Move</span>${pad('W')}${pad('A')}${pad('S')}${pad('D')}</p><p><span>Pass / switch</span>${pad('F')} or ${pad('Space')}</p><p><span>Control goalkeeper</span>${pad('K')}</p><p><span>Shoot (hold) / tackle</span>${pad('G')}</p><p><span>Sprint</span>${pad('Left Shift')}</p></div>
+          <div class="ctl-col"><h4>Player 2 · keyboard</h4><p><span>Move</span>${pad('↑')}${pad('←')}${pad('↓')}${pad('→')}</p><p><span>Pass / switch</span>${pad('.')}</p><p><span>Control goalkeeper</span>${pad('Num 8')}</p><p><span>Shoot (hold) / tackle</span>${pad('/')}</p><p><span>Sprint</span>${pad('Right Shift')}</p></div>
+          <div class="ctl-col"><h4>Gamepad</h4><p><span>Move</span>${pad('Left stick')}</p><p><span>Pass / switch</span>${pad('A')} / ${pad('✕')}</p><p><span>Control goalkeeper</span>${pad('Select')}</p><p><span>Shoot / tackle</span>${pad('B')} / ${pad('○')}</p><p><span>Sprint</span>${pad('RT')} ${pad('RB')}</p></div>
           <div class="ctl-col"><h4>In match</h4><p><span>Pause</span>${pad('Esc')} ${pad('P')}</p><p><span>Camera</span>${pad('C')}</p><p><span>Skip replay</span>${pad('R')}</p><p><span>Touch screen</span>Stick + Pass / Shoot / Sprint</p></div>
         </div>
         <button class="fe-btn primary" data-act="closeModal" data-autofocus>Done</button>`;

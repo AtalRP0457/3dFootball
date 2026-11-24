@@ -107,6 +107,18 @@ export class MatchAudio {
   playEvent(event) {
     if (!this.context || !this.enabled) return;
     if (event.type === 'kick') this.noise(0.055, 0.07, 420);
+    else if (event.type === 'shot') {
+      // The strike sounds like its effort: a full-blooded shot is a deep, loud thump.
+      const p = Math.max(0.2, Math.min(1, event.power ?? 0.6));
+      this.noise(0.05 + 0.05 * p, 0.05 + 0.1 * p, 260 + 260 * (1 - p));
+      this.tone(95 + 40 * (1 - p), 0.09 + 0.05 * p, 0.04 + 0.08 * p, 'sine', 60);
+    } else if (event.type === 'woodwork') {
+      this.tone(880, 0.35, 0.07, 'triangle', 820);
+      this.tone(1320, 0.25, 0.04, 'sine', 1250);
+    } else if (event.type === 'shootoutKick') {
+      if (event.scored) this.tone(523, 0.4, 0.07, 'triangle', 660);
+      else this.tone(330, 0.35, 0.05, 'triangle', 250);
+    }
     else if (event.type === 'tackle') this.noise(0.08, 0.045, 220);
     else if (event.type === 'save') this.noise(0.12, 0.06, event.parry ? 300 : 520);
     else if (event.type === 'foul' || event.type === 'offside'
@@ -114,6 +126,12 @@ export class MatchAudio {
       || event.type === 'directRestartOwnGoal' || event.type === 'freeKickDirectGoal') {
       this.tone(1800, 0.24, 0.08, 'sine', 2350);
       this.tone(1650, 0.2, 0.06, 'sine', 2100);
+    } else if (event.type === 'whistle') {
+      // Referee: short blast for a restart / to take the set piece, longer for kick-off.
+      const len = event.kind === 'kickoff' ? 0.45 : event.kind === 'restart' ? 0.18 : 0.26;
+      if (event.kind === 'throw-in' || event.kind === 'goal kick' || event.kind === 'corner') return; // ball out: no whistle needed
+      this.tone(2050, len, 0.07, 'sine', 2250);
+      this.noise(len, 0.02, 2600);
     } else if (event.type === 'card') {
       this.tone(event.color === 'red' ? 920 : 1320, 0.22, 0.07, 'triangle', 760);
     } else if (event.type === 'substitution') {

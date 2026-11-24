@@ -5,7 +5,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { hudStore } from './hudStore.ts';
-import type { HudTeam } from './hudStore.ts';
+import type { HudTeam, HudState } from './hudStore.ts';
 import type { MatchState } from '../../types/game.ts';
 
 function useHud() {
@@ -49,6 +49,22 @@ function TeamPanel({ team, side }: { team: HudTeam; side: 'left' | 'right' }) {
       {side === 'right' ? crest : null}
     </div>
   );
+}
+
+/** Penalty shoot-out tally: five marks per team (more in sudden death). */
+function ShootoutTally({ so, home, away }: { so: NonNullable<HudState['shootout']>; home: HudTeam; away: HudTeam }) {
+  const n = Math.max(5, so.kicks[0].length, so.kicks[1].length);
+  const row = (t: 0 | 1, team: HudTeam) => (
+    <div className={`so-row${so.turn === t ? ' turn' : ''}`}>
+      <b>{team.code}</b>
+      {Array.from({ length: n }, (_, i) => {
+        const k = so.kicks[t][i];
+        return <i key={i} className={k === undefined ? 'so-dot' : k ? 'so-dot in' : 'so-dot out'} />;
+      })}
+      <em>{so.scores[t]}</em>
+    </div>
+  );
+  return <div id="shootoutTally" aria-label="Penalty shoot-out">{row(0, home)}{row(1, away)}</div>;
 }
 
 /** Mini-map of the whole pitch: circles for the home side, triangles for the away side. */
@@ -116,6 +132,7 @@ export function Hud() {
       <Scoreboard clock={s.clock} home={home} away={away} />
       <TeamPanel team={home} side="left" />
       <TeamPanel team={away} side="right" />
+      {s.shootout ? <ShootoutTally so={s.shootout} home={home} away={away} /> : null}
       {/* The radar shows the live match, so it is hidden while a replay plays. */}
       {s.replay ? <div id="replayTag">REPLAY</div> : <Radar />}
       {s.goalCard ? (

@@ -7,6 +7,10 @@ import { FIXED_DT, HALF_L, HALF_W } from '../src/game/constants.ts';
 import { MatchPhysics, preparePhysics } from '../src/game/engineBridge.ts';
 import type { MatchState, TeamData } from '../src/types/game.ts';
 
+// AI decisions use randomness; fix the stream so each CI runner exercises the
+// same reduced-roster scenarios (Codex's seed 0x3df00d, shared helper).
+import { seedRandom } from './support/seed.ts';
+seedRandom(0x3df00d);
 await preparePhysics();
 let failed = 0;
 const check = (name: string, pass: boolean, detail: string) => {

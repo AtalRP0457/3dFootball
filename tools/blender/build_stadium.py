@@ -50,6 +50,7 @@ LOW, UP = LY['lower'], LY['upper']
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 scene.unit_settings.system = 'METRIC'
+bpy.context.preferences.filepaths.save_version = 0
 
 def B(p):
     """three.js (x, y, z) -> Blender (x, -z, y)."""
@@ -87,6 +88,8 @@ mat('Concrete', srgb('#8d9199'), 0.92)
 mat('ConcreteLight', srgb('#b8bcc2'), 0.9)
 mat('ConcreteDark', srgb('#3a3e46'), 0.95)
 mat('Seat', srgb('#1d3c8c'), 0.55)
+mat('SeatMid', srgb('#274a91'), 0.55)
+mat('SeatDark', srgb('#142a5d'), 0.6)
 mat('SeatAccent', srgb('#e7e9ee'), 0.55)
 mat('SteelPainted', srgb('#e9ecf1'), 0.45, 0.6)
 mat('SteelDark', srgb('#2b3039'), 0.5, 0.7)
@@ -96,6 +99,7 @@ mat('Glass', srgb('#a9c7e6'), 0.05, 0.0, alpha=0.28)
 mat('Lamp', srgb('#fffbe8'), 0.3, 0.0, emit=srgb('#fff6dc'), emit_strength=6.0)
 mat('LampHousing', srgb('#1b1f26'), 0.6, 0.6)
 mat('Cladding', srgb('#2f3540'), 0.7, 0.35)
+mat('FacadeGlass', srgb('#263748'), 0.2, 0.35)
 mat('Interior', srgb('#0c0e12'), 1.0)
 mat('Screen', srgb('#0a0d14'), 0.3, 0.0, emit=srgb('#203050'), emit_strength=1.0)
 mat('LED', srgb('#101418'), 0.35, 0.0, emit=srgb('#1a2a44'), emit_strength=1.0)
@@ -275,10 +279,10 @@ def terrace(st, rows, rise, depth, y0, d0, L):
     return top, back
 
 def seat_backs(st, rows, rise, depth, y0, d0, L, accent_rows=(), voms=()):
+    seat_pitch = LY['seatSpacing']
     for r in range(rows):
         y = y0 + r * rise
-        d = d0 + r * depth + depth * 0.72
-        m = M['SeatAccent'] if r in accent_rows else M['Seat']
+        d = d0 + r * depth + depth * 0.28
         spans = []
         for a0, a1 in segments(2 * L):
             cut = [(v0, v1) for v0, v1, r0, r1, _, _ in voms if r0 <= r < r1 and v0 < a1 and v1 > a0]
@@ -288,10 +292,20 @@ def seat_backs(st, rows, rise, depth, y0, d0, L, accent_rows=(), voms=()):
             if v0 > a0: spans.append((a0, v0))
             if v1 < a1: spans.append((v1, a1))
         for a0, a1 in spans:
-            # seat pan + back as a low ridge (individual seats are implied by
-            # the crowd; empty seats read as the coloured strip)
-            seats_b.quad(P(st, a0, y + 0.42, d), P(st, a1, y + 0.42, d), P(st, a1, y + 0.02, d + 0.06), P(st, a0, y + 0.02, d + 0.06), m)
-            seats_b.quad(P(st, a0, y + 0.02, d - 0.36), P(st, a1, y + 0.02, d - 0.36), P(st, a1, y + 0.3, d - 0.02), P(st, a0, y + 0.3, d - 0.02), m)
+            # Individual molded chair pans and backs read clearly at close
+            # camera angles while remaining one merged mesh in the exported GLB.
+            a = math.ceil((a0 + seat_pitch * 0.5) / seat_pitch) * seat_pitch
+            while a < a1 - seat_pitch * 0.45:
+                n = round((a + L) / seat_pitch)
+                m = M['SeatAccent'] if r in accent_rows else (M['SeatMid'] if n % 11 == 0 else M['SeatDark'] if n % 17 == 0 else M['Seat'])
+                half = seat_pitch * 0.40
+                # Two lightly sloped molded surfaces keep the rows legible as
+                # individual chairs without the weight of six-sided boxes.
+                seats_b.quad(P(st, a - half, y + 0.23, d - 0.14), P(st, a + half, y + 0.23, d - 0.14),
+                             P(st, a + half, y + 0.19, d + 0.12), P(st, a - half, y + 0.19, d + 0.12), m)
+                seats_b.quad(P(st, a - half, y + 0.19, d + 0.11), P(st, a + half, y + 0.19, d + 0.11),
+                             P(st, a + half, y + 0.55, d + 0.20), P(st, a - half, y + 0.55, d + 0.20), m)
+                a += seat_pitch
 
 def aisle_strips(st, rows, rise, depth, y0, d0, L, voms):
     hw = LY['aisleWidth'] / 2
@@ -366,6 +380,11 @@ for st in stands:
     # ---- facade behind ----
     facade_b.quad(P(st, -L, 0, up_d + up_depth + 0.2), P(st, L, 0, up_d + up_depth + 0.2), P(st, L, roof_y + 0.4, up_d + up_depth + 0.2), P(st, -L, roof_y + 0.4, up_d + up_depth + 0.2), M['Cladding'])
     for a in [x for x in range(int(-L), int(L) + 1, 4)]:
+        # Dark glazed bays between the outer steel ribs give the bowl a
+        # layered, occupied facade instead of a single flat concrete wall.
+        a0, a1 = max(-L, a - 1.8), min(L, a + 1.8)
+        facade_b.quad(P(st, a0, 1.4, up_d + up_depth + 0.24), P(st, a1, 1.4, up_d + up_depth + 0.24),
+                      P(st, a1, roof_y - 0.8, up_d + up_depth + 0.24), P(st, a0, roof_y - 0.8, up_d + up_depth + 0.24), M['FacadeGlass'])
         facade_b.box(P(st, a, (roof_y + 0.4) / 2, up_d + up_depth + 0.45), (0.3, roof_y + 0.4, 0.5), M['SteelDark'], yaw=math.atan2(st['out'].x, st['out'].z))
     # ---- roof: cantilever trusses, metal deck, glass leading edge ----
     yaw = math.atan2(st['out'].x, st['out'].z)

@@ -81,7 +81,7 @@ export const APPEARANCE_OVERRIDES: Record<string, AppearanceOverride> = {
   // no scanned or photographic likeness.
   'erling-haaland': {
     heightCm: 194, weightKg: 88, age: 26, bodyType: 'strong', skinTone: '#f6d7c3',
-    hair: { style: 'manBun', color: 'blond' }, facialHair: 'none', eyes: '#4f7fa8', accessories: [],
+    hair: { style: 'slickBackPonytail', color: 'blond', hex: '#c8a35f' }, facialHair: 'none', eyes: '#4f7fa8', accessories: [],
     face: { headLength: 1.07, headWidth: 1.0, jaw: 1.16, chin: 1.35, cheek: 1.1, brow: 1.3, noseLength: 1.1, noseWidth: 0.95, noseBridge: 1.2, lips: 0.85 },
   },
 };

@@ -8,7 +8,8 @@ function setup() {
   const s = createMatch({ home: buildTeam('fcb'), away: buildTeam('rma'), controllers: ['p1', 'ai'], difficulty: 'normal', duration: 240 });
   for (const p of s.players) if (p.onPitch && !(p.team === 0 && p.idx === 9)) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
   s.engine = new MatchPhysics(s);
-  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  for (let k = 0; k < 600 && s.phase !== 'play'; k++) stepMatch(s, {}, FIXED_DT);
+  if (s.phase !== 'play') { s.phase = 'play'; s.restart = null; console.log('(forced play: no kick-off taker)'); }
   for (const p of s.players) { p.mustPass = false; }
   const me = s.players.find((p) => p.team === 0 && p.idx === 9)!;
   s.ball.owner = null; s.ball.intended = null;

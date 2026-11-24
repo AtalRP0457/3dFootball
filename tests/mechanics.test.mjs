@@ -118,10 +118,10 @@ console.log('Passing');
   // Lead a receiver running across.
   const lead = planPass({ p: passer(skilled), target: recv(15.7, 0, 0, 6), ball, kind: 'ground' });
   check(lead.aim.z > 3, `pass leads a running receiver (aim z ${lead.aim.z.toFixed(2)})`);
-  // Lofted pass lands short and runs on.
+  // Lofted pass drops just short of the receiver (~94 %) and bounces on to him.
   const lofts = [];
   for (let i = 0; i < 50; i++) lofts.push(roll(planPass({ p: passer(skilled), target: recv(30.7, 0), ball, kind: 'lofted' })).landX);
-  check(mean(lofts) > 21 && mean(lofts) < 28.5, `lofted pass drops short of the receiver (${mean(lofts).toFixed(1)} m of 30)`);
+  check(mean(lofts) > 26 && mean(lofts) < 30, `lofted pass drops just short of the receiver (${mean(lofts).toFixed(1)} m of 30)`);
   // Through ball goes into space ahead of the runner.
   const tb = planPass({ p: passer(skilled), target: recv(15, 8, 7, 0), ball, kind: 'through', attackDir: 1 });
   check(tb.aim.x > 20, `through ball played into space (aim x ${tb.aim.x.toFixed(1)})`);

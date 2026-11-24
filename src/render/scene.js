@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { createCharacter } from './character/character.js';
+import { createOfficials } from './officials.js';
 import { applyEnginePose } from '../../packages/game-engine/player/applyPose.ts';
 import { playerIdentity } from '../game/players/identity.ts';
 import { buildPitch } from './stadium/pitch.js';
@@ -31,7 +32,7 @@ const CAMERA_MODES = {
   wide: { label: 'Tactical', h: 34, back: 40, fov: 46, clampX: 20, follow: 0.1, pull: 0.25 },
 };
 export const CAMERA_ORDER = Object.keys(CAMERA_MODES);
-export const CAMERA_DEFAULTS = { mode: 'broadcast', zoom: 1 };
+export const CAMERA_DEFAULTS = { mode: 'close', zoom: 1 };
 export const cameraLabel = (mode) => CAMERA_MODES[mode]?.label || mode;
 
 function canvas(w, h) {
@@ -109,6 +110,12 @@ function ballTexture(renderer) {
 // ---------- renderer ----------
 export function createRenderer(canvasEl) {
   const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, powerPreference: 'high-performance' });
+  // Black layer for broadcast cuts (kick-off after a goal, penalty line-up).
+  const fadeEl = typeof document !== 'undefined' && canvasEl.parentElement ? document.createElement('div') : null;
+  if (fadeEl) {
+    Object.assign(fadeEl.style, { position: 'absolute', inset: '0', background: '#000', opacity: '0', pointerEvents: 'none', zIndex: '2' });
+    canvasEl.parentElement.appendChild(fadeEl);
+  }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -256,6 +263,8 @@ export function createRenderer(canvasEl) {
   let time = 0;
 
   let stadiumName = '';
+  // Referee and assistant referees (visual only).
+  const officials = createOfficials(scene);
   function setMatch(state) {
     stadiumName = state.stadium || state.teams[0].data.stadium || '';
     arenaGlow.visible = !!state.indoor;
@@ -264,6 +273,7 @@ export function createRenderer(canvasEl) {
     // Fans wear their team's colours (home end busiest, away fans grouped).
     const kitCols = (k) => [k.shirt, k.secondary || k.shirt, k.shirt].filter(Boolean);
     arena.setColors(kitCols(state.teams[0].kit), kitCols(state.teams[1].kit));
+    officials.build(state);
     for (const m of playerMeshes) m.character.dispose();
     playerMeshes = state.players.map((p) => {
       const team = state.teams[p.team];
@@ -276,7 +286,7 @@ export function createRenderer(canvasEl) {
         crestUrl: team.data?.crest,
         teamKey: `t${team.index}|${team.kit.shirt}|${team.kit.secondary}|${team.kit.design}`,
       });
-      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z }, hipsBindY: character.bones.hips?.position.y ?? 0.93, posed: false };
+      const m = { character, root: character.group, prevFace: { x: p.face.x, z: p.face.z }, renderYaw: Math.atan2(p.face.x, p.face.z), hipsBindY: character.bones.hips?.position.y ?? 0.93, posed: false };
       m.ring = new THREE.Mesh(
         ringGeo,
         new THREE.MeshBasicMaterial({ color: RING.other, transparent: true, opacity: 0.85, depthWrite: false }),
@@ -314,7 +324,8 @@ export function createRenderer(canvasEl) {
    */
   function cameraTarget(state, dt = 0) {
     const mode = CAMERA_MODES[camMode] || CAMERA_MODES.broadcast;
-    const b = state.ball.pos, bv = state.ball.vel;
+    const b = state.ball.pos;
+    const bv = state.ball.vel;
     const ctrl = controlledPlayer(state);
     let fx = b.x, fz = b.z;
     let spread = 0;
@@ -396,6 +407,35 @@ export function createRenderer(canvasEl) {
   function shownPos(state, p) {
     const m = playerMeshes[state.players.indexOf(p)];
     return m ? m.root.position : V(p.pos.x, 0, p.pos.z);
+  }
+  /**
+   * Set-piece view (goal kick, corner, free kick in range) once the ball is
+   * placed and until it is played: behind the ball, looking where the kick
+   * will go, like a broadcast set-piece camera.
+   */
+  function setPieceCamera(state) {
+    // Penalty / shoot-out: behind the taker, looking at the goal and the keeper.
+    const so = state.shootout, pen = state.penalty;
+    if ((so && so.kicker && so.stage !== 'done') || pen?.active) {
+      const goalX = so ? so.goalX : HALF_L * state.teams[pen.attacker].dir;
+      const dir = Math.sign(goalX) || 1, spotX = goalX - dir * 11;
+      return { pos: V(spotX - dir * 8, 2.5, 1.1), look: V(goalX, 1.0, 0), fov: 36, rate: 3 };
+    }
+    const sp = state.setPiece;
+    if (!sp || sp.stage !== 'ready' || state.ball.owner !== sp.taker) return null;
+    const dir = state.teams[sp.team].dir;
+    const b = state.ball.pos, goalX = HALF_L * dir;
+    if (sp.type === 'goal kick') {
+      return { pos: V(b.x - dir * 10, 5.2, b.z * 0.6), look: V(b.x + dir * 32, 1.0, b.z * 0.3), fov: 46, rate: 2.2 };
+    }
+    const toGoal = Math.hypot(goalX - b.x, b.z);
+    if (sp.type === 'corner' || ((sp.type === 'free kick' || sp.type === 'indirect free kick') && toGoal < 36)) {
+      // From behind the ball towards the far post / the goal.
+      const tx = goalX - dir * (sp.type === 'corner' ? 6 : 0), tz = sp.type === 'corner' ? -Math.sign(b.z) * 2 : 0;
+      let vx = tx - b.x, vz = tz - b.z; const l = Math.hypot(vx, vz) || 1; vx /= l; vz /= l;
+      return { pos: V(b.x - vx * 7.5, 3.2, b.z - vz * 7.5), look: V(b.x + vx * 18, 1.2, b.z + vz * 18), fov: 44, rate: 2.2 };
+    }
+    return null;
   }
   function celebrationCamera(state) {
     const sc = byId(state, state.lastGoal?.scorerId);
@@ -498,6 +538,11 @@ export function createRenderer(canvasEl) {
 
   function update(state, dt, alpha = 1, view = null) {
     time += dt;
+    // A cut (kick-off / penalty line-up): fade through black; nothing slides.
+    const transition = state.transition;
+    const cutU = transition ? THREE.MathUtils.clamp(transition.elapsed / transition.duration, 0, 1) : 1;
+    const fade = transition ? Math.max(0, 1 - Math.abs(cutU * 2 - 1) * 1.15) : 0;
+    if (fadeEl) fadeEl.style.opacity = String(Math.min(1, fade * 1.1));
     // Advance the intro (real time); its last shot hands over to the match camera.
     if (intro) {
       intro.shotT += dt; intro.total += dt;
@@ -529,13 +574,17 @@ export function createRenderer(canvasEl) {
         return;
       }
       const pa = blendable(p.prevPos, p.pos) ? alpha : 1;
-      m.root.position.set(lerpPos(p.prevPos, p.pos, pa, 'x'), 0, lerpPos(p.prevPos, p.pos, pa, 'z'));
-      m.root.rotation.y = Math.atan2(p.face.x, p.face.z);
+      let px = lerpPos(p.prevPos, p.pos, pa, 'x'), pz = lerpPos(p.prevPos, p.pos, pa, 'z');
+      m.root.position.set(px, 0, pz);
       // Body yaw rate, for turn-in-place steps.
       const yaw = Math.atan2(p.face.x, p.face.z), pyaw = Math.atan2(m.prevFace.x, m.prevFace.z);
       let dyaw = yaw - pyaw;
       if (dyaw > Math.PI) dyaw -= 2 * Math.PI; else if (dyaw < -Math.PI) dyaw += 2 * Math.PI;
       m.prevFace.x = p.face.x; m.prevFace.z = p.face.z;
+      let turn = yaw - m.renderYaw;
+      if (turn > Math.PI) turn -= 2 * Math.PI; else if (turn < -Math.PI) turn += 2 * Math.PI;
+      m.renderYaw += turn * (1 - Math.exp(-dt * 18));
+      const visualYaw = m.renderYaw;
       const gdt = dt * (state.timeScale || 1);
       m.yawRate = gdt > 0 ? m.yawRate * 0.8 + (dyaw / gdt) * 0.2 : (m.yawRate || 0);
       // Lean with the physics: forward into acceleration, back when braking,
@@ -565,16 +614,17 @@ export function createRenderer(canvasEl) {
       const own = -HALF_L * state.teams[p.team].dir;
       // Gold Standard engine pose (stride-synced IK, kicks at the contact frame).
       // Keeper dives/holds, throw-ins and celebrations keep their own clips.
-      const usePose = p.pose && !(p.dive > 0 || p.holding || (p.throwIn && p.mustPass) || celebration);
+      const usePose = p.pose && !(p.dive > 0 || p.holding || p.carrying || (p.throwIn && p.mustPass) || celebration);
       if (usePose) {
         const r = applyEnginePose(m.character, p.posePrev || p.pose, p.pose, pa, m.hipsBindY);
-        m.root.rotation.set(r.pitch, yaw + r.yawOffset, r.roll, 'YXZ');
+        m.root.rotation.set(r.pitch, visualYaw + r.yawOffset, r.roll, 'YXZ');
         m.root.position.y = r.lift;
         mesh.rotation.x = 0; mesh.rotation.z = 0;
         m.posed = true;
         return;
       }
-      if (m.posed) { m.root.rotation.set(0, yaw, 0); m.root.position.y = 0; m.posed = false; }
+      if (m.posed) { m.root.rotation.set(0, visualYaw, 0); m.root.position.y = 0; m.posed = false; }
+      else m.root.rotation.y = visualYaw;
       if (gdt > 0 && m.root.visible) {
         m.character.update(gdt, p, {
           owner: state.ball.owner === p,
@@ -589,9 +639,10 @@ export function createRenderer(canvasEl) {
     // Ball: position and rolling spin from displacement
     const b = state.ball;
     const ba = blendable(b.prevPos, b.pos) ? alpha : 1;
-    ball.position.set(lerpPos(b.prevPos, b.pos, ba, 'x'), lerpPos(b.prevPos, b.pos, ba, 'y'), lerpPos(b.prevPos, b.pos, ba, 'z'));
+    let bx = lerpPos(b.prevPos, b.pos, ba, 'x'), by = lerpPos(b.prevPos, b.pos, ba, 'y'), bz = lerpPos(b.prevPos, b.pos, ba, 'z');
+    ball.position.set(bx, by, bz);
     // Ball in the hands (keeper, throw-in): between the two hands.
-    const holder = b.owner && (b.owner.holding || (b.owner.throwIn && b.owner.mustPass)) ? b.owner : null;
+    const holder = b.owner && (b.owner.holding || b.owner.carrying || (b.owner.throwIn && b.owner.mustPass)) ? b.owner : null;
     if (holder) {
       const hm = playerMeshes[state.players.indexOf(holder)];
       const hl = hm?.character.bones['hand.L'], hr = hm?.character.bones['hand.R'];
@@ -662,7 +713,8 @@ export function createRenderer(canvasEl) {
         arrow.position.set(mp ? mp.x : p.pos.x, top + Math.sin(time * 5) * 0.08, mp ? mp.z : p.pos.z);
       }
       const { meter, fill } = markers[id];
-      const charge = p && live ? p.charge || 0 : 0;
+      const passCharging = !!(p && p.passCharge);
+      const charge = p && live ? Math.max(p.charge || 0, p.passCharge || 0) : 0;
       meter.visible = charge > 0;
       if (meter.visible) {
         const pm = playerMeshes[state.players.indexOf(p)];
@@ -670,17 +722,21 @@ export function createRenderer(canvasEl) {
         meter.position.set(mp ? mp.x : p.pos.x, (pm?.character.headHeight ?? 1.95) + 0.75, mp ? mp.z : p.pos.z);
         meter.quaternion.copy(camera.quaternion);
         fill.scale.x = Math.max(0.001, charge) * 0.94;
-        meterCol.setHSL(0.33 * (1 - Math.max(0, charge - 0.35) / 0.65), 0.85, 0.5);
+        // Pass power in blue, shot power green -> red.
+        if (passCharging) meterCol.setHSL(0.58, 0.85, 0.55);
+        else meterCol.setHSL(0.33 * (1 - Math.max(0, charge - 0.35) / 0.65), 0.85, 0.5);
         fill.material.color.copy(meterCol);
       }
     }
 
+    if (!intro) officials.update(state, view?.replay ? 0 : dt);
     // Camera: broadcast play, celebration close-up, or the replay director.
     let t = null;
     let mode = 'live';
     if (intro) { t = introCamera(state); mode = 'intro'; camPos.copy(t.pos); camLook.copy(t.look); }
     else if (view?.replay) { t = replayCamera(state, view.replay); mode = 'replay'; }
     else if (state.phase === 'goal') { t = celebrationCamera(state); if (t) mode = 'celebration'; }
+    else { t = setPieceCamera(state); if (t) mode = 'setpiece'; }
     const camDt = view?.realDt ?? dt;
     if (!t) t = cameraTarget(state, camDt);
     // Cut (rather than swoop) into and out of the replay, like a broadcast.
@@ -705,6 +761,7 @@ export function createRenderer(canvasEl) {
       });
     }
     const k = 1 - Math.exp(-camDt * (t.rate || 3.2));
+    if (fade > 0.9) { camPos.copy(t.pos); camLook.copy(t.look); } // hidden by the cut: jump straight there
     camPos.lerp(t.pos, k);
     camLook.lerp(t.look, k);
     // The smoothing lags a fast ball; never let it leave the frame. If it gets
@@ -737,6 +794,8 @@ export function createRenderer(canvasEl) {
 
   return {
     setMatch, update, resize, cycleCamera, setCamera, setGraphics, playIntro, skipIntro,
+    /** Forward a match event to the officials (flags, pointing). */
+    matchEvent: (state, e) => officials.onEvent(state, e),
     get introActive() { return !!intro; },
     /** Dev/testing: jump to a shot (name) at a fraction of it. */
     introSeek(name, frac = 0.5) {

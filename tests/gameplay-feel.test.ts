@@ -1,12 +1,14 @@
 // Gameplay feel on the engine: distinct pass types, first-time (buffered)
 // actions that fire exactly once, buffers cleared at restarts, and no long
 // follow-through lockout. Run: npx tsx tests/gameplay-feel.test.ts
-import { createMatch, stepMatch, setControlled } from '../src/game/match.ts';
+import { createMatch, stepMatch, setControlled, foulSeverity } from '../src/game/match.ts';
 import { buildTeam } from '../src/db/teams.ts';
 import { FIXED_DT, HALF_L, HALF_W } from '../src/game/constants.ts';
 import { MatchPhysics, preparePhysics } from '../src/game/engineBridge.ts';
 import type { MatchState, Player } from '../src/types/game.ts';
 
+import { seedRandom } from './support/seed.ts';
+seedRandom();
 await preparePhysics();
 let failed = 0;
 const check = (name: string, pass: boolean, detail: string) => {
@@ -14,6 +16,12 @@ const check = (name: string, pass: boolean, detail: string) => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name} — ${detail}`);
 };
 type Frame = Record<string, unknown>;
+/** Run the kick-off until play is live (capped: a staged roster may have no taker). */
+function toPlay(s: MatchState) {
+  for (let k = 0; k < 600 && s.phase !== 'play'; k++) stepMatch(s, {}, FIXED_DT);
+  if (s.phase !== 'play') { s.phase = 'play'; s.restart = null; }
+  s.kickoffPending = false; // a staged scenario, not a real kick-off
+}
 const ofIdx = (s: MatchState, idx: number) => s.players.find((p) => p.team === 0 && p.idx === idx)!;
 
 /** P1's striker (#4) on the ball at `at`, teammates `mates` = [idx, x, z], away keeper only. */
@@ -22,7 +30,7 @@ function setup(mates: Array<[number, number, number]>, at: [number, number] = [-
   const keep = new Set(mates.map((m) => m[0]));
   for (const p of s.players) if (p.onPitch && !(p.team === 0 && (p.idx === 4 || keep.has(p.idx))) && !(p.team === 1 && opponents.includes(p.idx))) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
   s.engine = new MatchPhysics(s);
-  while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+  toPlay(s);
   for (const p of s.players) { p.mustPass = false; p.mustPassTimer = 0; }
   s.ball.restartDoubleTouchBy = null;
   const me = ofIdx(s, 4);
@@ -97,7 +105,9 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
     const passes = ev.filter((e) => e.type === 'pass' && e.from === String(recv.id)).length;
     if (passes === 1) ok++;
     if (passes > 1) dupes++;
-    if (!controlled) switched++;
+    // Control moving on to the next receiver as the first-time pass starts is
+    // correct; a press that only switched player (no pass) is the failure.
+    if (!controlled && passes === 0) switched++;
     s.engine!.dispose();
   }
   check('First-time pass: pressed before arrival, played exactly once', tries >= 5 && ok >= tries - 1 && dupes === 0 && switched === 0,
@@ -170,10 +180,13 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
 {
   const mk = () => {
     const s = createMatch({ home: buildTeam('fcb'), away: buildTeam('rma'), controllers: ['p1', 'ai'], difficulty: 'normal', duration: 240 });
-    for (const p of s.players) if (p.onPitch && !(p.team === 0 && p.idx === 9)) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
     s.engine = new MatchPhysics(s);
-    while (s.phase !== 'play') stepMatch(s, {}, FIXED_DT);
+    // A normal kick-off with full teams first, then clear the pitch (a staged
+    // roster without the kick-off taker would never get the ball into play).
+    toPlay(s);
+    for (const p of s.players) if (p.onPitch && !(p.team === 0 && p.idx === 9)) { p.onPitch = false; p.pos.x = 0; p.pos.z = HALF_W + 6; }
     for (const p of s.players) p.mustPass = false;
+    s.restart = null; s.phase = 'play';
     const me = ofIdx(s, 9);
     s.ball.owner = null; s.ball.intended = null;
     setControlled(s, s.teams[0], me); me.pos.x = -20; me.pos.z = 0;
@@ -240,15 +253,98 @@ function play(s: MatchState, frames: number, input: (i: number) => Frame, on?: (
   const sim = (s.engine as unknown as { sim: { pw: { events: { on(fn: (e: { type: string; a?: string; b?: string; playerId?: string }) => void): void } } } }).sim;
   const ctl = (s.engine as unknown as { ctrl: Map<Player, { id: string; team: number; sm: { action: { clip: { name: string } } | null } }> }).ctrl;
   const team = new Map<string, number>(); for (const c of ctl.values()) team.set(c.id, c.team);
-  let falls = 0, mates = 0;
+  let falls = 0, mates = 0, stepFalls = 0, fouls = 0, foulFalls = 0, foulNoStop = 0, foulDup = 0, advantages = 0;
+  let optSamples = 0, optSum = 0, optNone = 0, optFwd = 0;
+  const segD = (px: number, pz: number, ax: number, az: number, bx: number, bz: number) => {
+    const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / l2));
+    return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+  };
   sim.pw.events.on((e) => {
-    if (e.type === 'playerCollision' && team.get(e.a!) === team.get(e.b!)) mates++;
-    if (e.type === 'balanceLost') { const c = [...ctl.values()].find((x) => x.id === e.playerId); if (c?.sm.action?.clip.name === 'fall') falls++; }
+    if (e.type === 'playerCollision' && team.get(e.a!) === team.get(e.b!)) {
+      // A free-kick wall stands shoulder to shoulder on purpose (Law 13): not a collision to avoid.
+      // Players walking into a crowded box for a corner or free kick (and a
+      // wall) touch: only open play counts here.
+      const wall = new Set((s.setPiece?.wall ?? []).map((w) => `p${w.id}`));
+      if (s.phase !== 'play' || (wall.has(e.a!) && wall.has(e.b!))) return;
+      mates++;
+      if (process.env.SHOW_MATES) console.log('mates', e.a, e.b, s.clock.toFixed(1), s.phase);
+    }
+    if (e.type === 'balanceLost') { const c = [...ctl.values()].find((x) => x.id === e.playerId); if (c?.sm.action?.clip.name === 'fall') { stepFalls++; if (process.env.SHOW_FALLS) { const pl = s.players.find((q) => `p${q.id}` === e.playerId); console.log('fall', e.playerId, pl?.role, pl?.name, s.clock.toFixed(1), 'dive', pl?.dive.toFixed(2), 'ball', s.ball.owner?.name ?? '-', 'shotLive', s.ball.shotLive); } } }
   });
   let steps = 0;
-  while (s.phase !== 'fulltime' && steps < 340 * 60) { stepMatch(s, {}, FIXED_DT); s.events.length = 0; steps++; }
+  while (s.phase !== 'fulltime' && steps < 340 * 60) {
+    stepFalls = 0;
+    stepMatch(s, {}, FIXED_DT);
+    const f = s.events.filter((e) => e.type === 'foul').length;
+    for (const e of s.events) {
+      if (e.type !== 'foul') continue;
+      if (e.advantage) advantages++;
+      else if (s.phase === 'play') foulNoStop++; // a foul must stop play on its own step
+    }
+    if (f > 1) foulDup++;
+    // Passing options for the AI ball carrier (sampled 4x a second).
+    const c = s.ball.owner;
+    if (steps % 15 === 0 && s.phase === 'play' && c && c.role !== 'GK') {
+      let open = 0, fwd = 0;
+      for (const t of s.players) {
+        if (t === c || t.team !== c.team || !t.onPitch || t.sentOff || t.role === 'GK') continue;
+        const d = Math.hypot(t.pos.x - c.pos.x, t.pos.z - c.pos.z);
+        if (d < 6 || d > 25) continue;
+        const blocked = s.players.some((o) => o.team !== c.team && o.onPitch && !o.sentOff && Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z) > 2
+          && segD(o.pos.x, o.pos.z, c.pos.x, c.pos.z, t.pos.x, t.pos.z) < 1.6);
+        if (blocked) continue;
+        open++;
+        if ((t.pos.x - c.pos.x) * s.teams[c.team].dir > 3) fwd++;
+      }
+      optSamples++; optSum += open; if (!open) optNone++; if (fwd) optFwd++;
+    }
+    fouls += f;
+    // A fall from a tackle that is whistled as a foul in the same step is the
+    // foul (correct); only falls nobody is penalised for count against us.
+    const explained = Math.min(stepFalls, f);
+    foulFalls += explained;
+    falls += stepFalls - explained;
+    s.events.length = 0; steps++;
+  }
   s.engine.dispose();
-  check('Players stay on their feet; teammates keep their distance', falls <= 6 && mates <= 30, `${falls} falls, ${mates} teammate collisions in a 4-minute match`);
+  check('Players stay on their feet; teammates keep their distance', falls <= 6 && mates <= 30,
+    `${falls} unpenalised falls (+${foulFalls} from fouls, ${fouls} fouls), ${mates} teammate collisions in a 4-minute match`);
+  check('Each foul is one synchronised stoppage (or advantage)', fouls > 0 && foulNoStop === 0 && foulDup === 0,
+    `${fouls} fouls: ${fouls - advantages} stopped play on the same step, ${advantages} played as advantage; ${foulNoStop} left play running, ${foulDup} steps with two fouls`);
+  check('The ball carrier has passing options', optSamples > 100 && optSum / optSamples >= 2.2 && optNone / optSamples <= 0.12 && optFwd / optSamples >= 0.4,
+    `${(optSum / optSamples).toFixed(2)} open options on average (6-25 m, clear lane); none ${(100 * optNone / optSamples).toFixed(0)}% of the time; a forward option ${(100 * optFwd / optSamples).toFixed(0)}% of the time`);
+  const sv = [foulSeverity('standing', 3, false), foulSeverity('standing', 7, true), foulSeverity('sliding', 9, true)];
+  check('Foul severity follows Law 12 (careless / reckless / excessive)', sv[0].card === null && sv[1].card === 'yellow' && sv[2].card === 'red',
+    sv.map((x) => `${x.level}:${x.card ?? 'no card'}`).join(', '));
+}
+
+// 9) Power means something: a tap, a half hold and a full hold give clearly
+//    different pass and shot speeds.
+{
+  const launch = (frames: number, kind: 'pass' | 'shot') => {
+    const { s } = kind === 'pass' ? setup([[9, 14, 0]]) : setup([[9, 2, 12]], [HALF_L - 24, 0]);
+    let speed = 0, rel = -1;
+    play(s, 120, (i) => {
+      if (kind === 'pass') return i < frames ? { passPressed: i === 0, passHeld: true, mx: 1, mz: 0 } : { mx: 1, mz: 0 };
+      return i < frames ? { shootPressed: i === 0, shootHeld: true, mx: 1, mz: 0 } : { mx: 1, mz: 0 };
+    }, (i) => {
+      if (rel < 0 && !s.ball.owner && i >= frames) rel = i;
+      if (rel >= 0 && i - rel <= 3) speed = Math.max(speed, Math.hypot(s.ball.vel.x, s.ball.vel.z));
+    });
+    s.engine!.dispose();
+    delays.push(rel >= 0 ? (rel - frames) * FIXED_DT : Infinity);
+    return speed;
+  };
+  const delays: number[] = [];
+  // Pass: a short hold (soft), a tap (automatic weight) and a full hold.
+  const pass = [12, 1, 46].map((n) => launch(n, 'pass'));
+  const shot = [4, 30, 56].map((n) => launch(n, 'shot'));
+  check('Pass power: soft hold < tap (auto weight) < full hold', pass[1] > pass[0] + 1.5 && pass[2] > pass[1] + 1.5, pass.map((v) => `${v.toFixed(1)} m/s`).join(' < '));
+  check('Shot power: tap < medium < full', shot[1] > shot[0] + 3 && shot[2] > shot[1] + 4, shot.map((v) => `${v.toFixed(1)} m/s`).join(' < '));
+  const shotDelays = delays.slice(3);
+  check('Strike follows the button release quickly', Math.max(...shotDelays) <= 0.42 && Math.max(...delays.slice(0, 3)) <= 0.35,
+    `release -> ball away: passes ${delays.slice(0, 3).map((d) => `${Math.round(d * 1000)}`).join('/')} ms, shots ${shotDelays.map((d) => `${Math.round(d * 1000)}`).join('/')} ms`);
 }
 
 console.log(failed ? `\n${failed} gameplay-feel check(s) failed` : '\nall gameplay-feel checks passed');

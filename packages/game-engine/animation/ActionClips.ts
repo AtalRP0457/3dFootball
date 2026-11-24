@@ -69,22 +69,25 @@ function skill(name: ActionKind, dur: number, keys: Keyframe[], markers: AnimMar
 
 const arms = (z: number): PartialPose => ({ 'upperArm.L': { z }, 'upperArm.R': { z: -z } });
 
+// Kick wind-ups are kept short (contact ~0.2-0.25 s after the press; a power
+// shot ~0.36 s so its wind-up still reads): a long canned wind-up is the main
+// source of input-to-action delay.
 export const ACTION_CLIPS: Record<ActionKind, ActionClip> = {
   shortPass: kick('shortPass', { dur: 0.36, contact: 0.5, power: 0.25, lean: 0.12, lofted: 0, turnOut: 0.7, follow: 0 }),
   firstTimePass: kick('firstTimePass', { dur: 0.32, power: 0.3, lean: 0.12, lofted: 0, turnOut: 0.6, follow: 0, contact: 0.45 }),
-  drivenPass: kick('drivenPass', { dur: 0.5, power: 0.6, lean: 0.2, lofted: 0, turnOut: 0.2, follow: 0.2 }),
+  drivenPass: kick('drivenPass', { dur: 0.4, power: 0.6, lean: 0.2, lofted: 0, turnOut: 0.2, follow: 0.2 }),
   throughBall: kick('throughBall', { dur: 0.45, power: 0.4, lean: 0.15, lofted: 0, turnOut: 0.5, follow: 0.1 }),
-  lobPass: kick('lobPass', { dur: 0.55, power: 0.55, lean: -0.12, lofted: 0.8, turnOut: 0.2, follow: 0.6 }),
-  longPass: kick('longPass', { dur: 0.6, power: 0.8, lean: -0.1, lofted: 0.7, turnOut: 0.1, follow: 0.8 }),
-  cross: kick('cross', { dur: 0.6, power: 0.75, lean: -0.08, lofted: 0.6, turnOut: 0.5, follow: 0.7 }),
-  shot: kick('shot', { dur: 0.55, power: 0.75, lean: 0.18, lofted: 0, turnOut: 0, follow: 0.6 }),
-  powerShot: kick('powerShot', { dur: 0.78, power: 1, lean: 0.22, lofted: 0, turnOut: 0, follow: 1, contact: 0.6 }),
-  finesseShot: kick('finesseShot', { dur: 0.6, power: 0.6, lean: 0.12, lofted: 0.2, turnOut: 0.9, follow: 0.6 }),
-  placedShot: kick('placedShot', { dur: 0.5, power: 0.5, lean: 0.15, lofted: 0, turnOut: 0.6, follow: 0.3 }),
-  lowDrivenShot: kick('lowDrivenShot', { dur: 0.55, power: 0.85, lean: 0.32, lofted: 0, turnOut: 0, follow: 0.3 }),
-  chipShot: kick('chipShot', { dur: 0.55, power: 0.4, lean: -0.15, lofted: 1, turnOut: 0, follow: 0.2 }),
+  lobPass: kick('lobPass', { dur: 0.44, power: 0.55, lean: -0.12, lofted: 0.8, turnOut: 0.2, follow: 0.6 }),
+  longPass: kick('longPass', { dur: 0.48, power: 0.8, lean: -0.1, lofted: 0.7, turnOut: 0.1, follow: 0.8 }),
+  cross: kick('cross', { dur: 0.48, power: 0.75, lean: -0.08, lofted: 0.6, turnOut: 0.5, follow: 0.7 }),
+  shot: kick('shot', { dur: 0.42, power: 0.75, lean: 0.18, lofted: 0, turnOut: 0, follow: 0.6 }),
+  powerShot: kick('powerShot', { dur: 0.6, power: 1, lean: 0.22, lofted: 0, turnOut: 0, follow: 1, contact: 0.6 }),
+  finesseShot: kick('finesseShot', { dur: 0.46, power: 0.6, lean: 0.12, lofted: 0.2, turnOut: 0.9, follow: 0.6 }),
+  placedShot: kick('placedShot', { dur: 0.4, power: 0.5, lean: 0.15, lofted: 0, turnOut: 0.6, follow: 0.3 }),
+  lowDrivenShot: kick('lowDrivenShot', { dur: 0.42, power: 0.85, lean: 0.32, lofted: 0, turnOut: 0, follow: 0.3 }),
+  chipShot: kick('chipShot', { dur: 0.44, power: 0.4, lean: -0.15, lofted: 1, turnOut: 0, follow: 0.2 }),
   volley: {
-    ...kick('volley', { dur: 0.5, power: 0.8, lean: -0.05, lofted: 0, turnOut: 0, follow: 0.6 }),
+    ...kick('volley', { dur: 0.42, power: 0.8, lean: -0.05, lofted: 0, turnOut: 0, follow: 0.6 }),
     keys: [
       { t: 0, pose: {} },
       { t: 0.35, pose: { 'thigh.R': { x: -0.2, z: -0.3 }, 'shin.R': { x: 1.6 }, roll: 0.15, spine: { x: -0.1 }, ...arms(0.9) } },
@@ -249,6 +252,36 @@ export const ACTION_CLIPS: Record<ActionKind, ActionClip> = {
     keys: [
       { t: 0, pose: { 'thigh.R': { x: -0.45 }, 'shin.R': { x: 0.55 }, 'foot.R': { x: -0.3, y: 0.5 }, spine: { x: 0.15 }, hipDrop: 0.06, ...arms(0.45) } },
       { t: 0.5, pose: { 'thigh.R': { x: -0.25 }, 'shin.R': { x: 0.45 }, spine: { x: 0.12 }, hipDrop: 0.05 } },
+      { t: 1, pose: {} },
+    ],
+  },
+  // Thigh control: the knee comes up to meet a ball at hip height and gives with it.
+  thighControl: {
+    name: 'thighControl', duration: 0.42, blendIn: 0.05, blendOut: 0.12, move: 'action', control: 0.5, interruptible: true,
+    markers: [{ t: 1, kind: 'end' }],
+    keys: [
+      { t: 0, pose: { 'thigh.R': { x: -1.15 }, 'shin.R': { x: 1.2 }, 'foot.R': { x: 0.3 }, spine: { x: 0.1 }, hipDrop: 0.04, ...arms(0.55) } },
+      { t: 0.35, pose: { 'thigh.R': { x: -0.8 }, 'shin.R': { x: 1.0 }, spine: { x: 0.08 }, hipDrop: 0.05, ...arms(0.5) } },
+      { t: 1, pose: {} },
+    ],
+  },
+  // Chest control: arms out, chest pushed into the ball then leaning back to cushion it down.
+  chestControl: {
+    name: 'chestControl', duration: 0.5, blendIn: 0.05, blendOut: 0.14, move: 'action', control: 0.45, interruptible: true,
+    markers: [{ t: 1, kind: 'end' }],
+    keys: [
+      { t: 0, pose: { spine: { x: -0.1 }, chest: { x: -0.15 }, head: { x: 0.25 }, 'upperArm.L': { x: -0.2, z: 1.0 }, 'upperArm.R': { x: -0.2, z: -1.0 }, hipDrop: 0.06 } },
+      { t: 0.3, pose: { spine: { x: -0.28 }, chest: { x: -0.25 }, head: { x: 0.35 }, 'upperArm.L': { x: -0.3, z: 1.1 }, 'upperArm.R': { x: -0.3, z: -1.1 }, hipDrop: 0.09, 'thigh.L': { x: -0.2 }, 'shin.L': { x: 0.35 }, 'thigh.R': { x: -0.2 }, 'shin.R': { x: 0.35 } } },
+      { t: 1, pose: {} },
+    ],
+  },
+  // Cushioned header: neck gives as the ball arrives so it drops in front.
+  headControl: {
+    name: 'headControl', duration: 0.45, blendIn: 0.05, blendOut: 0.14, move: 'action', control: 0.45, interruptible: true,
+    markers: [{ t: 1, kind: 'end' }],
+    keys: [
+      { t: 0, pose: { head: { x: -0.35 }, spine: { x: -0.1 }, lift: 0.08, ...arms(0.6) } },
+      { t: 0.3, pose: { head: { x: 0.25 }, spine: { x: 0.05 }, lift: 0, hipDrop: 0.05, ...arms(0.45) } },
       { t: 1, pose: {} },
     ],
   },

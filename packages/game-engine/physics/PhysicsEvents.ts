@@ -33,7 +33,7 @@ export type PhysicsEvent =
   /** A dribble touch (also emits BallImpulse). */
   | { type: 'DribbleTouch'; playerId: string; foot: FootSide; surface: TouchSurface; kind: TouchKind; speed: number; time: number }
   /** Tackle contact outcome. */
-  | { type: 'TackleContact'; playerId: string; kind: 'standing' | 'sliding'; won: boolean; fouled: boolean; time: number }
+  | { type: 'TackleContact'; playerId: string; kind: 'standing' | 'sliding'; won: boolean; fouled: boolean; time: number; victim?: string; closing?: number }
   | { type: 'playerCollision'; a: string; b: string; impulse: number; time: number }
   | { type: 'balanceLost'; playerId: string; severity: number; time: number }
   | { type: 'footPlant'; playerId: string; foot: FootSide; time: number };

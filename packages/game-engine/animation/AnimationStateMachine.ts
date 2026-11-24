@@ -21,6 +21,8 @@ export interface ActiveAction {
   side: number;
   /** Already resolved contact (kicks hit once). */
   resolved: boolean;
+  /** Playback rate: a harder strike has a longer back-swing (< 1), a tap a quicker one. */
+  rate?: number;
 }
 
 export interface LocomotionInput {
@@ -68,10 +70,10 @@ export class AnimationStateMachine {
     return Math.min(1, (a.time - free) / Math.max(0.05, a.clip.duration - free));
   }
 
-  start(name: ActionKind, opts: { foot: Foot; power?: number; aim?: { x: number; z: number }; side?: number; force?: boolean }): boolean {
+  start(name: ActionKind, opts: { foot: Foot; power?: number; aim?: { x: number; z: number }; side?: number; force?: boolean; rate?: number }): boolean {
     if (this.busy && !opts.force) return false;
     this.action = {
-      clip: ACTION_CLIPS[name], time: 0, foot: opts.foot, power: opts.power ?? 0.5,
+      clip: ACTION_CLIPS[name], time: 0, foot: opts.foot, power: opts.power ?? 0.5, rate: opts.rate ?? 1,
       aim: opts.aim ?? { x: 0, z: 1 }, side: opts.side ?? 1, resolved: false,
     };
     return true;
@@ -94,7 +96,7 @@ export class AnimationStateMachine {
     const a = this.action;
     if (a) {
       const t0 = a.time / a.clip.duration;
-      a.time += dt;
+      a.time += dt * (a.rate ?? 1);
       const t1 = a.time / a.clip.duration;
       for (const m of crossedMarkers(a.clip.markers, t0, t1)) events.push({ kind: m.kind, action: a.clip.name, time: now });
       const c = a.clip;

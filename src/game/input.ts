@@ -2,7 +2,7 @@ import type { HumanId, InputFrame } from '../types/game.ts';
 
 // Keyboard and gamepad input. Produces one input object per human player
 // each fixed step: { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed,
-// shootHeld, shootPressed, finesseHeld, chipHeld }.
+// shootHeld, shootPressed, finesseHeld, chipHeld, keeperSwitchPressed }.
 // Finesse and chip keys are shoot buttons of their own: hold to charge,
 // release to shoot that kind of shot.
 // mx: -1 left .. +1 right on screen. mz: -1 up (far touchline) .. +1 down.
@@ -24,12 +24,12 @@ export const BINDINGS: Record<HumanId, Binding> = {
   },
 };
 
-const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b).flat()));
+const GAME_KEYS = new Set(Object.values(BINDINGS).flatMap((b) => Object.values(b).flat()).concat(['KeyK', 'Numpad8', 'KeyB', 'Numpad9']));
 
 // Fallbacks for keyboards / input sources where event.code is missing or
 // unusual: map by the printed key or the legacy keyCode instead.
 const BY_KEY: Record<string, string> = {
-  w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', f: 'KeyF', g: 'KeyG',
+  w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', f: 'KeyF', g: 'KeyG', k: 'KeyK',
   v: 'KeyV', r: 'KeyR', h: 'KeyH', t: 'KeyT', e: 'KeyE', '\\': 'Backslash',
   ' ': 'Space', '.': 'Period', '/': 'Slash', ',': 'Comma', ';': 'Semicolon', "'": 'Quote', ']': 'BracketRight',
   arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
@@ -130,6 +130,10 @@ export class Input {
     let loftPressed = this.anyPressed(b.loft);
     let throughPressed = this.anyPressed(b.through);
     let drivenPressed = this.anyPressed(b.driven);
+    let passHeld = this.anyDown(b.pass) || this.anyDown(b.loft) || this.anyDown(b.through) || this.anyDown(b.driven);
+    let keeperSwitchPressed = this.anyPressed(id === 'p1' ? ['KeyK'] : ['Numpad8']);
+    // Keeper with the ball in his hands: put it down at his feet.
+    let dropPressed = this.anyPressed(id === 'p1' ? ['KeyB'] : ['Numpad9']);
     let finesseHeld = this.anyDown(b.finesse);
     let chipHeld = this.anyDown(b.chip);
     let shootHeld = this.anyDown(b.shoot) || finesseHeld || chipHeld;
@@ -146,8 +150,11 @@ export class Input {
       if (btn(15)) mx += 1;
       const pr = this.padPressed[i] || [];
       // RB + A: driven pass (A alone: ground pass).
+      passHeld = passHeld || btn(0) || btn(2) || btn(3);
       if (pr[0] && btn(5)) drivenPressed = true;
       else passPressed = passPressed || !!pr[0];
+      keeperSwitchPressed = keeperSwitchPressed || !!pr[8];
+      dropPressed = dropPressed || !!pr[12]; // d-pad up
       throughPressed = throughPressed || !!pr[2];
       loftPressed = loftPressed || !!pr[3];
       // LB / LT held while shooting: finesse / chip.
@@ -167,7 +174,7 @@ export class Input {
     }
     const l = Math.hypot(mx, mz);
     if (l > 1) { mx /= l; mz /= l; }
-    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
+    return { mx, mz, sprint, passPressed, loftPressed, throughPressed, drivenPressed, passHeld, keeperSwitchPressed, dropPressed, shootHeld, shootPressed, finesseHeld, chipHeld };
   }
 
   /** Gamepad Start/Options button, used for pause. */

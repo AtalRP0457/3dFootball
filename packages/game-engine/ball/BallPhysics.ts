@@ -5,7 +5,7 @@
 // visualisation and AI.
 import { RAPIER, type PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { ballInertia, type BallConfig } from '../physics/PhysicsConfig.ts';
-import { aeroForce } from './BallAerodynamics.ts';
+import { aeroForce, knuckleForce } from './BallAerodynamics.ts';
 import { add3, cross3, lenH, scale3, type Vec3 } from '../physics/Vec3.ts';
 import type { BallState, TrajectoryPoint } from './BallTypes.ts';
 
@@ -13,6 +13,10 @@ export class BallPhysics {
   readonly body: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
   grounded = false;
+  /** Distance flown since the last strike and the knuckle phases chosen at it. */
+  private flown = 0;
+  private knucklePhase: [number, number, number] = [0, 0, 0];
+  private seed = 0x9e3779b9;
 
   constructor(private readonly pw: PhysicsWorld, start: Vec3) {
     const cfg = pw.cal.ball;
@@ -42,7 +46,13 @@ export class BallPhysics {
     b.resetTorques(false);
     const v = b.linvel(), w = b.angvel(), p = b.translation();
     this.grounded = p.y - cfg.radius < 0.012;
-    const F = aeroForce(v, w, cfg);
+    const F = aeroForce(v, w, cfg, !this.grounded);
+    if (!this.grounded) {
+      // A fast ball with almost no spin knuckles (not in the predictor: nobody can read it).
+      this.flown += Math.hypot(v.x, v.y, v.z) * h;
+      const K = knuckleForce(v, w, cfg, this.flown, this.knucklePhase);
+      F.x += K.x; F.y += K.y; F.z += K.z;
+    }
     b.addForce(F, true);
     const I = ballInertia(cfg);
     if (!this.grounded) {
@@ -71,6 +81,12 @@ export class BallPhysics {
   /** Apply a kick as an impulse that produces `velocity` and an angular impulse for `spin`. */
   kick(velocity: Vec3, spin: Vec3): void {
     const cfg = this.cfg, v = this.body.linvel(), w = this.body.angvel();
+    // New flight: new (pseudo-random, reproducible) knuckle phases.
+    this.flown = 0;
+    for (let k = 0; k < 3; k++) {
+      this.seed = (Math.imul(this.seed ^ (this.seed >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0;
+      this.knucklePhase[k] = (this.seed / 4294967296) * Math.PI * 2;
+    }
     this.body.applyImpulse({ x: cfg.mass * (velocity.x - v.x), y: cfg.mass * (velocity.y - v.y), z: cfg.mass * (velocity.z - v.z) }, true);
     const I = ballInertia(cfg);
     this.body.applyTorqueImpulse({ x: I * (spin.x - w.x), y: I * (spin.y - w.y), z: I * (spin.z - w.z) }, true);
@@ -106,22 +122,59 @@ export class BallPhysics {
 }
 
 /**
+ * First touchdown of a predicted flight: the sample where the ball reaches
+ * the ground or where it has already bounced (vertical velocity flipped
+ * between two samples, which a sparse path can otherwise step over).
+ * Interpolated between the two samples. Null if it never comes down.
+ */
+export function firstLanding(path: TrajectoryPoint[], radius: number): { p: Vec3; t: number } | null {
+  let rose = false;
+  for (let k = 1; k < path.length; k++) {
+    const a = path[k - 1], b = path[k];
+    if (b.p.y > radius + 0.3) rose = true;
+    if (!rose) continue;
+    const bounced = a.v.y < 0 && b.v.y > 0;
+    if (bounced || (b.v.y < 0 && b.p.y <= radius + 0.02)) {
+      // Fraction of the step at which the descending ball met the ground.
+      const fall = a.p.y - radius, dy = bounced ? fall + (b.p.y - radius) : a.p.y - b.p.y;
+      const f = dy > 1e-6 ? Math.max(0, Math.min(1, fall / dy)) : 1;
+      return { p: { x: a.p.x + (b.p.x - a.p.x) * f, y: radius, z: a.p.z + (b.p.z - a.p.z) * f }, t: a.t + (b.t - a.t) * f };
+    }
+  }
+  return null;
+}
+
+/**
  * Predict the flight with the same aerodynamic model (ground bounces and
  * rolling approximated, no goal frame). Used for trajectory display and AI.
  */
 export function predictTrajectory(p0: Vec3, v0: Vec3, w0: Vec3, cfg: BallConfig, gravity: number, horizon = 4, dt = 1 / 120): TrajectoryPoint[] {
   let p = { ...p0 }, v = { ...v0 }, w = { ...w0 };
   const out: TrajectoryPoint[] = [{ t: 0, p: { ...p }, v: { ...v } }];
+  // On the ground the ball rolls: friction makes the spin slow with it, so
+  // forces at the centre decelerate it by F / (m + I/r²), and the
+  // rolling-resistance torque adds 40 % (the same as the Rapier body).
+  const rollShare = 1 / (1 + ballInertia(cfg) / (cfg.mass * cfg.radius * cfg.radius));
+  let settled = false;
   for (let t = dt, i = 1; t <= horizon; t += dt, i++) {
     const grounded = p.y - cfg.radius < 0.012 && Math.abs(v.y) < cfg.settleSpeed;
-    const F = aeroForce(v, w, cfg);
+    const F = aeroForce(v, w, cfg, p.y - cfg.radius >= 0.012);
     const a = { x: F.x / cfg.mass, y: F.y / cfg.mass - gravity, z: F.z / cfg.mass };
     if (grounded) {
       a.y = 0; v.y = 0;
       const s = lenH(v);
       if (s < 0.04) break;
-      a.x -= (cfg.rollingResistance * gravity * v.x) / s;
-      a.z -= (cfg.rollingResistance * gravity * v.z) / s;
+      if (!settled) {
+        // A skidding ball (spin short of rolling) is brought to a roll by
+        // friction almost at once: momentum and spin even out.
+        const iR = ballInertia(cfg) / (cfg.mass * cfg.radius * cfg.radius);
+        const roll = (w.z * v.x - w.x * v.z) / s * cfg.radius * -1; // ω·(up×dir)·r
+        const s2 = (s + iR * roll) / (1 + iR);
+        if (s2 > 0 && s2 < s) { v.x *= s2 / s; v.z *= s2 / s; }
+        settled = true;
+      }
+      a.x = (a.x - (cfg.rollingResistance * gravity * 1.4 * v.x) / s) * rollShare;
+      a.z = (a.z - (cfg.rollingResistance * gravity * 1.4 * v.z) / s) * rollShare;
     } else {
       w = scale3(w, Math.exp(-dt / cfg.spinDecayTime));
     }

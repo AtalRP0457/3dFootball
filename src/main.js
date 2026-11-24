@@ -2,7 +2,7 @@ import './style.css';
 import { buildTeam, configure as configureDb, isPlayable, poolTeamIds, teamRating, resolveKitClash, DECADE_TEAMS } from './db/teams.ts';
 import { teamRecord, ERAS } from './db/index.ts';
 import { migrate, ls } from './state/store.ts';
-import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff } from './game/match.ts';
+import { createMatch, stepMatch, displayMinute, setControlled, makeSubstitution, cancelPendingSubstitution, setTeamTactic, setTeamFormation, setupKickoff, startShootout } from './game/match.ts';
 import { FIXED_DT, FORMATIONS, INDOOR_FORMATION, BALL_R, DRIBBLE_OFFSET } from './game/constants.ts';
 import { createFrontend } from './ui/frontend.js';
 import { Input } from './game/input.ts';
@@ -28,11 +28,12 @@ const DEFAULT_SETTINGS = {
   awayKit: 'away',
   difficulty: 'normal',
   duration: 240,
+  drawRule: 'draw', // draw | penalties: a drawn match goes to a penalty shoot-out
   era: 'on', // era colour grading for the decade teams
   assist: 'assisted',
   dribbleStyle: 'sticky',
   physics: 'engine', // engine (Gold Standard: Rapier, shared player controller) | classic
-  camera: 'broadcast', // broadcast | close | wide
+  camera: 'close', // broadcast | close | wide
   graphics: 'high', // low | medium | high
   intro: 'on', // pre-match intro sequence
   cameraZoom: 1, // 0.8 … 1.3 (1 = default framing)
@@ -69,6 +70,7 @@ function loadSettings() {
       ...(saved && knownTeam(saved.away) ? { away: saved.away } : {}),
       ...(saved && ['beginner', 'easy', 'normal', 'hard'].includes(saved.difficulty) ? { difficulty: saved.difficulty } : {}),
       ...(saved && [120, 240, 360].includes(Number(saved.duration)) ? { duration: Number(saved.duration) } : {}),
+      ...(saved && ['draw', 'penalties'].includes(saved.drawRule) ? { drawRule: saved.drawRule } : {}),
       ...(saved && ['on', 'off'].includes(saved.era) ? { era: saved.era } : {}),
       ...pick('camera', CAMERA_ORDER),
       ...pick('graphics', ['low', 'medium', 'high']),
@@ -139,6 +141,9 @@ let pendingReplay = null; // goal scored: replay after the celebration
 let replayFrameCount = 0; // absolute index of frames pushed to the buffer
 let replayCaptureElapsed = 0;
 let fps = 60;
+// Debug: simulation steps per second, and the last strike's charge and launch speed.
+let simHz = 60, simSteps = 0, simWindow = 0;
+let lastLaunch = null; // { kind, power, speed, steps }
 let lastInputs = {};
 
 // ---------- menu ----------
@@ -548,7 +553,7 @@ const TUTORIAL = [
   { title: 'Get the ball', keys: '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> towards the ball', text: 'Run to the loose ball. Press roughly towards it and assist steers you onto it.' },
   { title: 'Pass', keys: 'steer, then <kbd>F</kbd>', text: 'Steer until the teammate you want has the YELLOW ring, then press F. You take over the receiver.' },
   { title: 'Shoot', keys: 'hold <kbd>G</kbd>, release', text: 'Get near the goal, hold G to build power (about half is accurate) and release to shoot.' },
-  { title: 'Change player', keys: '<kbd>F</kbd> without the ball', text: 'When you don’t have the ball, press F to switch to the YELLOW player.' },
+  { title: 'Change player', keys: '<kbd>F</kbd> without the ball · <kbd>K</kbd> keeper', text: 'Press F to switch to the YELLOW player, or K to take control of your goalkeeper while defending.' },
   { title: 'Score a goal', keys: 'pass, run, shoot', text: 'Put it all together and score!' },
 ];
 let tut = null;
@@ -1053,6 +1058,8 @@ function startMatch() {
     difficulty: practice ? 'easy' : settings.difficulty,
     duration: settings.duration, practice, indoor: settings.mode === 'indoor',
     extraTime: settings.mode === 'cup', extraTimeDuration: Math.max(30, Math.round(settings.duration / 4)),
+    // Cup ties, and any match with "Draws: penalties", are settled by a shoot-out played on the pitch.
+    penalties: settings.mode === 'cup' || settings.drawRule === 'penalties',
     timeScale: dev.speed / 100,
     assist: settings.assist,
     dribbleStyle: settings.dribbleStyle,
@@ -1066,7 +1073,7 @@ function startMatch() {
   // Gold Standard engine: Rapier physics, the shared player controller and one
   // ball-interaction authority. Indoor fives (boards) and the shoot-out mode
   // still use the classic physics.
-  match.engine = settings.physics !== 'classic' && physicsReady() && !match.indoor && settings.mode !== 'penalties'
+  match.engine = settings.physics !== 'classic' && physicsReady() && !match.indoor
     ? new MatchPhysics(match) : null;
   match.events.length = 0;
   goals = [];
@@ -1106,8 +1113,9 @@ function startMatch() {
   input.enabled = true;
   $('game').focus?.();
   if (settings.mode === 'penalties') {
-    match.phase = 'fulltime';
-    beginCupShootout();
+    // The shoot-out mode: straight to penalties, every kick played on the pitch.
+    if (match.engine) startShootout(match);
+    else { match.phase = 'fulltime'; beginCupShootout(); }
   }
 }
 
@@ -1314,7 +1322,10 @@ function finishReplay() {
 
 function handleEvents() {
   for (const e of match.events) {
+    if ((e.type === 'pass' || e.type === 'shot') && e.human) lastLaunch = { kind: e.type === 'pass' ? `${e.kind || 'ground'} pass` : `${e.shotType || 'normal'} shot`, power: e.power, speed: 0, steps: 0 };
+    if (e.type === 'foul' || e.type === 'advantageFailed') { /* restart set by the simulation in the same step */ }
     audio.playEvent(e);
+    renderer.matchEvent?.(match, e);
     tutorialEvent(e);
     if (e.type === 'goal') {
       const team = match.teams[e.team];
@@ -1369,8 +1380,17 @@ function handleEvents() {
     } else if (e.type === 'halftime') {
       // (half time is shown on the scoreboard)
     } else if (e.type === 'fulltime') {
-      if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
+      const so = match.shootout;
+      if (so && so.winner != null) {
+        // Settled by the shoot-out played on the pitch.
+        cupShootoutOutcome = { winner: match.teams[so.winner].data, homeScore: so.scores[0], awayScore: so.scores[1] };
+        if (settings.mode === 'penalties') finishCupShootout();
+        else showFullTime();
+      } else if (settings.mode === 'cup' && cup && match.teams[0].score === match.teams[1].score) beginCupShootout();
       else showFullTime();
+    } else if (e.type === 'shootoutKick') {
+      const kick = e;
+      showSub(`${kick.name}: ${kick.scored ? 'scores' : kick.how === 'saved' ? 'saved' : kick.how === 'post' ? 'hits the post' : 'misses'}  ·  ${kick.scores[0]} – ${kick.scores[1]}`, 2.2);
     }
   }
   match.events.length = 0;
@@ -1394,7 +1414,7 @@ function promptsFor(id, team) {
   if (b.owner === p && p.mustPass) {
     items.push(`${k(K.move)} aim`, `${k(K.pass)} <span class="act">${p.throwIn ? 'Throw' : 'Pass'}</span> → ${nextName}`);
   } else if (b.owner === p) {
-    items.push(`${k(K.pass)} <span class="act">Pass</span> → ${nextName}`,
+    items.push(`${k(K.pass)} <span class="act">Pass</span> → ${nextName} (hold = harder)`,
       `${k(K.driven)} Driven ${k(K.through)} Through ${k(K.loft)} Lob / Cross`,
       `hold ${k(K.shoot)} <span class="act">Shoot</span> ${k(K.finesse)} Curl ${k(K.chip)} Chip`, `${k(K.sprint)} Sprint`);
   } else if (b.owner && b.owner.team !== team.index && (b.owner.holding || b.owner.mustPass)) {
@@ -1424,8 +1444,9 @@ function updateDebug() {
   const b = match.ball;
   const f = (v) => v.toFixed(1);
   const lines = [];
-  lines.push(`fps ${fps.toFixed(0)}   speed ${dev.speed}%   assist ${match.assistName}`);
-  lines.push(`phase ${match.phase}   clock ${f(match.clock)}s`);
+  lines.push(`render ${fps.toFixed(0)} fps   simulation ${simHz.toFixed(0)} Hz   speed ${dev.speed}%   assist ${match.assistName}`);
+  lines.push(`phase ${match.phase}${match.restart ? ` (${match.restart.type})` : ''}   clock ${f(match.clock)}s${match.advantage ? `   ADVANTAGE ${f(match.advantage.until - match.clock)}s` : ''}`);
+  if (lastLaunch) lines.push(`last strike: ${lastLaunch.kind}  charge ${lastLaunch.power == null ? 'tap' : Number(lastLaunch.power).toFixed(2)}  launch ${f(lastLaunch.speed)} m/s`);
   lines.push(`keys down: ${[...input.down].join(' ') || '-'}`);
   const r = input.lastRaw;
   lines.push(`last key: ${r ? `code=${r.code || '∅'} key=${r.key} keyCode=${r.keyCode} → ${r.mapped}` : '-'}`);
@@ -1576,6 +1597,8 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
+  simWindow += dt;
+  if (simWindow >= 1) { simHz = simSteps / simWindow; simSteps = 0; simWindow = 0; }
 
   if (match) {
     input.pollPads();
@@ -1598,6 +1621,9 @@ function frame(now) {
         input.endStep();
         // Slow motion: each step advances the game by a smaller slice of time.
         stepMatch(match, inputs, FIXED_DT * scale);
+        simSteps++;
+        // Launch speed: the fastest the ball goes in the 4 steps after release.
+        if (lastLaunch && lastLaunch.steps < 4 && !match.ball.owner) { lastLaunch.steps++; lastLaunch.speed = Math.max(lastLaunch.speed, Math.hypot(match.ball.vel.x, match.ball.vel.z)); }
         tutorialTick(FIXED_DT, inputs.p1);
         drillTick(FIXED_DT);
         acc -= FIXED_DT;

@@ -11,6 +11,7 @@ import type { MatchState, Player, Team, Ball, Vec2, PassKind, ShotType } from '.
 export interface TeamContext { chaser: Player | null; second: Player | null; humanCloser: boolean; humanD: number }
 import { HALF_L, HALF_W, GOAL, BOX, FORMATION, FORMATIONS, INDOOR_FORMATION } from './constants.ts';
 import { predictGroundBall, samplePath } from './physics/ballPhysics.ts';
+import { laneRisk } from './mechanics/lanes.ts';
 
 const len = (x: number, z: number) => Math.hypot(x, z);
 const dist = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -37,13 +38,12 @@ function predictBall(b: Ball, t: number): { x: number; z: number; y: number } {
  * enough to play (so receivers run to where a lofted ball comes down).
  */
 export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
-  const s = runSpeed(p) * 1.2;
-  for (let t = 0; t <= 3 + 1e-9; t += 0.1) {
+  for (let t = 0; t <= 5 + 1e-9; t += 0.1) {
     const q = predictBall(b, t);
     if ((q.y ?? 0) > reachH) continue;
-    if (dist(p.pos, q) <= s * t + 0.6) return q;
+    if (canReachPoint(p, q, t, 1.16, 0.62)) return q;
   }
-  return predictBall(b, 3);
+  return predictBall(b, 5);
 }
 
 /**
@@ -53,14 +53,40 @@ export function interceptPoint(p: Player, b: Ball, reachH = 1.3) {
  * the point and the time the ball gets there.
  */
 export function receivePoint(p: Player, b: Ball, reachH = 1.3): { x: number; z: number; t: number } {
-  const pace = Math.min(runSpeed(p) * 0.6, 3.8);
-  for (let t = 0.05; t <= 3 + 1e-9; t += 0.05) {
+  for (let t = 0.05; t <= 5 + 1e-9; t += 0.05) {
     const q = predictBall(b, t);
     if ((q.y ?? 0) > reachH) continue;
-    if (dist(p.pos, q) <= pace * t + 0.7) return { x: q.x, z: q.z, t };
+    if (canReachPoint(p, q, t, 0.82, 0.72)) return { x: q.x, z: q.z, t };
   }
   const q = interceptPoint(p, b, reachH);
-  return { x: q.x, z: q.z, t: 1 };
+  return { x: q.x, z: q.z, t: 5 };
+}
+
+/**
+ * Estimate whether a player can arrive by time t without pretending he starts
+ * at top speed. Direction changes and acceleration matter most on short passes
+ * and loose balls, where the old distance = maxSpeed * time estimate was badly
+ * optimistic and sent players to interception points they could never reach.
+ */
+function canReachPoint(p: Player, q: Vec2, t: number, speedFactor: number, allowance: number) {
+  if (t <= 0) return dist(p.pos, q) <= allowance;
+  const dx = q.x - p.pos.x, dz = q.z - p.pos.z;
+  const d = Math.hypot(dx, dz);
+  if (d <= allowance) return true;
+  const ux = dx / d, uz = dz / d;
+  const currentAlong = p.vel.x * ux + p.vel.z * uz;
+  const speed = runSpeed(p) * speedFactor * (0.82 + 0.18 * p.stamina);
+  const accel = Math.max(3, p.phys?.accel ?? 9) * 0.78;
+  // Movement opposite the target first has to be cancelled. A small turn
+  // allowance accounts for steering at pace without requiring a full path solver.
+  const reverseTime = Math.min(0.45, Math.max(0, -currentAlong) / accel);
+  const startSpeed = clamp(currentAlong, 0, speed);
+  const usable = Math.max(0, t - reverseTime - 0.12);
+  const toTop = Math.max(0, (speed - startSpeed) / accel);
+  const ramp = Math.min(usable, toTop);
+  const reachable = startSpeed * ramp + 0.5 * accel * ramp * ramp
+    + Math.max(0, usable - ramp) * speed;
+  return d <= reachable + allowance;
 }
 
 function setMove(p: Player, tx: number, tz: number, sprint: boolean = false, slowRadius: number = 1.5) {
@@ -89,15 +115,8 @@ function nearestOpponentDist(state: MatchState, p: Player) {
   return m;
 }
 
-function segmentDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number) {
-  const vx = bx - ax, vz = bz - az;
-  const l2 = vx * vx + vz * vz || 1;
-  const t = clamp(((px - ax) * vx + (pz - az) * vz) / l2, 0, 1);
-  return Math.hypot(px - (ax + vx * t), pz - (az + vz * t));
-}
-
 /** Score every teammate as a pass option. Returns {target, score} or null. */
-export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = false) {
+export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = false, safety = 0) {
   const team = state.teams[p.team];
   const dir = team.dir;
   const opps = opponents(state, p);
@@ -107,15 +126,19 @@ export function bestPass(state: MatchState, p: Player, allowKeeper: boolean = fa
     if (t.role === 'GK' && !allowKeeper) continue;
     const d = dist(p.pos, t.pos);
     if (d < 4 || d > 42) continue;
-    let open = Infinity, blocked = false;
-    for (const o of opps) {
-      open = Math.min(open, dist(o.pos, t.pos));
-      if (d <= 24 && segmentDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, t.pos.x, t.pos.z) < 1.3) blocked = true;
-    }
+    let open = Infinity;
+    for (const o of opps) open = Math.min(open, dist(o.pos, t.pos));
+    // Lane by timing (can a defender get to the ball on its way?). A pass too
+    // long or too covered to play on the ground goes in the air (passKind),
+    // where the lane matters less but a marked receiver still does.
+    const risk = laneRisk(state, p.pos, t.pos, p.team);
+    const aerial = d > 40 || (risk > 0.6 && d > 12);
     const forward = (t.pos.x - p.pos.x) * dir;
-    const score = forward * 0.5 + Math.min(open, 8) * 1.2 - (blocked ? 12 : 0) - d * 0.08
-      + (t.role === 'GK' ? -6 : 0);
-    if (!best || score > best.score) best = { target: t, score };
+    // How likely it is lost: the lane (ground) or a marker close to the receiver (aerial).
+    const danger = aerial ? clamp((3 - open) / 3, 0, 1) * 0.8 + 0.15 : risk;
+    const score = forward * 0.5 * (1 - safety) + Math.min(open, 8) * 1.2 - (aerial ? 2.5 + Math.max(0, 3 - open) * 3 : risk * 22) - d * 0.08
+      - danger * 10 * safety + (t.role === 'GK' ? -6 : 0);
+    if (!best || score > best.score) best = { target: t, score, risk: danger };
   }
   return best;
 }
@@ -176,10 +199,19 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
   if (p.drillPassive) { p.aiState = 'drill (waiting)'; setMove(p, p.pos.x, p.pos.z); return; }
 
   // A pass is on its way to me: go and meet it.
+  const pending = b.pendingPass;
+  if (pending?.target === p && b.owner === pending.passer) {
+    p.aiState = 'move for pass';
+    setMove(p, pending.aim.x, pending.aim.z, true, 0.45);
+    return;
+  }
   if (b.intended === p && !b.owner) {
+    // Meet the ball where he can really get to it at a firm run (the same
+    // search a human receiver gets), not at an optimistic earliest point he
+    // can't reach in time, which lets the ball run past him.
     p.aiState = 'receive pass';
-    const q = interceptPoint(p, b);
-    setMove(p, q.x, q.z, true, 0.4);
+    const q = receivePoint(p, b);
+    setMove(p, q.x, q.z, q.t > 0.6 && dist(p.pos, q) > 2.5, 0.4);
     return;
   }
 
@@ -294,12 +326,25 @@ function offBallAI(state: MatchState, p: Player, team: Team, c: TeamContext, dt:
       az = baz * 0.3 + hz;
     }
   }
-  // Spacing: never pick a spot on top of a teammate.
+  // Add a bounded, order-independent separation force to the formation
+  // anchor. This keeps the shape while preventing several players from
+  // selecting the same support lane near the ball.
+  let sepX = 0, sepZ = 0;
   for (const o of state.players) {
     if (o === p || o.team !== p.team || !o.onPitch || o.sentOff || o.role === 'GK') continue;
     const ox = o.pos.x * dir, oz = o.pos.z * dir;
     const d = len(ax - ox, az - oz);
-    if (d < SPACING && d > 1e-3) { const k = (SPACING - d) / d; ax += (ax - ox) * k * 0.6; az += (az - oz) * k * 0.6; }
+    if (d < SPACING && d > 1e-3) {
+      const force = (SPACING - d) / SPACING;
+      sepX += ((ax - ox) / d) * force;
+      sepZ += ((az - oz) / d) * force;
+    }
+  }
+  const separation = len(sepX, sepZ);
+  if (separation > 1e-3) {
+    const amount = Math.min(3.2, separation * 2.1);
+    ax += (sepX / separation) * amount;
+    az += (sepZ / separation) * amount;
   }
   az = clamp(az, -HALF_W + 2, HALF_W - 2);
   setMove(p, ax * dir, az * dir, sprint, 2);
@@ -329,11 +374,7 @@ function passKind(state: MatchState, p: Player, target: Player): PassKind | unde
   const d = dist(p.pos, target.pos);
   const ahead = (target.pos.x - p.pos.x) * dir;
   const running = target.vel.x * dir > 3;
-  let blocked = false;
-  for (const o of opponents(state, p)) {
-    if (segmentDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, target.pos.x, target.pos.z) < 1.3
-        && dist(o.pos, p.pos) > 1.2) { blocked = true; break; }
-  }
+  const blocked = laneRisk(state, p.pos, target.pos, p.team) > 0.6;
   if (target.role !== 'GK' && ahead > 6 && running && !blocked && d < 30) return 'through';
   if (blocked && d > 12) return 'lofted';
   return undefined; // let the engine pick ground / lofted by distance
@@ -376,6 +417,21 @@ function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
   if (p.aiTimer > 0) return;
   p.aiTimer = team.diff.reaction + Math.random() * 0.25;
 
+  if (p.mustPass && state.kickoffPending) {
+    // Kick-off: a short pass to a teammate level with or behind him (keeps
+    // possession), never a punt forward into the opponents.
+    if (p.mustPassTimer < 0.35 + team.diff.reaction * 0.5) return;
+    let best: Player | null = null, bd = Infinity;
+    for (const t of state.players) {
+      if (t.team !== p.team || t === p || !t.onPitch || t.sentOff || t.role === 'GK') continue;
+      const ahead = (t.pos.x - p.pos.x) * dir;
+      const d = dist(p.pos, t.pos);
+      if (ahead > 1 || d < 3 || d > 22) continue;
+      const score = d + Math.max(0, -ahead - 12) * 0.5;
+      if (score < bd) { bd = score; best = t; }
+    }
+    if (best) { it.action = { type: 'pass', target: best }; return; }
+  }
   if (p.mustPass) {
     if (p.mustPassTimer < 0.5 + team.diff.reaction) return;
     const dGoal = len(goalX - p.pos.x, p.pos.z);
@@ -417,14 +473,19 @@ function withBallAI(state: MatchState, p: Player, team: Team, dt: number) {
     }
   }
 
-  const bp = bestPass(state, p);
+  // Tightly pressed: look for the safe ball rather than the ambitious one.
+  const bp = bestPass(state, p, false, press < 2.6 ? 0.7 : 0);
   if (!bp) return;
   // Keep the ball moving: pressure, a good option, or simply having had it
   // a while all make a pass more likely (no endless solo dribbles).
   // Near goal he may carry it on towards a shot instead.
   // (Not a reason for an unpressured back-pass to the keeper.)
+  // A pass likely to be cut out is held back (he keeps it, shields or carries
+  // it on) unless he is about to be tackled.
   const held = bp.target.role === 'GK' ? 0 : Math.min(1, (p.aiHold ?? 0) / 2.5) * (dGoal < 30 ? 0.35 : 1);
-  const urge = (press < 2.6 ? 0.6 : press < 4.5 ? 0.3 : 0) + (bp.score > 7 ? 0.3 : bp.score > 4 ? 0.15 : 0) + held * 0.45;
+  const doubt = press < 1.6 ? 0.3 : 1;
+  const urge = ((press < 2.6 ? 0.6 : press < 4.5 ? 0.3 : 0) + (bp.score > 7 ? 0.3 : bp.score > 4 ? 0.15 : 0) + held * 0.45)
+    * (1 - clamp(bp.risk, 0, 1) * 0.85 * doubt);
   if (Math.random() < Math.min(0.9, urge)) {
     it.action = { type: 'pass', target: bp.target, kind: passKind(state, p, bp.target) };
   }
@@ -449,26 +510,40 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
     return;
   }
 
-  let tx = gx + dir * 1.2;
-  let tz = clamp(b.pos.z * 0.3, -GOAL.width / 2 + 0.4, GOAL.width / 2 - 0.4);
+  // Set position: on the line from the ball to the middle of the goal (the
+  // bisector of the shooting angle), further off the line as the ball comes
+  // closer in front; a poorer positional keeper drifts towards the near post.
+  const pos = p.phys?.keeper?.positioning ?? 0.7;
+  const bvx = b.pos.x - gx, bvz = b.pos.z;
+  const bd = len(bvx, bvz) || 1;
+  const ahead = Math.abs(bvx) / bd; // 1 = straight in front, 0 = level with the line
+  const off = clamp(1.1 + (35 - Math.min(35, bd)) * 0.06, 1.1, 2.6) * (0.4 + 0.6 * ahead);
+  let tx = gx + (bvx / bd) * off;
+  let tz = clamp((bvz / bd) * off + (b.pos.z * 0.12) * (1 - pos), -GOAL.width / 2 + 0.3, GOAL.width / 2 - 0.3);
+  if (Math.abs(bvx) > 40) { tx = gx + dir * 1.2; tz = clamp(b.pos.z * 0.1, -2, 2); }
   let sprint = false;
 
   const towardUs = -b.vel.x * dir;
   const ballAx = (b.pos.x - gx) * dir; // distance of ball from our goal line
-  if (!b.owner && b.shotLive && b.shotTeam !== p.team && towardUs > 5) {
-    const lineX = gx + dir * 0.9;
-    const t = (lineX - b.pos.x) / (b.vel.x || 1e-6);
-    if (t > 0 && t < 1.6) {
-      const zc = b.pos.z + b.vel.z * t;
-      tx = lineX;
+  if (!b.owner && b.shotLive && b.shotTeam !== p.team && towardUs > 2) {
+    const crossing = goalLineCrossing(b, gx, dir);
+    if (crossing && crossing.t < 2.2 && crossing.y < 2.8) {
+      const t = crossing.t;
+      const zc = crossing.z;
+      tx = gx + dir * 0.9;
       tz = clamp(zc, -GOAL.width / 2 - 0.6, GOAL.width / 2 + 0.6);
       sprint = true;
-      if (Math.abs(tz - p.pos.z) > 1.2 && p.dive <= 0 && t < 0.6) p.dive = 0.45;
+      // On the engine the save model (match keeperReadShot) decides when and where he dives.
+      if (!state.engine && Math.abs(tz - p.pos.z) > 1.2 && p.dive <= 0 && t < 0.6) p.dive = 0.45;
     }
   } else if (!b.owner && ballAx < BOX.depth && Math.abs(b.pos.z) < BOX.width / 2
              && len(b.vel.x, b.vel.z) < 12) {
     // Loose ball in our box: claim it.
-    tx = b.pos.x; tz = b.pos.z; sprint = true;
+    const q = interceptPoint(p, b, p.phys?.keeper?.reach ?? 2.3);
+    const advance = clamp((q.x - gx) * dir, 0.25, BOX.depth - 0.25);
+    tx = gx + dir * advance;
+    tz = clamp(q.z, -BOX.width / 2 + 0.25, BOX.width / 2 - 0.25);
+    sprint = true;
   } else if (b.owner && b.owner.team !== p.team && ballAx < 16) {
     // Narrow the angle against an attacker.
     const vx = b.pos.x - gx, vz = b.pos.z;
@@ -479,4 +554,25 @@ function keeperAI(state: MatchState, p: Player, team: Team, dt: number) {
     tz = (vz / l) * out;
   }
   setMove(p, tx, tz, sprint, 0.6);
+}
+
+/** Find the ball's first crossing of this keeper's goal line in its simulated path. */
+function goalLineCrossing(b: Ball, gx: number, dir: number): { t: number; z: number; y: number } | null {
+  const path = b.path;
+  if (!path || path.length < 2) {
+    const t = (gx - b.pos.x) / (b.vel.x || 1e-6);
+    return t > 0 ? { t, z: b.pos.z + b.vel.z * t, y: b.pos.y + b.vel.y * t - 4.905 * t * t } : null;
+  }
+  for (let i = 1; i < path.length; i++) {
+    const before = path[i - 1], after = path[i];
+    if ((before.x - gx) * dir <= 0 || (after.x - gx) * dir > 0) continue;
+    const dx = after.x - before.x;
+    const u = Math.abs(dx) < 1e-6 ? 0 : clamp((gx - before.x) / dx, 0, 1);
+    return {
+      t: before.t + (after.t - before.t) * u,
+      z: before.z + (after.z - before.z) * u,
+      y: before.y + (after.y - before.y) * u,
+    };
+  }
+  return null;
 }

@@ -32,12 +32,14 @@ export interface HudState {
   banner: string | null;
   notice: string | null;
   replay: boolean;
+  /** Penalty shoot-out tally: per team, each kick scored (true) / missed (false), and the score. */
+  shootout: { kicks: [boolean[], boolean[]]; scores: [number, number]; turn: number } | null;
 }
 
 const emptyTeam = (): HudTeam => ({ code: '', crest: '', colors: ['#fff', '#fff'], score: 0, active: null, hidden: false });
 let state: HudState = {
   visible: false, clock: '00:00', teams: [emptyTeam(), emptyTeam()],
-  goalCard: null, banner: null, notice: null, replay: false,
+  goalCard: null, banner: null, notice: null, replay: false, shootout: null,
 };
 const listeners = new Set<() => void>();
 let liveMatch: MatchState | null = null;
@@ -88,7 +90,7 @@ function surnameOf(name: string): string {
   return (parts.length > 1 ? parts.slice(1).join(' ') : parts[0]).toUpperCase();
 }
 
-const SHOWN_BANNERS = new Set(['HALF TIME', 'FULL TIME', 'EXTRA TIME', 'PENALTY']);
+const SHOWN_BANNERS = new Set(['HALF TIME', 'FULL TIME', 'EXTRA TIME', 'PENALTY', 'PENALTIES', 'SAVED!', 'MISSED!', 'OFF THE POST!']);
 
 // ---------- what the game loop calls ----------
 let goalTimer = 0;
@@ -109,7 +111,7 @@ export function startHud(m: MatchState): void {
       hidden: m.practice && i === 1,
     };
   }) as [HudTeam, HudTeam];
-  set({ visible: true, teams, goalCard: null, banner: null, notice: null, replay: false, clock: '00:00' });
+  set({ visible: true, teams, goalCard: null, banner: null, notice: null, replay: false, clock: '00:00', shootout: null });
 }
 
 export function hideHud(): void { liveMatch = null; set({ visible: false }); }
@@ -134,9 +136,16 @@ export function publishFrame(m: MatchState, dt: number): void {
       } : null,
     };
   }) as [HudTeam, HudTeam];
-  const clock = m.practice ? 'TRAINING' : m.phase === 'halftime' ? 'HT' : m.phase === 'fulltime' ? 'FT' : broadcastClock(m);
-  const banner = m.banner && m.phase !== 'fulltime' && SHOWN_BANNERS.has(m.banner.text) ? m.banner.text : null;
-  set({ teams, clock, banner });
+  const so = m.shootout;
+  const clock = so ? 'PENS' : m.practice ? 'TRAINING' : m.phase === 'halftime' ? 'HT' : m.phase === 'fulltime' ? 'FT' : broadcastClock(m);
+  const showBanner = !!m.banner && (SHOWN_BANNERS.has(m.banner.text) || (!!so && (m.banner.text === 'GOAL!' || m.banner.text.endsWith('ON PENALTIES'))));
+  const banner = m.banner && (m.phase !== 'fulltime' || !!so) && showBanner ? m.banner.text : null;
+  const shootout = so ? {
+    kicks: [so.kicks.filter((k) => k.team === 0).map((k) => k.scored), so.kicks.filter((k) => k.team === 1).map((k) => k.scored)] as [boolean[], boolean[]],
+    scores: [so.scores[0], so.scores[1]] as [number, number], turn: so.turn,
+  } : null;
+  const same = state.shootout && shootout && state.shootout.kicks[0].length === shootout.kicks[0].length && state.shootout.kicks[1].length === shootout.kicks[1].length && state.shootout.turn === shootout.turn;
+  set({ teams, clock, banner, shootout: same ? state.shootout : shootout });
 }
 
 /** Short broadcast-style notice (cards, offside, substitutions...). */
